@@ -2,13 +2,15 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e "."
+# Install deps first (layer caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy application code
 COPY app/ app/
 
-# Create data directory for DB + uploads
-RUN mkdir -p /app/data /app/data/uploads
+# Create data directories
+RUN mkdir -p /app/data/uploads
 
 EXPOSE 8000
 

@@ -1,0 +1,8 @@
+load D:/- thesis/thesis-iot-monitoring/firmware/thesis-iot-firmware.ioc
+SetCopyLibrary "copy only necessary library files"
+project couplefilebyip 0
+project toolchain Makefile
+project path D:/- thesis/thesis-iot-monitoring/firmware
+project name thesis-iot-firmware
+generate code D:/- thesis/thesis-iot-monitoring/firmware
+exit

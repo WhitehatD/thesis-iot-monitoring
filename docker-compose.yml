@@ -10,6 +10,11 @@ services:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
       - mosquitto_data:/mosquitto/data
       - mosquitto_log:/mosquitto/log
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -t '$$SYS/#' -C 1 -W 3 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
 
   # ── FastAPI Server ───────────────────────────────────
@@ -20,17 +25,25 @@ services:
     container_name: thesis-server
     ports:
       - "8000:8000"
+    env_file:
+      - ./server/.env
     environment:
       - MQTT_BROKER_HOST=mosquitto
       - MQTT_BROKER_PORT=1883
-      - DATABASE_URL=sqlite:///./data/thesis.db
+      - DATABASE_URL=sqlite+aiosqlite:///./data/thesis.db
       - VLLM_BASE_URL=http://host.docker.internal:8001/v1
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
     volumes:
-      - ./server/app:/app/app         # Hot reload
-      - server_data:/app/data         # DB + uploads
+      - ./server/app:/app/app         # Hot reload in dev
+      - server_data:/app/data         # Persistent DB + uploads
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; r = httpx.get('http://localhost:8000/health'); r.raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
 volumes:
