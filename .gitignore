@@ -1,0 +1,91 @@
+# ============================================
+# STM32 / Firmware
+# ============================================
+firmware/Debug/
+firmware/Release/
+firmware/.settings/
+firmware/*.o
+firmware/*.d
+firmware/*.elf
+firmware/*.bin
+firmware/*.hex
+firmware/*.map
+firmware/*.list
+firmware/*.size
+
+# ============================================
+# Python / Server
+# ============================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+server/.venv/
+server/venv/
+.env
+.env.*
+!.env.example
+
+# SQLite databases
+*.db
+*.sqlite3
+
+# Uploaded images (runtime data)
+server/uploads/
+
+# ============================================
+# Node / Dashboard
+# ============================================
+node_modules/
+dashboard/dist/
+dashboard/.vite/
+.next/
+
+# ============================================
+# AI / Model Weights
+# ============================================
+models/
+*.gguf
+*.safetensors
+*.bin
+!firmware/**/*.bin
+
+# ============================================
+# IDE / Editor
+# ============================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ============================================
+# Docker
+# ============================================
+mosquitto/data/
+mosquitto/log/
+
+# ============================================
+# Benchmarks (raw data, not committed)
+# ============================================
+benchmarks/results/
+benchmarks/images/*.jpg
+benchmarks/images/*.png
+
+# ============================================
+# LaTeX build artifacts
+# ============================================
+docs/latex/*.aux
+docs/latex/*.log
+docs/latex/*.out
+docs/latex/*.toc
+docs/latex/*.bbl
+docs/latex/*.blg
+docs/latex/*.synctex.gz

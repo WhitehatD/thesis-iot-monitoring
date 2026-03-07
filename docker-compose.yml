@@ -1,0 +1,39 @@
+services:
+  # ── MQTT Broker ──────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: thesis-mosquitto
+    ports:
+      - "1883:1883"   # MQTT
+      - "9001:9001"   # WebSocket (for dashboard)
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_log:/mosquitto/log
+    restart: unless-stopped
+
+  # ── FastAPI Server ───────────────────────────────────
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: thesis-server
+    ports:
+      - "8000:8000"
+    environment:
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
+      - DATABASE_URL=sqlite:///./data/thesis.db
+      - VLLM_BASE_URL=http://host.docker.internal:8001/v1
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    volumes:
+      - ./server/app:/app/app         # Hot reload
+      - server_data:/app/data         # DB + uploads
+    depends_on:
+      - mosquitto
+    restart: unless-stopped
+
+volumes:
+  mosquitto_data:
+  mosquitto_log:
+  server_data:
