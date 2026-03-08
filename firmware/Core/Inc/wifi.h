@@ -55,6 +55,17 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
                                  const uint8_t *data, uint32_t data_len);
 
 /**
+ * @brief  Fetch the current time from the server via HTTP GET /api/time.
+ * @param  hour, minute, second: Time output.
+ * @param  year: 2-digit year (e.g. 26 = 2026).
+ * @param  month, day, weekday: Date output (weekday: Monday=1..Sunday=7).
+ * @retval WIFI_OK on success, error otherwise.
+ */
+WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
+                               uint8_t *year, uint8_t *month, uint8_t *day,
+                               uint8_t *weekday);
+
+/**
  * @brief  Disconnect and power down the Wi-Fi module.
  */
 void WiFi_DeInit(void);

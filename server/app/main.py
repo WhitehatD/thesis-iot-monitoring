@@ -10,7 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.routes import router as api_router
+from app.api.scheduler_routes import router as scheduler_router
 from app.mqtt.client import mqtt_client, mqtt_config
+from app.db.database import create_tables
 
 
 @asynccontextmanager
@@ -18,6 +20,10 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
     # Ensure upload directory exists
     os.makedirs(settings.upload_dir, exist_ok=True)
+
+    # Create DB tables
+    await create_tables()
+    print("✓ Database tables ready")
 
     # Connect MQTT
     await mqtt_client.connection()
@@ -51,6 +57,7 @@ app.add_middleware(
 
 # ── Routes ───────────────────────────────────────────────
 app.include_router(api_router, prefix="/api")
+app.include_router(scheduler_router, prefix="/api")
 
 
 @app.get("/health")

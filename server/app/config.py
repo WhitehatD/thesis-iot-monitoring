@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     mqtt_broker_port: int = 1883
     mqtt_topic_commands: str = "device/stm32/commands"
     mqtt_topic_status: str = "device/stm32/status"
+    mqtt_topic_dashboard_images: str = "dashboard/images/new"
 
     # ── Database ────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./data/thesis.db"

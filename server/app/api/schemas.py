@@ -49,6 +49,23 @@ class UploadResponse(BaseModel):
     recommendation: str | None = None
 
 
+# ── Direct Capture ───────────────────────────────────
+
+class CaptureRequest(BaseModel):
+    """Request an immediate camera capture (bypasses AI planning)."""
+    objective: str = Field(
+        default="General visual inspection",
+        description="What to look for in the captured image",
+    )
+
+
+class CaptureResponse(BaseModel):
+    """Response after sending a capture command."""
+    task_id: int
+    status: str = "sent"
+    schedule_json: str
+
+
 # ── Results ──────────────────────────────────────────────
 
 class TaskResult(BaseModel):
@@ -61,3 +78,53 @@ class TaskResult(BaseModel):
     model_used: str
     inference_time_ms: float
     created_at: datetime
+
+
+# ── Scheduler ────────────────────────────────────────────
+
+class ScheduleTaskCreate(BaseModel):
+    """Input for a single task in a schedule."""
+    time: str = Field(..., description="Capture time in HH:MM:SS format", examples=["09:30:00"])
+    action: str = Field(default="CAPTURE_IMAGE", description="Action to perform")
+    objective: str = Field(default="", description="What to look for in the image")
+
+
+class ScheduleCreate(BaseModel):
+    """Input for creating or updating a schedule."""
+    name: str = Field(..., description="Schedule name", examples=["Morning Patrol"])
+    description: str = Field(default="", description="Optional description")
+    tasks: list[ScheduleTaskCreate] = Field(
+        ..., min_length=1, description="Ordered list of capture tasks"
+    )
+
+
+class ScheduleTaskOut(BaseModel):
+    """Output for a single task."""
+    id: int
+    time: str
+    action: str
+    objective: str
+    order: int
+
+
+class ScheduleOut(BaseModel):
+    """Output for a full schedule with tasks."""
+    id: int
+    name: str
+    description: str
+    is_active: bool
+    created_at: str | None = None
+    updated_at: str | None = None
+    tasks: list[ScheduleTaskOut]
+
+
+class ScheduleListOut(BaseModel):
+    """Wrapper for listing schedules."""
+    schedules: list[ScheduleOut]
+
+
+class ScheduleActivateOut(BaseModel):
+    """Response after activating a schedule."""
+    schedule_id: int
+    status: str = "activated"
+    mqtt_payload: str

@@ -46,10 +46,17 @@ server/venv/
 server/uploads/
 server/data/
 
+# Pytest
+.pytest_cache/
+
+# Firmware build directory
+firmware/build/
+
 # ============================================
 # Node / Dashboard
 # ============================================
 node_modules/
+dashboard/.next/
 dashboard/dist/
 dashboard/.vite/
 

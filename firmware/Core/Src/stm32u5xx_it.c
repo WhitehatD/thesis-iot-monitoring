@@ -21,6 +21,9 @@
 /* Includes ------------------------------------------------------------------*/
 #include "stm32u5xx_hal.h"
 #include "stm32u5xx_it.h"
+#include "main.h"
+#include "b_u585i_iot02a_camera.h"
+#include "mx_wifi_io.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -35,8 +38,6 @@
 
 /**
   * @brief  This function handles NMI exception.
-  * @param  None
-  * @retval None
   */
 void NMI_Handler(void)
 {
@@ -44,60 +45,38 @@ void NMI_Handler(void)
 
 /**
   * @brief  This function handles Hard Fault exception.
-  * @param  None
-  * @retval None
   */
 void HardFault_Handler(void)
 {
-  /* Go to infinite loop when Hard Fault exception occurs */
-  while (1)
-  {
-  }
+  while (1) {}
 }
 
 /**
   * @brief  This function handles Memory Manage exception.
-  * @param  None
-  * @retval None
   */
 void MemManage_Handler(void)
 {
-  /* Go to infinite loop when Memory Manage exception occurs */
-  while (1)
-  {
-  }
+  while (1) {}
 }
 
 /**
   * @brief  This function handles Bus Fault exception.
-  * @param  None
-  * @retval None
   */
 void BusFault_Handler(void)
 {
-  /* Go to infinite loop when Bus Fault exception occurs */
-  while (1)
-  {
-  }
+  while (1) {}
 }
 
 /**
   * @brief  This function handles Usage Fault exception.
-  * @param  None
-  * @retval None
   */
 void UsageFault_Handler(void)
 {
-  /* Go to infinite loop when Usage Fault exception occurs */
-  while (1)
-  {
-  }
+  while (1) {}
 }
 
 /**
   * @brief  This function handles SVCall exception.
-  * @param  None
-  * @retval None
   */
 void SVC_Handler(void)
 {
@@ -105,32 +84,22 @@ void SVC_Handler(void)
 
 /**
   * @brief  This function handles Debug Monitor exception.
-  * @param  None
-  * @retval None
   */
 void DebugMon_Handler(void)
 {
-  while (1)
-  {
-  }
+  while (1) {}
 }
 
 /**
   * @brief  This function handles PendSVC exception.
-  * @param  None
-  * @retval None
   */
 void PendSV_Handler(void)
 {
-  while (1)
-  {
-  }
+  while (1) {}
 }
 
 /**
   * @brief  This function handles SysTick Handler.
-  * @param  None
-  * @retval None
   */
 void SysTick_Handler(void)
 {
@@ -139,19 +108,70 @@ void SysTick_Handler(void)
 
 /******************************************************************************/
 /*                 STM32U5xx Peripherals Interrupt Handlers                   */
-/*  Add here the Interrupt Handler for the used peripheral(s) (PPP), for the  */
-/*  available peripheral interrupt handler's name please refer to the startup */
-/*  file (startup_stm32u5xx.s).                                               */
 /******************************************************************************/
 
 /**
-  * @brief  This function handles PPP interrupt request.
-  * @param  None
-  * @retval None
+  * @brief  RTC global interrupt handler.
+  *         Handles Alarm A events for scheduled wake-up from STOP2 mode.
   */
-/*
-void PPP_IRQHandler(void)
+void RTC_IRQHandler(void)
 {
-  HAL_PPP_IRQHandler(&PPPHandle);
+  HAL_RTC_AlarmIRQHandler(&hrtc);
 }
-*/
+
+/**
+  * @brief  DCMI/PSSI global interrupt handler.
+  *         Handles camera frame-complete events.
+  */
+void DCMI_PSSI_IRQHandler(void)
+{
+  BSP_CAMERA_IRQ_HANDLER(0);
+}
+
+/**
+  * @brief  GPDMA1 Channel 12 interrupt handler.
+  *         Handles DMA transfer-complete for camera DCMI data.
+  */
+void GPDMA1_Channel12_IRQHandler(void)
+{
+  BSP_CAMERA_DMA_IRQ_HANDLER(0);
+}
+
+/**
+  * @brief  EXTI13 interrupt handler.
+  *         Handles the B3 USER push-button press (PC13).
+  */
+void EXTI13_IRQHandler(void)
+{
+  BSP_PB_IRQHandler(BUTTON_USER);
+}
+
+/**
+  * @brief  EXTI14 interrupt handler.
+  *         WiFi NOTIFY pin (PD14) — data-ready from EMW3080.
+  */
+void EXTI14_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_14);
+  mxchip_WIFI_ISR(GPIO_PIN_14);
+}
+
+/**
+  * @brief  EXTI15 interrupt handler.
+  *         WiFi FLOW pin (PG15) — flow control from EMW3080.
+  */
+void EXTI15_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_15);
+  mxchip_WIFI_ISR(GPIO_PIN_15);
+}
+
+/**
+  * @brief  SPI2 interrupt handler.
+  *         WiFi SPI transfer complete.
+  */
+void SPI2_IRQHandler(void)
+{
+  extern SPI_HandleTypeDef MXCHIP_SPI;
+  HAL_SPI_IRQHandler(&MXCHIP_SPI);
+}

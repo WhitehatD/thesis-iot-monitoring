@@ -59,4 +59,10 @@ void MQTT_ProcessLoop(void);
  */
 void MQTT_Disconnect(void);
 
+/**
+ * @brief  Send a PINGREQ to keep the connection alive.
+ *         Should be called periodically from the main loop.
+ */
+void MQTT_SendPing(void);
+
 #endif /* __MQTT_HANDLER_H */

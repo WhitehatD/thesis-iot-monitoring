@@ -32,6 +32,7 @@ services:
       - MQTT_BROKER_PORT=1883
       - DATABASE_URL=sqlite+aiosqlite:///./data/thesis.db
       - VLLM_BASE_URL=http://host.docker.internal:8001/v1
+      - TZ=Europe/Brussels
     volumes:
       - ./server/app:/app/app         # Hot reload in dev
       - server_data:/app/data         # Persistent DB + uploads
@@ -44,6 +45,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  # ── Next.js Dashboard ───────────────────────────────
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: thesis-dashboard
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_MQTT_WS_URL=ws://localhost:9001
+    depends_on:
+      - server
+      - mosquitto
     restart: unless-stopped
 
 volumes:

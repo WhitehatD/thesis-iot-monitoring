@@ -20,7 +20,6 @@
 /* Task actions */
 typedef enum {
     ACTION_CAPTURE_IMAGE = 0,
-    ACTION_STATUS_REPORT,
     ACTION_SLEEP,
 } TaskAction_t;
 
@@ -28,6 +27,7 @@ typedef enum {
 typedef struct {
     uint8_t hour;
     uint8_t minute;
+    uint8_t second;
     TaskAction_t action;
     uint16_t task_id;
     char objective[64];

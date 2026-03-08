@@ -1,4 +1,6 @@
-# Dev/test dependencies (install with: pip install -r requirements-dev.txt)
+# Dev / Testing
+pytest>=8.0.0
+httpx>=0.28.0
 -r requirements.txt
 
 pytest>=8.3.0

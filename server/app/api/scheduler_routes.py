@@ -1,0 +1,122 @@
+"""
+Thesis IoT Server — Scheduler API Routes
+CRUD + activation endpoints for monitoring schedules.
+"""
+
+import json
+
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import settings
+from app.db.database import get_db
+from app.mqtt.client import mqtt_client
+from app.scheduler import service
+from app.api.schemas import (
+    ScheduleCreate,
+    ScheduleOut,
+    ScheduleListOut,
+    ScheduleActivateOut,
+)
+
+router = APIRouter(prefix="/schedules", tags=["Scheduler"])
+
+
+@router.post("", response_model=ScheduleOut, status_code=201)
+async def create_schedule(body: ScheduleCreate, db: AsyncSession = Depends(get_db)):
+    """Create a new monitoring schedule with tasks."""
+    schedule = await service.create_schedule(
+        db,
+        name=body.name,
+        description=body.description,
+        tasks=[t.model_dump() for t in body.tasks],
+    )
+    return _schedule_to_dict(schedule)
+
+
+@router.get("", response_model=ScheduleListOut)
+async def list_schedules(db: AsyncSession = Depends(get_db)):
+    """List all saved schedules."""
+    schedules = await service.list_schedules(db)
+    return {"schedules": [_schedule_to_dict(s) for s in schedules]}
+
+
+@router.get("/{schedule_id}", response_model=ScheduleOut)
+async def get_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
+    """Get a schedule by ID with its full task list."""
+    schedule = await service.get_schedule(db, schedule_id)
+    return _schedule_to_dict(schedule)
+
+
+@router.put("/{schedule_id}", response_model=ScheduleOut)
+async def update_schedule(
+    schedule_id: int, body: ScheduleCreate, db: AsyncSession = Depends(get_db)
+):
+    """Update a schedule's name, description, and tasks."""
+    schedule = await service.update_schedule(
+        db,
+        schedule_id=schedule_id,
+        name=body.name,
+        description=body.description,
+        tasks=[t.model_dump() for t in body.tasks],
+    )
+    return _schedule_to_dict(schedule)
+
+
+@router.post("/{schedule_id}/activate", response_model=ScheduleActivateOut)
+async def activate_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Activate a schedule — deactivates all others and publishes
+    the task list to the STM32 board via MQTT.
+    """
+    mqtt_payload = await service.activate_schedule(db, schedule_id)
+    payload_json = json.dumps(mqtt_payload)
+
+    mqtt_client.publish(settings.mqtt_topic_commands, payload_json)
+
+    return ScheduleActivateOut(
+        schedule_id=schedule_id,
+        status="activated",
+        mqtt_payload=payload_json,
+    )
+
+
+
+@router.post("/sleep-mode", status_code=200)
+async def set_sleep_mode(enabled: bool = True):
+    """Toggle sleep mode on the STM32 board via MQTT."""
+    payload = json.dumps({"type": "sleep_mode", "enabled": enabled})
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    return {"status": "ok", "sleep_enabled": enabled}
+
+
+@router.delete("/{schedule_id}", status_code=204)
+async def delete_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
+    """Delete a schedule and notify the board to clear it."""
+    await service.delete_schedule(db, schedule_id)
+    payload = json.dumps({"type": "delete_schedule", "schedule_id": schedule_id})
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
+
+
+# ── Helpers ──────────────────────────────────────────────
+
+def _schedule_to_dict(schedule) -> dict:
+    """Convert ORM model to dict matching ScheduleOut schema."""
+    return {
+        "id": schedule.id,
+        "name": schedule.name,
+        "description": schedule.description,
+        "is_active": schedule.is_active,
+        "created_at": schedule.created_at.isoformat() if schedule.created_at else None,
+        "updated_at": schedule.updated_at.isoformat() if schedule.updated_at else None,
+        "tasks": [
+            {
+                "id": t.id,
+                "time": t.time,
+                "action": t.action,
+                "objective": t.objective,
+                "order": t.order,
+            }
+            for t in schedule.tasks
+        ],
+    }

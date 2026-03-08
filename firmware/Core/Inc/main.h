@@ -1,32 +1,26 @@
 /**
   ******************************************************************************
-  * @file    Templates/TrustZoneDisabled/Inc/main.h
-  * @author  MCD Application Team
-  * @brief   Header for main.c module
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2021 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
+  * @file    main.h
+  * @brief   Header for main.c — Autonomous IoT Visual Monitoring
+  * @author  Alexandru-Ionut Cioc (based on ST MCD template)
   ******************************************************************************
   */
 
-/* Define to prevent recursive inclusion -------------------------------------*/
 #ifndef MAIN_H
 #define MAIN_H
 
-/* Includes ------------------------------------------------------------------*/
+/* ── HAL & BSP ─────────────────────────────────────────── */
 #include "stm32u5xx_hal.h"
 #include "b_u585i_iot02a.h"
 
-/* Exported types ------------------------------------------------------------*/
-/* Exported constants --------------------------------------------------------*/
-/* Exported macro ------------------------------------------------------------*/
-/* Exported functions ------------------------------------------------------- */
+/* ── Firmware Modules ──────────────────────────────────── */
+#include "firmware_config.h"
+#include "debug_log.h"
+
+/* ── Shared Peripheral Handles (extern) ────────────────── */
+extern RTC_HandleTypeDef hrtc;
+
+/* ── System Function Prototypes ────────────────────────── */
+void SystemClock_Config(void);
 
 #endif /* MAIN_H */
