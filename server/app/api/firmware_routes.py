@@ -172,7 +172,7 @@ async def upload_firmware(
         "version": version,
         "size": len(content),
     })
-    mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+    await mqtt_client.publish(settings.mqtt_topic_commands, update_command)
 
     return FirmwareUploadResponse(
         version=version,
@@ -218,7 +218,7 @@ async def notify_firmware_update(
     })
 
     try:
-        mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+        await mqtt_client.publish(settings.mqtt_topic_commands, update_command)
     except Exception as exc:
         raise HTTPException(
             status_code=503,

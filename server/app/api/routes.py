@@ -54,7 +54,7 @@ async def create_plan(request: PlanRequest):
 
     # Publish schedule to STM32 via MQTT
     schedule_json = json.dumps({"type": "schedule", "tasks": [t.model_dump() for t in plan.tasks]})
-    mqtt_client.publish(settings.mqtt_topic_commands, schedule_json)
+    await mqtt_client.publish(settings.mqtt_topic_commands, schedule_json)
 
     return plan
 
@@ -71,7 +71,7 @@ async def capture_now(request: CaptureRequest = CaptureRequest()):
 
     command = {"type": "capture_now"}
     command_json = json.dumps(command)
-    mqtt_client.publish(settings.mqtt_topic_commands, command_json)
+    await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
 
     return CaptureResponse(
         task_id=_capture_counter,
@@ -135,7 +135,7 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
         "url": f"/api/images/{date_dir}/{filename}",
         "timestamp": int(time.time()),
     }
-    mqtt_client.publish(
+    await mqtt_client.publish(
         settings.mqtt_topic_dashboard_images, json.dumps(image_meta)
     )
 
