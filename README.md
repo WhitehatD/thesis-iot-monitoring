@@ -564,8 +564,9 @@ The system supports **over-the-air firmware updates** using the STM32U585's dual
 ```
 git push main
     ├── Stage 1: pytest (27 tests)
-    ├── Stage 2: Docker build + push to GHCR
-    └── Stage 3: Watchtower auto-pulls on server
+    ├── Stage 1.5: Build STM32 firmware (ARM GCC) + HTTP Upload to Server
+    ├── Stage 2: Docker build + push to GHCR (Server & Dashboard)
+    └── Stage 3: Watchtower auto-pulls on server + MQTT OTA Notify
 ```
 
 ### Production Deployment
@@ -578,7 +579,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 # New pushes to main → automatic container restart
 ```
 
-### Manual Firmware Upload (CI)
+### Automated Firmware Upload (CI)
 
 ```bash
 # Upload a new firmware binary to the server

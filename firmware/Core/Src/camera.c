@@ -292,6 +292,9 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
     s_frame_size  = 0;
     s_active_buffer = buffer;
 
+    /* Turn ON tally light (Red LED) directly before capture */
+    BSP_LED_On(LED_RED);
+
     /* Start continuous capture — DMA writes directly into caller's buffer.
      * Each frame overwrites the previous one in-place. After TOTAL_FRAMES,
      * the buffer contains the final (well-exposed) frame. */
@@ -320,6 +323,7 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
                       (unsigned long)s_frame_count,
                       (unsigned long)TOTAL_FRAMES);
             BSP_CAMERA_Stop(0);
+            BSP_LED_Off(LED_RED);
             s_active_buffer = NULL;
             return CAMERA_ERROR_TIMEOUT;
         }
@@ -329,6 +333,7 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
 
     /* Stop continuous capture — the buffer now has the final frame */
     BSP_CAMERA_Stop(0);
+    BSP_LED_Off(LED_RED);
     s_active_buffer = NULL;
 
     /* Determine frame size */
@@ -421,6 +426,9 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
     s_frame_size  = 0;
     s_active_buffer = buffer;
 
+    /* Turn ON tally light (Red LED) directly before capture */
+    BSP_LED_On(LED_RED);
+
     /* Start continuous capture — stop after first frame */
     int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_CONTINUOUS);
     if (ret != BSP_ERROR_NONE)
@@ -441,6 +449,7 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
             LOG_ERROR(TAG_CAM, "Warm capture timeout after %lums",
                       (unsigned long)WARM_TIMEOUT_MS);
             BSP_CAMERA_Stop(0);
+            BSP_LED_Off(LED_RED);
             s_active_buffer = NULL;
             return CAMERA_ERROR_TIMEOUT;
         }
@@ -448,6 +457,7 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
     }
 
     BSP_CAMERA_Stop(0);
+    BSP_LED_Off(LED_RED);
     s_active_buffer = NULL;
 
     uint32_t copy_size = s_frame_size;
