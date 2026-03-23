@@ -221,6 +221,9 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
 
         if (sent > 0)
         {
+            /* Toggle GREEN LED to indicate data transfer */
+            BSP_LED_Toggle(LED_GREEN);
+
             offset += sent;
             retries = 0;        /* Reset retry counter on progress */
 
@@ -444,6 +447,7 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
         /* Send failed — will retry if attempts remain */
     }
 
+    BSP_LED_Off(LED_GREEN);
     return final_status;
 }
 

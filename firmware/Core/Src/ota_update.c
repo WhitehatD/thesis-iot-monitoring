@@ -226,6 +226,7 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     if (info == NULL) return OTA_ERROR_PARSE;
 
     LOG_INFO(TAG_OTA, "Checking for firmware update (current: %s)...", FW_VERSION);
+    BSP_LED_On(LED_RED);
 
     /* Build HTTP GET request */
     char header[256];
@@ -241,6 +242,7 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     if (sock < 0)
     {
         LOG_ERROR(TAG_OTA, "Version check: socket connect failed");
+        BSP_LED_Off(LED_RED);
         return OTA_ERROR_NETWORK;
     }
 
@@ -249,6 +251,7 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     {
         LOG_ERROR(TAG_OTA, "Version check: send failed");
         MX_WIFI_Socket_close(wifi_obj_get(), sock);
+        BSP_LED_Off(LED_RED);
         return OTA_ERROR_NETWORK;
     }
 
@@ -267,6 +270,7 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     }
 
     MX_WIFI_Socket_close(wifi_obj_get(), sock);
+    BSP_LED_Off(LED_RED);
 
     if (resp_len <= 0)
     {
@@ -359,6 +363,8 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
              (unsigned long)pages_needed);
 
     /* ── Step 1: Erase required pages in inactive bank ────────── */
+    BSP_LED_On(LED_RED);
+    BSP_LED_On(LED_GREEN);
 
     HAL_FLASH_Unlock();
 
@@ -376,9 +382,13 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
         LOG_ERROR(TAG_OTA, "Flash erase failed (HAL=%d, page_err=%lu)",
                   hal_ret, (unsigned long)erase_error);
         HAL_FLASH_Lock();
+        BSP_LED_Off(LED_RED);
+        BSP_LED_Off(LED_GREEN);
         return OTA_ERROR_FLASH_ERASE;
     }
 
+    BSP_LED_Off(LED_RED);
+    BSP_LED_Off(LED_GREEN);
     LOG_INFO(TAG_OTA, "Erased %lu pages — downloading firmware...",
              (unsigned long)pages_needed);
 
@@ -484,6 +494,8 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
                               (unsigned long)flash_addr);
                     MX_WIFI_Socket_close(wifi_obj_get(), sock);
                     HAL_FLASH_Lock();
+                    BSP_LED_Off(LED_RED);
+                    BSP_LED_Off(LED_GREEN);
                     return OTA_ERROR_FLASH_WRITE;
                 }
                 flash_addr += 16;
@@ -504,9 +516,21 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
             carry_len = remainder;
         }
 
+        /* Toggle LED flag for alternating blink */
+        uint8_t toggle_led = 0;
+
         /* Continue reading and flashing */
         while (total_written < info->size)
         {
+            if (toggle_led) {
+                BSP_LED_On(LED_RED);
+                BSP_LED_Off(LED_GREEN);
+            } else {
+                BSP_LED_Off(LED_RED);
+                BSP_LED_On(LED_GREEN);
+            }
+            toggle_led = !toggle_led;
+
             MX_WIFI_IO_YIELD(wifi_obj_get(), 100);
 
             recv_len = MX_WIFI_Socket_recv(
@@ -564,6 +588,8 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
                               (unsigned long)flash_addr);
                     MX_WIFI_Socket_close(wifi_obj_get(), sock);
                     HAL_FLASH_Lock();
+                    BSP_LED_Off(LED_RED);
+                    BSP_LED_Off(LED_GREEN);
                     return OTA_ERROR_FLASH_WRITE;
                 }
                 flash_addr += 16;
@@ -605,6 +631,8 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
                 LOG_ERROR(TAG_OTA, "Flash write (final pad) failed");
                 MX_WIFI_Socket_close(wifi_obj_get(), sock);
                 HAL_FLASH_Lock();
+                BSP_LED_Off(LED_RED);
+                BSP_LED_Off(LED_GREEN);
                 return OTA_ERROR_FLASH_WRITE;
             }
 
@@ -615,6 +643,8 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
 
     MX_WIFI_Socket_close(wifi_obj_get(), sock);
     HAL_FLASH_Lock();
+    BSP_LED_Off(LED_RED);
+    BSP_LED_Off(LED_GREEN);
 
     LOG_INFO(TAG_OTA, "Download complete: %lu bytes written to flash",
              (unsigned long)total_written);
@@ -678,6 +708,11 @@ OTAStatus_t OTA_SwapBankAndReset(void)
     }
 
     LOG_INFO(TAG_OTA, "Bank swap programmed — launching reset...");
+    
+    /* Success: solid GREEN for 1.5 seconds before rebooting */
+    BSP_LED_Off(LED_RED);
+    BSP_LED_On(LED_GREEN);
+    HAL_Delay(1500);
 
     /* This triggers a system reset with the new bank mapping.
      * DOES NOT RETURN on success. */

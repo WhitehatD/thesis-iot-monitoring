@@ -356,6 +356,7 @@ int main(void)
     BSP_LED_Init(LED_GREEN);
     BSP_LED_Init(LED_RED);
     BSP_LED_On(LED_GREEN);
+    BSP_LED_On(LED_RED);
 
     /* RTC for scheduled wake-ups */
     RTC_Init();
@@ -524,8 +525,13 @@ int main(void)
             last_ping = HAL_GetTick();
         }
 
-        /* Blink LED while idle */
-        BSP_LED_Toggle(LED_GREEN);
+        /* Breathing/slow blink LED while idle (~1Hz) */
+        static uint32_t last_idle_blink = 0;
+        if ((HAL_GetTick() - last_idle_blink) >= 500)
+        {
+            BSP_LED_Toggle(LED_GREEN);
+            last_idle_blink = HAL_GetTick();
+        }
         HAL_Delay(SCHEDULER_MQTT_POLL_MS);
 
         /* ── Handle: Capture Now (MQTT command) ── */
@@ -608,6 +614,9 @@ int main(void)
                     uint32_t captured_size = 0;
                     CameraStatus_t cam_ret;
 
+                    /* Turn on RED LED to indicate Image Capturing state */
+                    BSP_LED_On(LED_RED);
+
                     /* Use warm capture if camera is already initialized */
                     if (Camera_IsInitialized())
                     {
@@ -629,13 +638,14 @@ int main(void)
                         }
                     }
 
+                    /* Turn off RED LED when capture completes */
+                    BSP_LED_Off(LED_RED);
+
                     if (cam_ret == CAMERA_OK && captured_size > 0)
                     {
-                        BSP_LED_On(LED_GREEN);
                         WiFiStatus_t upload_ret = WiFi_HttpPostImage(
                             SERVER_UPLOAD_URL, next->task_id,
                             s_image_buffer, captured_size);
-                        BSP_LED_Off(LED_GREEN);
 
                         if (upload_ret == WIFI_OK)
                         {
@@ -925,6 +935,9 @@ static void _do_button_capture(void)
     uint32_t captured_size = 0;
     CameraStatus_t cam_ret;
 
+    /* Turn on RED LED during image capture */
+    BSP_LED_On(LED_RED);
+
     if (Camera_IsInitialized())
     {
         cam_ret = Camera_WarmCapture(
@@ -936,11 +949,14 @@ static void _do_button_capture(void)
         if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
         {
             LOG_ERROR(TAG_CAM, "Camera init failed for button capture");
+            BSP_LED_Off(LED_RED);
             return;
         }
         cam_ret = Camera_CaptureFrame(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
+
+    BSP_LED_Off(LED_RED);
 
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
@@ -955,11 +971,9 @@ static void _do_button_capture(void)
 
     /* Upload via HTTP POST */
     char status_msg[256];
-    BSP_LED_On(LED_GREEN);
     WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
         SERVER_UPLOAD_URL, (uint16_t)s_button_task_id,
         s_image_buffer, captured_size);
-    BSP_LED_Off(LED_GREEN);
 
     uint32_t total_ms = HAL_GetTick() - perf_start;
 
@@ -1004,6 +1018,9 @@ static void _do_capture_now(void)
     uint32_t captured_size = 0;
     CameraStatus_t cam_ret;
 
+    /* Turn on RED LED during image capture */
+    BSP_LED_On(LED_RED);
+
     if (Camera_IsInitialized())
     {
         cam_ret = Camera_WarmCapture(
@@ -1015,11 +1032,14 @@ static void _do_capture_now(void)
         if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
         {
             LOG_ERROR(TAG_CAM, "Camera init failed for capture_now");
+            BSP_LED_Off(LED_RED);
             return;
         }
         cam_ret = Camera_CaptureFrame(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
+
+    BSP_LED_Off(LED_RED);
 
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
@@ -1034,11 +1054,9 @@ static void _do_capture_now(void)
 
     /* Upload via HTTP POST */
     char status_msg[256];
-    BSP_LED_On(LED_GREEN);
     WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
         SERVER_UPLOAD_URL, (uint16_t)task_id,
         s_image_buffer, captured_size);
-    BSP_LED_Off(LED_GREEN);
 
     uint32_t total_ms = HAL_GetTick() - perf_start;
 
@@ -1123,9 +1141,11 @@ static void _do_capture_sequence(void)
         }
 
         /* Use warm capture — sensor is already converged */
+        BSP_LED_On(LED_RED);
         uint32_t captured_size = 0;
         CameraStatus_t cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+        BSP_LED_Off(LED_RED);
 
         uint32_t capture_tick = HAL_GetTick() - sequence_start;
 
@@ -1143,11 +1163,9 @@ static void _do_capture_sequence(void)
                  (unsigned long)target_ms);
 
         /* Upload immediately */
-        BSP_LED_On(LED_GREEN);
         WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
             SERVER_UPLOAD_URL, (uint16_t)task_id,
             s_image_buffer, captured_size);
-        BSP_LED_Off(LED_GREEN);
 
         char status_msg[256];
         snprintf(status_msg, sizeof(status_msg),
