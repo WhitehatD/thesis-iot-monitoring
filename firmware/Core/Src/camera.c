@@ -49,6 +49,7 @@ _Static_assert(CAMERA_FRAME_BUFFER_SIZE <= CAMERA_FRAME_BUFFER_MAX,
 
 static volatile uint32_t s_frame_count = 0;   /* Counts frames in continuous mode */
 static volatile uint32_t s_frame_size  = 0;
+static volatile uint8_t  s_initialized = 0;    /* 1 = camera is warm and ready */
 
 /* Pointer to the active capture buffer (set by Camera_CaptureFrame) */
 static uint8_t *s_active_buffer = NULL;
@@ -148,6 +149,13 @@ static void _wait_aec_converge(void)
 
 CameraStatus_t Camera_Init(CameraResolution_t resolution)
 {
+    /* ── Double-init guard: skip if already warm ── */
+    if (s_initialized)
+    {
+        LOG_INFO(TAG_CAM, "Camera already initialized (warm) — skipping init");
+        return CAMERA_OK;
+    }
+
     LOG_INFO(TAG_CAM, "Initializing OV5640 camera (resolution=%d)...", resolution);
 
     uint32_t bsp_res = _map_resolution(resolution);
@@ -234,7 +242,17 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
              (unsigned long)_raw_frame_size(resolution),
              (unsigned)CAMERA_VTS_DEFAULT);
 
+    s_initialized = 1;
     return CAMERA_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Query: Is Camera Warm?
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+uint8_t Camera_IsInitialized(void)
+{
+    return s_initialized;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -370,6 +388,84 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Zero-Overhead Warm Capture — Enterprise Fast Path
+ *
+ *  Captures exactly 1 frame with zero warmup. The sensor is already
+ *  AEC-converged from the persistent init, so the first frame is usable.
+ *  Expected latency: ~83ms at VTS=0x07D0 (~12fps).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
+                                   uint32_t *captured_size)
+{
+    uint32_t perf_start = HAL_GetTick();
+
+    LOG_INFO(TAG_CAM, "Warm capture (single frame, zero warmup)...");
+
+    if (buffer == NULL || captured_size == NULL)
+    {
+        LOG_ERROR(TAG_CAM, "Null buffer or size pointer");
+        return CAMERA_ERROR_CAPTURE;
+    }
+
+    if (buffer_size < CAMERA_FRAME_BUFFER_SIZE)
+    {
+        LOG_ERROR(TAG_CAM, "Buffer too small (%lu < %lu)",
+                  (unsigned long)buffer_size,
+                  (unsigned long)CAMERA_FRAME_BUFFER_SIZE);
+        return CAMERA_ERROR_CAPTURE;
+    }
+
+    /* Reset frame counter — we only need 1 frame */
+    s_frame_count = 0;
+    s_frame_size  = 0;
+    s_active_buffer = buffer;
+
+    /* Start continuous capture — stop after first frame */
+    int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_CONTINUOUS);
+    if (ret != BSP_ERROR_NONE)
+    {
+        LOG_ERROR(TAG_CAM, "BSP_CAMERA_Start failed (err=%ld)", (long)ret);
+        s_active_buffer = NULL;
+        return CAMERA_ERROR_CAPTURE;
+    }
+
+    /* Wait for exactly 1 frame-complete interrupt */
+    uint32_t start_tick = HAL_GetTick();
+    const uint32_t WARM_TIMEOUT_MS = 1000;  /* 1s generous timeout */
+
+    while (s_frame_count < 1)
+    {
+        if ((HAL_GetTick() - start_tick) > WARM_TIMEOUT_MS)
+        {
+            LOG_ERROR(TAG_CAM, "Warm capture timeout after %lums",
+                      (unsigned long)WARM_TIMEOUT_MS);
+            BSP_CAMERA_Stop(0);
+            s_active_buffer = NULL;
+            return CAMERA_ERROR_TIMEOUT;
+        }
+        HAL_Delay(1);
+    }
+
+    BSP_CAMERA_Stop(0);
+    s_active_buffer = NULL;
+
+    uint32_t copy_size = s_frame_size;
+    if (copy_size == 0)
+        copy_size = buffer_size;
+    if (copy_size > buffer_size)
+        copy_size = buffer_size;
+
+    *captured_size = copy_size;
+
+    LOG_INFO(TAG_CAM, "[PERF] Warm capture: %lums, %lu bytes",
+             (unsigned long)(HAL_GetTick() - perf_start),
+             (unsigned long)copy_size);
+
+    return CAMERA_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  BSP Callbacks (called from ISR context)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -398,4 +494,5 @@ void Camera_DeInit(void)
     LOG_INFO(TAG_CAM, "De-initializing camera");
     BSP_CAMERA_Stop(0);
     BSP_CAMERA_DeInit(0);
+    s_initialized = 0;
 }

@@ -478,6 +478,20 @@ int main(void)
      * This resets the OTA boot failure counter, preventing rollback. */
     OTA_MarkBootSuccessful();
 
+    /* ── Phase 3b: Persistent Camera Init ──────────────
+     *
+     * Enterprise optimization: initialize the camera ONCE at boot.
+     * The sensor stays powered and AEC-converged, enabling sub-second
+     * warm captures for the entire uptime of the board. */
+    if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
+    {
+        LOG_ERROR(TAG_BOOT, "WARNING: Camera init failed at boot — captures will cold-start");
+    }
+    else
+    {
+        LOG_INFO(TAG_BOOT, "Camera warm and ready (persistent mode)");
+    }
+
     /* ── Phase 4: Unified Main Loop ───────────────────
      *
      * Runs forever. Handles all commands inline:
@@ -584,50 +598,62 @@ int main(void)
                 {
                     LOG_INFO(TAG_BOOT, "=== Task %u: CAPTURE_IMAGE ===", next->task_id);
 
-                    if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
+                    uint32_t captured_size = 0;
+                    CameraStatus_t cam_ret;
+
+                    /* Use warm capture if camera is already initialized */
+                    if (Camera_IsInitialized())
                     {
-                        LOG_ERROR(TAG_CAM, "Camera init failed for task %u", next->task_id);
+                        cam_ret = Camera_WarmCapture(
+                            s_image_buffer, sizeof(s_image_buffer), &captured_size);
                     }
                     else
                     {
-                        uint32_t captured_size = 0;
-                        CameraStatus_t cam_ret = Camera_CaptureFrame(
-                            s_image_buffer, sizeof(s_image_buffer), &captured_size);
-                        Camera_DeInit();
-
-                        if (cam_ret == CAMERA_OK && captured_size > 0)
+                        LOG_WARN(TAG_CAM, "Camera cold — initializing for task %u", next->task_id);
+                        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
                         {
-                            WiFiStatus_t upload_ret = WiFi_HttpPostImage(
-                                SERVER_UPLOAD_URL, next->task_id,
-                                s_image_buffer, captured_size);
-
-                            if (upload_ret == WIFI_OK)
-                            {
-                                LOG_INFO(TAG_HTTP, "Task %u upload OK (%lu bytes)",
-                                         next->task_id, (unsigned long)captured_size);
-                                snprintf(status_msg, sizeof(status_msg),
-                                         "{\"status\":\"uploaded\",\"task_id\":%u,\"bytes\":%lu}",
-                                         next->task_id, (unsigned long)captured_size);
-                            }
-                            else
-                            {
-                                LOG_ERROR(TAG_HTTP, "Task %u upload failed", next->task_id);
-                                snprintf(status_msg, sizeof(status_msg),
-                                         "{\"status\":\"error\",\"task_id\":%u,\"reason\":\"upload_failed\"}",
-                                         next->task_id);
-                            }
-
-                            /* Re-establish MQTT if connection was lost */
-                            if (MQTT_Init(&mqtt_cfg) == 0)
-                            {
-                                MQTT_SubscribeCommands(on_command_received);
-                                MQTT_PublishStatus(status_msg);
-                            }
+                            LOG_ERROR(TAG_CAM, "Camera init failed for task %u", next->task_id);
+                            cam_ret = CAMERA_ERROR_INIT;
                         }
                         else
                         {
-                            LOG_ERROR(TAG_CAM, "Capture failed for task %u", next->task_id);
+                            cam_ret = Camera_CaptureFrame(
+                                s_image_buffer, sizeof(s_image_buffer), &captured_size);
                         }
+                    }
+
+                    if (cam_ret == CAMERA_OK && captured_size > 0)
+                    {
+                        WiFiStatus_t upload_ret = WiFi_HttpPostImage(
+                            SERVER_UPLOAD_URL, next->task_id,
+                            s_image_buffer, captured_size);
+
+                        if (upload_ret == WIFI_OK)
+                        {
+                            LOG_INFO(TAG_HTTP, "Task %u upload OK (%lu bytes)",
+                                     next->task_id, (unsigned long)captured_size);
+                            snprintf(status_msg, sizeof(status_msg),
+                                     "{\"status\":\"uploaded\",\"task_id\":%u,\"bytes\":%lu}",
+                                     next->task_id, (unsigned long)captured_size);
+                        }
+                        else
+                        {
+                            LOG_ERROR(TAG_HTTP, "Task %u upload failed", next->task_id);
+                            snprintf(status_msg, sizeof(status_msg),
+                                     "{\"status\":\"error\",\"task_id\":%u,\"reason\":\"upload_failed\"}",
+                                     next->task_id);
+                        }
+
+                        /* Re-establish MQTT if connection was lost */
+                        if (MQTT_Init(&mqtt_cfg) == 0)
+                        {
+                            MQTT_SubscribeCommands(on_command_received);
+                            MQTT_PublishStatus(status_msg);
+                        }
+                    }
+                    else
+                    {
+                        LOG_ERROR(TAG_CAM, "Capture failed for task %u", next->task_id);
                     }
 
 #if STACK_WATERMARK_ENABLED
@@ -655,7 +681,7 @@ int main(void)
                 {
                     MQTT_Disconnect();
                     WiFi_DeInit();
-                    Camera_DeInit();
+                    Camera_DeInit();  /* Power down camera for sleep */
                     Scheduler_EnterLowPower();
 
                     /* Woke up — reconnect everything */
@@ -664,6 +690,9 @@ int main(void)
                     MQTT_Init(&mqtt_cfg);
                     MQTT_SubscribeCommands(on_command_received);
                     last_ping = HAL_GetTick();
+
+                    /* Re-initialize camera after sleep wake-up */
+                    Camera_Init(CAMERA_DEFAULT_RESOLUTION);
                 }
             }
             /* else: awake mode — just keep polling next iteration */
@@ -878,25 +907,34 @@ void BSP_PB_Callback(Button_TypeDef Button)
 static void _do_button_capture(void)
 {
     s_button_task_id++;
+    uint32_t perf_start = HAL_GetTick();
     LOG_INFO(TAG_BOOT, "=== BUTTON CAPTURE (task_id=%lu) ===",
              (unsigned long)s_button_task_id);
 
     BSP_LED_On(LED_GREEN);
 
-    /* Initialize camera */
-    if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
-    {
-        LOG_ERROR(TAG_CAM, "Camera init failed for button capture");
-        BSP_LED_Off(LED_GREEN);
-        return;
-    }
-
-    /* Capture frame */
+    /* Use warm capture if camera is already initialized (boot-time init),
+     * otherwise fall back to cold init + standard capture. */
     uint32_t captured_size = 0;
-    CameraStatus_t cam_ret = Camera_CaptureFrame(
-        s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+    CameraStatus_t cam_ret;
 
-    Camera_DeInit();
+    if (Camera_IsInitialized())
+    {
+        cam_ret = Camera_WarmCapture(
+            s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+    }
+    else
+    {
+        LOG_WARN(TAG_CAM, "Camera cold — initializing for button capture");
+        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
+        {
+            LOG_ERROR(TAG_CAM, "Camera init failed for button capture");
+            BSP_LED_Off(LED_GREEN);
+            return;
+        }
+        cam_ret = Camera_CaptureFrame(
+            s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+    }
 
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
@@ -915,14 +953,17 @@ static void _do_button_capture(void)
         SERVER_UPLOAD_URL, (uint16_t)s_button_task_id,
         s_image_buffer, captured_size);
 
+    uint32_t total_ms = HAL_GetTick() - perf_start;
+
     if (wifi_ret == WIFI_OK)
     {
         snprintf(status_msg, sizeof(status_msg),
-                 "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,\"trigger\":\"button\"}",
+                 "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,\"trigger\":\"button\",\"latency_ms\":%lu}",
                  (unsigned long)s_button_task_id,
-                 (unsigned long)captured_size);
-        LOG_INFO(TAG_BOOT, "Upload OK — %lu bytes sent",
-                 (unsigned long)captured_size);
+                 (unsigned long)captured_size,
+                 (unsigned long)total_ms);
+        LOG_INFO(TAG_BOOT, "[PERF] Button capture complete: %lums total",
+                 (unsigned long)total_ms);
     }
     else
     {
@@ -934,7 +975,6 @@ static void _do_button_capture(void)
 
     MQTT_PublishStatus(status_msg);
 
-    /* Runtime RAM health check after button capture */
 #if STACK_WATERMARK_ENABLED
     RAM_CheckStackHighWater();
 #endif
@@ -949,25 +989,34 @@ static void _do_button_capture(void)
 static void _do_capture_now(void)
 {
     uint32_t task_id = s_capture_now_task_id;
+    uint32_t perf_start = HAL_GetTick();
     LOG_INFO(TAG_BOOT, "=== CAPTURE NOW (task_id=%lu) ===",
              (unsigned long)task_id);
 
     BSP_LED_On(LED_GREEN);
 
-    /* Initialize camera */
-    if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
-    {
-        LOG_ERROR(TAG_CAM, "Camera init failed for capture_now");
-        BSP_LED_Off(LED_GREEN);
-        return;
-    }
-
-    /* Capture frame */
+    /* Use warm capture if camera is already initialized (boot-time init),
+     * otherwise fall back to cold init + standard capture. */
     uint32_t captured_size = 0;
-    CameraStatus_t cam_ret = Camera_CaptureFrame(
-        s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+    CameraStatus_t cam_ret;
 
-    Camera_DeInit();
+    if (Camera_IsInitialized())
+    {
+        cam_ret = Camera_WarmCapture(
+            s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+    }
+    else
+    {
+        LOG_WARN(TAG_CAM, "Camera cold — initializing for capture_now");
+        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
+        {
+            LOG_ERROR(TAG_CAM, "Camera init failed for capture_now");
+            BSP_LED_Off(LED_GREEN);
+            return;
+        }
+        cam_ret = Camera_CaptureFrame(
+            s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+    }
 
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
@@ -986,14 +1035,17 @@ static void _do_capture_now(void)
         SERVER_UPLOAD_URL, (uint16_t)task_id,
         s_image_buffer, captured_size);
 
+    uint32_t total_ms = HAL_GetTick() - perf_start;
+
     if (wifi_ret == WIFI_OK)
     {
         snprintf(status_msg, sizeof(status_msg),
-                 "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,\"trigger\":\"mqtt_capture_now\"}",
+                 "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,\"trigger\":\"mqtt_capture_now\",\"latency_ms\":%lu}",
                  (unsigned long)task_id,
-                 (unsigned long)captured_size);
-        LOG_INFO(TAG_BOOT, "Upload OK — %lu bytes sent",
-                 (unsigned long)captured_size);
+                 (unsigned long)captured_size,
+                 (unsigned long)total_ms);
+        LOG_INFO(TAG_BOOT, "[PERF] Capture now complete: %lums total",
+                 (unsigned long)total_ms);
     }
     else
     {
@@ -1039,12 +1091,16 @@ static void _do_capture_sequence(void)
 
     BSP_LED_On(LED_GREEN);
 
-    /* Initialize camera ONCE for the entire sequence */
-    if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
+    /* Ensure camera is initialized (should already be warm from boot) */
+    if (!Camera_IsInitialized())
     {
-        LOG_ERROR(TAG_CAM, "Camera init failed for sequence");
-        BSP_LED_Off(LED_GREEN);
-        return;
+        LOG_WARN(TAG_CAM, "Camera cold — initializing for sequence");
+        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
+        {
+            LOG_ERROR(TAG_CAM, "Camera init failed for sequence");
+            BSP_LED_Off(LED_GREEN);
+            return;
+        }
     }
 
     /* Record the sequence start time for precise ms-offset timing */
@@ -1066,9 +1122,9 @@ static void _do_capture_sequence(void)
             HAL_Delay(wait);
         }
 
-        /* Capture frame */
+        /* Use warm capture — sensor is already converged */
         uint32_t captured_size = 0;
-        CameraStatus_t cam_ret = Camera_CaptureFrame(
+        CameraStatus_t cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
 
         uint32_t capture_tick = HAL_GetTick() - sequence_start;
@@ -1111,9 +1167,9 @@ static void _do_capture_sequence(void)
         }
     }
 
-    Camera_DeInit();
+    /* Do NOT deinit camera — keep warm for next capture */
 
-    LOG_INFO(TAG_BOOT, "Sequence complete — %lu captures in %lums",
+    LOG_INFO(TAG_BOOT, "[PERF] Sequence complete — %lu captures in %lums",
              (unsigned long)count,
              (unsigned long)(HAL_GetTick() - sequence_start));
 

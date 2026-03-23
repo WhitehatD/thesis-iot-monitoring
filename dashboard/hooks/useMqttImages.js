@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import mqtt from "mqtt";
 
-const MQTT_TOPIC = "dashboard/images/new";
+const MQTT_TOPIC_IMAGES = "dashboard/images/new";
+const MQTT_TOPIC_STATUS = "device/stm32/status";
 
 /**
  * Custom hook: connects to Mosquitto via MQTT-over-WebSocket,
@@ -13,6 +14,7 @@ const MQTT_TOPIC = "dashboard/images/new";
 export function useMqttImages() {
     const [images, setImages] = useState([]);
     const [status, setStatus] = useState("disconnected"); // connected | disconnected | connecting
+    const [deviceStatus, setDeviceStatus] = useState(null); // live device state from MQTT
     const [toasts, setToasts] = useState([]);
     const clientRef = useRef(null);
 
@@ -68,26 +70,45 @@ export function useMqttImages() {
 
         client.on("connect", () => {
             setStatus("connected");
-            client.subscribe(MQTT_TOPIC, { qos: 0 });
-            console.log("✓ MQTT connected, subscribed to", MQTT_TOPIC);
+            client.subscribe(MQTT_TOPIC_IMAGES, { qos: 0 });
+            client.subscribe(MQTT_TOPIC_STATUS, { qos: 0 });
+            console.log("✓ MQTT connected, subscribed to", MQTT_TOPIC_IMAGES, "and", MQTT_TOPIC_STATUS);
         });
 
-        client.on("message", (_topic, payload) => {
+        client.on("message", (topic, payload) => {
             try {
-                const meta = JSON.parse(payload.toString());
+                const data = JSON.parse(payload.toString());
+
+                if (topic === MQTT_TOPIC_STATUS) {
+                    // Live device status update (capturing, uploading, online, etc.)
+                    setDeviceStatus({ ...data, receivedAt: Date.now() });
+
+                    // Auto-clear status after 30s of no updates
+                    setTimeout(() => {
+                        setDeviceStatus((prev) =>
+                            prev && Date.now() - prev.receivedAt > 25000 ? null : prev
+                        );
+                    }, 30000);
+                    return;
+                }
+
+                // Image notification
                 const newImage = {
-                    ...meta,
-                    url: `${apiBase}${meta.url}`,
+                    ...data,
+                    url: `${apiBase}${data.url}`,
                     isNew: true,
                 };
                 setImages((prev) => [newImage, ...prev]);
-                addToast(`📸 New capture: Task #${meta.task_id}`);
+                addToast(`📸 New capture: Task #${data.task_id}`);
+
+                // Clear device status — capture cycle complete
+                setDeviceStatus(null);
 
                 // Remove "new" flag after animation completes
                 setTimeout(() => {
                     setImages((prev) =>
                         prev.map((img) =>
-                            img.timestamp === meta.timestamp ? { ...img, isNew: false } : img
+                            img.timestamp === data.timestamp ? { ...img, isNew: false } : img
                         )
                     );
                 }, 3000);
@@ -114,5 +135,5 @@ export function useMqttImages() {
         };
     }, [mqttUrl, apiBase, fetchImages, addToast]);
 
-    return { images, status, toasts };
+    return { images, status, deviceStatus, toasts };
 }

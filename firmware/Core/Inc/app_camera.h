@@ -37,7 +37,14 @@ typedef enum {
 CameraStatus_t Camera_Init(CameraResolution_t resolution);
 
 /**
+ * @brief  Check if the camera is already initialized (warm).
+ * @retval 1 if initialized, 0 if not.
+ */
+uint8_t Camera_IsInitialized(void);
+
+/**
  * @brief  Capture a single frame into the provided buffer.
+ *         Includes warmup frames for cold-start AEC convergence.
  * @param  buffer: Pointer to destination buffer (must be large enough).
  * @param  buffer_size: Size of the buffer in bytes.
  * @param  captured_size: Output — actual number of bytes captured.
@@ -45,6 +52,18 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution);
  */
 CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
                                     uint32_t *captured_size);
+
+/**
+ * @brief  Zero-overhead warm capture — single frame, no init, no warmup.
+ *         Use when camera is already initialized and AEC has converged.
+ *         This is the enterprise fast-path for sub-second captures.
+ * @param  buffer: Pointer to destination buffer.
+ * @param  buffer_size: Size of the buffer in bytes.
+ * @param  captured_size: Output — actual number of bytes captured.
+ * @retval CAMERA_OK on success.
+ */
+CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
+                                   uint32_t *captured_size);
 
 /**
  * @brief  Deinitialize the camera to save power before entering sleep.

@@ -28,7 +28,7 @@
 #define SERVER_UPLOAD_PATH          "/api/upload"
 #define SERVER_UPLOAD_URL           "http://" SERVER_HOST ":" "8000" SERVER_UPLOAD_PATH
 #define SERVER_TIME_PATH            "/api/time"
-#define HTTP_RESPONSE_TIMEOUT_MS   15000
+#define HTTP_RESPONSE_TIMEOUT_MS   8000
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  MQTT Broker Configuration
@@ -68,8 +68,8 @@
 #define CAMERA_FRAME_BUFFER_SIZE    (640 * 480 * 2)  /* 614,400 bytes — VGA RGB565 */
 
 /* ── Fast-Capture Tuning ──────────────────────────────── */
-#define CAMERA_WARMUP_FRAMES        3                 /* Frames to discard for AEC convergence */
-#define CAMERA_AEC_SETTLE_TIMEOUT_MS 1500             /* Max wait for AEC register convergence */
+#define CAMERA_WARMUP_FRAMES        1                 /* Frames to discard for AEC convergence (cold start only) */
+#define CAMERA_AEC_SETTLE_TIMEOUT_MS 800              /* Max wait for AEC register convergence */
 #define CAMERA_VTS_DEFAULT          0x07D0            /* VTS=2000 lines → ~12fps (83ms/frame) */
 #define CAMERA_INTER_FRAME_DELAY_MS 10                /* Brief ISP settle between snapshots */
 
@@ -101,7 +101,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Upload Optimization
  * ═══════════════════════════════════════════════════════════════════════════ */
-#define HTTP_UPLOAD_CHUNK_SIZE      8192   /* 8KB chunks with SPI yield between sends */
+#define HTTP_UPLOAD_CHUNK_SIZE      16384  /* 16KB chunks — halve SPI round-trips for 2× throughput */
 #define HTTP_UPLOAD_MAX_RETRIES     2      /* Retry full POST on socket connect failure */
 #define HTTP_UPLOAD_RETRY_DELAY_MS  500    /* Delay between retries */
 

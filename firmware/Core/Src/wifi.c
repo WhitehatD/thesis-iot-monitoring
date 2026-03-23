@@ -224,11 +224,11 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
             offset += sent;
             retries = 0;        /* Reset retry counter on progress */
 
-            /* Yield SPI pipeline between chunks — prevents RAM flooding
-             * on the EMW3080 co-processor. */
+            /* Minimal SPI yield between chunks — 2ms is sufficient for
+             * the EMW3080 to drain its TX buffer at SPI clock speeds. */
             if (offset < len)
             {
-                MX_WIFI_IO_YIELD(wifi_obj_get(), 10);
+                MX_WIFI_IO_YIELD(wifi_obj_get(), 2);
             }
         }
         else
@@ -240,7 +240,7 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
                           retries, (long)offset, (long)len);
                 return -1;
             }
-            HAL_Delay(100);     /* Brief pause before retry */
+            HAL_Delay(50);     /* Brief pause before retry */
         }
     }
     return 0;
@@ -267,6 +267,7 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
                                  const uint8_t *data, uint32_t data_len)
 {
     (void)url;  /* We construct the request from config constants */
+    uint32_t upload_start_tick = HAL_GetTick();
 
     if (!s_connected)
     {
@@ -429,6 +430,13 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
 
         if (status == WIFI_OK)
         {
+            /* ── PERF: Log upload throughput ── */
+            uint32_t upload_ms = HAL_GetTick() - upload_start_tick;
+            uint32_t kbps = (upload_ms > 0) ? (data_len / upload_ms) : 0;
+            LOG_INFO(TAG_HTTP, "[PERF] Upload: %lu bytes in %lums (%lu KB/s)",
+                     (unsigned long)data_len, (unsigned long)upload_ms,
+                     (unsigned long)kbps);
+
             final_status = WIFI_OK;
             break;  /* Success — no more retries */
         }

@@ -31,7 +31,7 @@ export default function ImageGrid({ images }) {
                         <img
                             src={img.url}
                             alt={`Capture — Task ${img.task_id}`}
-                            loading="lazy"
+                            loading={img.isNew ? "eager" : "lazy"}
                         />
                         <div className="image-overlay">
                             <span className="badge task-id">#{img.task_id}</span>
