@@ -13,7 +13,7 @@
 services:
   # ── Override server to use GHCR image ────────────────
   server:
-    image: ${SERVER_IMAGE:-ghcr.io/user/thesis-server:latest}
+    image: ${SERVER_IMAGE:-ghcr.io/whitehatd/thesis-server:latest}
     build: !reset null
     volumes:
       - server_data:/app/data
@@ -29,8 +29,11 @@ services:
 
   # ── Override dashboard to use GHCR image ─────────────
   dashboard:
-    image: ${DASHBOARD_IMAGE:-ghcr.io/user/thesis-dashboard:latest}
+    image: ${DASHBOARD_IMAGE:-ghcr.io/whitehatd/thesis-dashboard:latest}
     build: !reset null
+    environment:
+      - NEXT_PUBLIC_API_URL=http://${DEPLOY_HOST:-89.167.11.147}:8000
+      - NEXT_PUBLIC_MQTT_WS_URL=ws://${DEPLOY_HOST:-89.167.11.147}:9001
 
   # ── Watchtower — Auto-update containers ──────────────
   #
