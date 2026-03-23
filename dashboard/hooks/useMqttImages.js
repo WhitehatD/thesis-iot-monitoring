@@ -58,6 +58,7 @@ export function useMqttImages() {
 
     useEffect(() => {
         // Load existing images
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         fetchImages();
 
         // Connect to MQTT broker via WebSocket
