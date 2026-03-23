@@ -77,9 +77,8 @@ jobs:
           echo "📤 Uploading firmware v${FW_VERSION}..."
           
           HTTP_CODE=$(curl -s -o /tmp/upload_resp.json -w "%{http_code}" \
-            -X POST "${DEPLOY_URL}/api/firmware/upload" \
+            -X POST "${DEPLOY_URL}/api/firmware/upload?version=${FW_VERSION}" \
             -H "X-Firmware-Token: ${FIRMWARE_TOKEN}" \
-            -F "version=${FW_VERSION}" \
             -F "file=@firmware/build/thesis-iot-firmware.bin" \
             --connect-timeout 15 \
             --max-time 60) || true
