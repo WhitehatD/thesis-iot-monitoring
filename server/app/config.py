@@ -31,6 +31,10 @@ class Settings(BaseSettings):
 
     # ── Storage ─────────────────────────────────────────
     upload_dir: str = "./data/uploads"
+    firmware_dir: str = "./data/firmware"
+
+    # ── Firmware OTA ───────────────────────────────────
+    firmware_upload_token: str = ""  # API key for CI firmware uploads (empty = no auth)
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

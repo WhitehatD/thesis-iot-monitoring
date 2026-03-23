@@ -27,6 +27,7 @@
 #include "app_camera.h"
 #include "mqtt_handler.h"
 #include "scheduler.h"
+#include "ota_update.h"
 
 #include "cJSON.h"
 #include <string.h>
@@ -69,6 +70,9 @@ static uint32_t s_sequence_base_task_id = 30000;
 /* ── Sleep mode toggle (MQTT command) ───────────────────── */
 static volatile uint8_t s_sleep_enabled = 0;  /* 0 = awake (default), 1 = low power between tasks */
 
+/* ── OTA firmware update (MQTT command) ─────────────────── */
+static volatile uint8_t s_ota_requested = 0;
+
 /* Buffer to hold the raw JSON schedule from MQTT callback */
 static char s_schedule_json[SCHEDULE_JSON_MAX];
 
@@ -84,6 +88,7 @@ static void on_command_received(const char *json_str, uint32_t length);
 static void _do_button_capture(void);
 static void _do_capture_now(void);
 static void _do_capture_sequence(void);
+static void _do_ota_update(void);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Stack Watermark — Enterprise RAM Safety
@@ -295,6 +300,13 @@ static void on_command_received(const char *json_str, uint32_t length)
         LOG_INFO(TAG_MQTT, ">> DELETE_SCHEDULE — schedule cleared");
         MQTT_PublishStatus("{\"status\":\"schedule_cleared\"}");
     }
+    else if (type_str != NULL && strcmp(type_str, "firmware_update") == 0)
+    {
+        /* ── OTA firmware update — execute in main loop ── */
+        s_ota_requested = 1;
+        LOG_INFO(TAG_MQTT, ">> FIRMWARE_UPDATE command received");
+        MQTT_PublishStatus("{\"status\":\"ota_update_queued\"}");
+    }
     else
     {
         /* ── Schedule (default / legacy) ── parse inline, stay in MQTT loop ── */
@@ -341,6 +353,9 @@ int main(void)
     /* RTC for scheduled wake-ups */
     RTC_Init();
     LOG_INFO(TAG_BOOT, "RTC initialized");
+
+    /* ── OTA boot validation — must be early, after RTC init ── */
+    OTA_ValidateBoot();
 
     /* B3 USER button — instant capture trigger */
     BSP_PB_Init(BUTTON_USER, BUTTON_MODE_EXTI);
@@ -456,8 +471,12 @@ int main(void)
 
     /* ── Phase 3: Publish online status ─────────────── */
 
-    MQTT_PublishStatus("{\"status\":\"online\",\"firmware\":\"v0.2\"}");
-    LOG_INFO(TAG_BOOT, "Boot complete — waiting for commands...");
+    MQTT_PublishStatus("{\"status\":\"online\",\"firmware\":\"" FW_VERSION "\"}");
+    LOG_INFO(TAG_BOOT, "Boot complete (v%s) — waiting for commands...", FW_VERSION);
+
+    /* All subsystems initialized OK — mark boot as successful.
+     * This resets the OTA boot failure counter, preventing rollback. */
+    OTA_MarkBootSuccessful();
 
     /* ── Phase 4: Unified Main Loop ───────────────────
      *
@@ -469,8 +488,9 @@ int main(void)
      * The board stays awake and connected to MQTT by default.
      */
 
-    uint32_t poll_start = HAL_GetTick();
-    uint32_t last_ping  = HAL_GetTick();
+    uint32_t poll_start    = HAL_GetTick();
+    uint32_t last_ping     = HAL_GetTick();
+    uint32_t last_ota_check = HAL_GetTick();
 
     while (1)
     {
@@ -509,6 +529,22 @@ int main(void)
             s_button_capture_requested = 0;
             _do_button_capture();
             poll_start = HAL_GetTick();
+        }
+
+        /* ── Handle: OTA firmware update (MQTT command) ── */
+        if (s_ota_requested)
+        {
+            s_ota_requested = 0;
+            _do_ota_update();
+            poll_start = HAL_GetTick();
+        }
+
+        /* ── Periodic OTA version check (every 30 min) ── */
+        if ((HAL_GetTick() - last_ota_check) > OTA_CHECK_INTERVAL_MS)
+        {
+            last_ota_check = HAL_GetTick();
+            LOG_INFO(TAG_OTA, "Periodic firmware update check...");
+            OTA_CheckAndUpdate();  /* Only downloads if version differs */
         }
 
         /* ── Handle: Scheduled Tasks (RTC polling) ── */
@@ -1086,6 +1122,64 @@ static void _do_capture_sequence(void)
 #endif
 
     BSP_LED_Off(LED_GREEN);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  MQTT "firmware_update" — OTA Update Handler
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void _do_ota_update(void)
+{
+    LOG_INFO(TAG_OTA, "=== FIRMWARE UPDATE REQUESTED ===");
+    MQTT_PublishStatus("{\"status\":\"ota_checking\"}");
+
+    OTAVersionInfo_t info;
+    OTAStatus_t status = OTA_CheckForUpdate(&info);
+
+    if (status == OTA_NO_UPDATE)
+    {
+        LOG_INFO(TAG_OTA, "Already up-to-date (v%s)", FW_VERSION);
+        MQTT_PublishStatus("{\"status\":\"ota_up_to_date\",\"firmware\":\"" FW_VERSION "\"}");
+        return;
+    }
+
+    if (status != OTA_OK)
+    {
+        LOG_ERROR(TAG_OTA, "Version check failed (err=%d)", status);
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "{\"status\":\"ota_error\",\"reason\":\"version_check_failed\",\"code\":%d}",
+                 status);
+        MQTT_PublishStatus(msg);
+        return;
+    }
+
+    /* Update available — download and flash */
+    char msg[256];
+    snprintf(msg, sizeof(msg),
+             "{\"status\":\"ota_downloading\",\"new_version\":\"%s\",\"size\":%lu}",
+             info.version, (unsigned long)info.size);
+    MQTT_PublishStatus(msg);
+
+    status = OTA_DownloadAndFlash(&info);
+    if (status != OTA_OK)
+    {
+        LOG_ERROR(TAG_OTA, "Download/flash failed (err=%d)", status);
+        snprintf(msg, sizeof(msg),
+                 "{\"status\":\"ota_error\",\"reason\":\"flash_failed\",\"code\":%d}",
+                 status);
+        MQTT_PublishStatus(msg);
+        return;
+    }
+
+    /* Success — swap banks and reset */
+    MQTT_PublishStatus("{\"status\":\"ota_rebooting\"}");
+    HAL_Delay(100);  /* Let MQTT message send before reset */
+
+    OTA_SwapBankAndReset();
+
+    /* If we get here, swap failed */
+    MQTT_PublishStatus("{\"status\":\"ota_error\",\"reason\":\"bank_swap_failed\"}");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

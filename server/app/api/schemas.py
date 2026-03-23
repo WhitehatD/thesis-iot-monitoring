@@ -128,3 +128,21 @@ class ScheduleActivateOut(BaseModel):
     schedule_id: int
     status: str = "activated"
     mqtt_payload: str
+
+
+# ── Firmware OTA ─────────────────────────────────────────
+
+class FirmwareVersionResponse(BaseModel):
+    """Firmware version metadata returned to the STM32 board."""
+    version: str = Field(..., description="Semantic version string", examples=["0.3"])
+    size: int = Field(..., description="Binary size in bytes")
+    crc32: int = Field(..., description="CRC32 checksum (MPEG-2 polynomial)")
+    filename: str = Field(default="firmware.bin")
+
+
+class FirmwareUploadResponse(BaseModel):
+    """Response after a firmware binary upload from CI."""
+    version: str
+    size: int
+    crc32: int
+    status: str = "uploaded"

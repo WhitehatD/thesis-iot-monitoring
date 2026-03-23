@@ -50,6 +50,7 @@ void Debug_Print(const char *level, const char *tag, const char *fmt, ...);
 #define TAG_SCHED "SCHD"
 #define TAG_HTTP  "HTTP"
 #define TAG_PWR   "PWR "
+#define TAG_OTA   "OTA "
 
 #else  /* DEBUG_LOG_ENABLED == 0 */
 

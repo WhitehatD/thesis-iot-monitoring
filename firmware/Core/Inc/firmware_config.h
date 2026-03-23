@@ -105,4 +105,17 @@
 #define HTTP_UPLOAD_MAX_RETRIES     2      /* Retry full POST on socket connect failure */
 #define HTTP_UPLOAD_RETRY_DELAY_MS  500    /* Delay between retries */
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  OTA (Over-The-Air) Firmware Update
+ *
+ *  Enterprise OTA using STM32U585 dual-bank flash.
+ *  Board polls the server for new versions and auto-flashes if available.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define FW_VERSION                  "0.2"          /* Current firmware version string */
+#define OTA_CHECK_INTERVAL_MS       (30 * 60 * 1000)  /* Check every 30 minutes */
+#define OTA_DOWNLOAD_CHUNK_SIZE     8192           /* 8KB download chunks */
+#define OTA_MAX_FW_SIZE             (896 * 1024)   /* 896KB max — leave room for vector table */
+#define OTA_VERSION_PATH            "/api/firmware/version"
+#define OTA_DOWNLOAD_PATH           "/api/firmware/download"
+
 #endif /* __FIRMWARE_CONFIG_H */

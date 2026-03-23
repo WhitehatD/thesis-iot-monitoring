@@ -16,6 +16,8 @@
   <img src="https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=next.js&logoColor=white" alt="Next.js" />
   <img src="https://img.shields.io/badge/MQTT-3.1.1-660066?style=for-the-badge&logo=eclipsemosquitto&logoColor=white" alt="MQTT" />
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI/CD" />
+  <img src="https://img.shields.io/badge/OTA-Dual_Bank_Flash-FF6F00?style=for-the-badge&logo=lightning&logoColor=white" alt="OTA" />
 </p>
 
 ---
@@ -33,6 +35,8 @@
 - [Configuration](#configuration)
 - [MQTT Protocol](#mqtt-protocol)
 - [API Reference](#api-reference)
+- [OTA Firmware Updates](#ota-firmware-updates)
+- [CI/CD Pipeline](#cicd-pipeline)
 - [Dashboard](#dashboard)
 - [Firmware Modules](#firmware-modules)
 - [AI Analysis Pipeline](#ai-analysis-pipeline)
@@ -53,6 +57,8 @@ An end-to-end autonomous visual monitoring system designed for industrial and en
 - 🌐 **Real-time dashboard** — live image feed, schedule management, and device status
 - 💤 **Configurable sleep mode** — toggle between always-awake polling and low-power STOP2
 - 🔄 **Full-stack Docker** — one-command deployment with health checks
+- 🚀 **OTA firmware updates** — dual-bank flash with CRC32 verification and automatic rollback
+- ⚡ **CI/CD pipeline** — GitHub Actions → GHCR → Watchtower auto-deploy on every push
 
 ---
 
@@ -71,6 +77,7 @@ An end-to-end autonomous visual monitoring system designed for industrial and en
                          │  FastAPI Server :8000           │
                          │  ├── Scheduler Service          │
                          │  ├── Image Upload + Storage     │
+                         │  ├── Firmware OTA Management    │
                          │  ├── AI Analysis (Gemini/vLLM)  │
                          │  └── SQLite (async) Database    │
                          └────────────────────────────────┘
@@ -81,10 +88,12 @@ An end-to-end autonomous visual monitoring system designed for industrial and en
 | Path | Protocol | Direction | Description |
 |------|----------|-----------|-------------|
 | Board → Server | HTTP POST | Upload | Raw RGB565 image frames (614 KB each) |
-| Server → Board | MQTT | Command | Schedule activation, capture triggers, sleep toggle |
-| Board → Server | MQTT | Status | Online/executing/uploaded/error status messages |
+| Board → Server | HTTP GET | OTA | Version check + firmware binary download |
+| Server → Board | MQTT | Command | Schedules, captures, sleep toggle, firmware updates |
+| Board → Server | MQTT | Status | Online/executing/uploaded/OTA status messages |
 | Server → Dashboard | MQTT WS | Real-time | Image notifications, status updates |
 | Dashboard → Server | HTTP REST | Control | CRUD schedules, trigger captures, toggle sleep |
+| CI → Server | HTTP POST | Deploy | Upload new firmware binary from GitHub Actions |
 
 ---
 
@@ -95,11 +104,12 @@ thesis-iot-monitoring/
 ├── firmware/                    # STM32 bare-metal firmware (C)
 │   ├── Core/
 │   │   ├── Inc/                 # Header files
-│   │   │   ├── firmware_config.h    # Wi-Fi, server, camera settings
+│   │   │   ├── firmware_config.h    # Wi-Fi, server, camera, OTA settings
 │   │   │   ├── scheduler.h          # Task scheduling structs & API
 │   │   │   ├── mqtt_handler.h       # MQTT 3.1.1 client API
 │   │   │   ├── wifi.h               # Wi-Fi + HTTP abstraction
 │   │   │   ├── app_camera.h         # OV5640 camera driver API
+│   │   │   ├── ota_update.h         # OTA firmware update API
 │   │   │   └── debug_log.h          # Leveled logging (INFO/DBG/WARN/ERR)
 │   │   └── Src/                 # Implementation files
 │   │       ├── main.c               # Application entry — unified main loop
@@ -107,6 +117,7 @@ thesis-iot-monitoring/
 │   │       ├── mqtt_handler.c       # Bare-metal MQTT 3.1.1 client
 │   │       ├── wifi.c               # EMW3080 Wi-Fi + HTTP POST
 │   │       ├── camera.c             # OV5640 DCMI capture driver
+│   │       ├── ota_update.c         # Dual-bank flash OTA update engine
 │   │       └── mx_wifi_hw.c         # SPI transport for MXCHIP module
 │   ├── Drivers/                 # STM32 HAL, BSP, component drivers
 │   ├── Makefile                 # ARM GCC build system
@@ -119,6 +130,7 @@ thesis-iot-monitoring/
 │   │   ├── api/
 │   │   │   ├── routes.py            # Image upload, time sync, health
 │   │   │   ├── scheduler_routes.py  # Schedule CRUD + MQTT activation
+│   │   │   ├── firmware_routes.py   # OTA: version check, download, upload
 │   │   │   └── schemas.py           # Pydantic request/response models
 │   │   ├── db/
 │   │   │   ├── database.py          # Async SQLAlchemy engine + session
@@ -129,7 +141,7 @@ thesis-iot-monitoring/
 │   │   │   └── service.py           # Schedule business logic
 │   │   ├── analysis/                # AI analysis pipeline
 │   │   └── planning/                # AI planning module
-│   ├── tests/                   # Pytest test suite
+│   ├── tests/                   # Pytest test suite (27 tests)
 │   ├── requirements.txt         # Python dependencies
 │   ├── Dockerfile               # Server container image
 │   └── .env.example             # Environment variable template
@@ -149,7 +161,10 @@ thesis-iot-monitoring/
 ├── mosquitto/                   # MQTT broker configuration
 │   └── mosquitto.conf               # Listeners, persistence, logging
 │
-├── docker-compose.yml           # Full-stack orchestration
+├── .github/workflows/
+│   └── ci.yml                       # CI/CD: test → build → push GHCR
+├── docker-compose.yml           # Development orchestration
+├── docker-compose.prod.yml      # Production overlay (Watchtower)
 └── scripts/                     # Utility scripts
 ```
 
@@ -300,6 +315,8 @@ python monitor.py
 | `GEMINI_API_KEY` | *(required)* | Google Gemini API key |
 | `GEMINI_MODEL` | `gemini-3-flash` | Gemini model variant |
 | `UPLOAD_DIR` | `./data/uploads` | Image storage directory |
+| `FIRMWARE_DIR` | `./data/firmware` | OTA firmware binary storage |
+| `FIRMWARE_UPLOAD_TOKEN` | *(optional)* | API key for CI firmware uploads |
 
 ### Firmware Configuration (`firmware_config.h`)
 
@@ -313,6 +330,9 @@ python monitor.py
 | `SCHEDULER_MQTT_WAIT_TOTAL_S` | Idle timeout before standby |
 | `STACK_WATERMARK_ENABLED` | Enable runtime stack usage tracking |
 | `DEEP_SLEEP_ON_COMPLETE` | Enter Standby mode after all tasks |
+| `FW_VERSION` | Current firmware version string (e.g. `"0.2"`) |
+| `OTA_CHECK_INTERVAL_MS` | OTA version poll interval (default: 30 min) |
+| `OTA_MAX_FW_SIZE` | Maximum firmware binary size (896 KB) |
 
 ---
 
@@ -367,15 +387,26 @@ python monitor.py
 { "type": "delete_schedule", "schedule_id": 1 }
 ```
 
+#### Firmware Update (OTA trigger)
+
+```json
+{ "type": "firmware_update", "version": "0.3", "force": false }
+```
+
 ### Status Messages (Board → Server)
 
 ```json
-{ "status": "online", "firmware": "v0.2" }
+{ "status": "online", "firmware": "0.2" }
 { "status": "executing", "task_id": 1, "action": "CAPTURE_IMAGE" }
 { "status": "uploaded", "task_id": 1, "bytes": 614400 }
 { "status": "complete", "all_tasks_done": true }
 { "status": "error", "task_id": 1, "reason": "camera_init" }
 { "status": "schedule_cleared" }
+{ "status": "ota_checking" }
+{ "status": "ota_downloading", "new_version": "0.3", "size": 102400 }
+{ "status": "ota_rebooting" }
+{ "status": "ota_up_to_date", "firmware": "0.2" }
+{ "status": "ota_error", "reason": "version_check_failed", "code": 2 }
 ```
 
 ---
@@ -396,6 +427,14 @@ python monitor.py
 | `POST` | `/api/upload/{task_id}` | Upload raw RGB565 image frame |
 | `GET` | `/api/images` | List all captured images |
 | `GET` | `/api/images/{image_id}` | Get image by ID (JPEG) |
+
+### Firmware OTA
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/firmware/version` | Current firmware metadata (version, size, CRC32) |
+| `GET` | `/api/firmware/download` | Stream firmware binary to the board |
+| `POST` | `/api/firmware/upload` | Upload new firmware from CI (auth required) |
 
 ### Scheduler
 
@@ -435,10 +474,12 @@ The web dashboard provides real-time monitoring and control:
 ```
 1. SystemClock_Config()     → 160 MHz via PLL from MSI
 2. RTC_Init()               → LSE 32.768 kHz crystal
-3. WiFi_Init() + Connect()  → EMW3080 SPI + DHCP
-4. HTTP Time Sync           → GET /api/time → set RTC
-5. MQTT_Init() + Subscribe  → Connect broker + subscribe commands
-6. Main Loop (forever)      → Poll MQTT + RTC, execute tasks
+3. OTA_ValidateBoot()       → Check boot counter, rollback if 3× failure
+4. WiFi_Init() + Connect()  → EMW3080 SPI + DHCP
+5. HTTP Time Sync           → GET /api/time → set RTC
+6. MQTT_Init() + Subscribe  → Connect broker + subscribe commands
+7. OTA_MarkBootSuccessful() → Reset boot failure counter
+8. Main Loop (forever)      → Poll MQTT + RTC + OTA check (30 min)
 ```
 
 ### Module Map
@@ -450,6 +491,7 @@ The web dashboard provides real-time monitoring and control:
 | **MQTT** | `mqtt_handler.c/h` | Bare-metal MQTT 3.1.1 (CONNECT, SUBSCRIBE, PUBLISH, PING) |
 | **Wi-Fi** | `wifi.c/h` | EMW3080 init, connect, HTTP GET/POST, image upload |
 | **Camera** | `camera.c/h` | OV5640 DCMI capture, AEC convergence, multi-frame warmup |
+| **OTA** | `ota_update.c/h` | Dual-bank flash OTA: download, verify, swap, rollback |
 | **SPI Transport** | `mx_wifi_hw.c` | Low-level SPI + handshake for MXCHIP module |
 | **Logging** | `debug_log.c/h` | Timestamped leveled logging (`INFO`/`DBG`/`WARN`/`ERR`) |
 | **JSON** | `cJSON.c/h` | Lightweight JSON parser for MQTT payloads |
@@ -482,6 +524,74 @@ The pipeline:
 
 ---
 
+## OTA Firmware Updates
+
+The system supports **over-the-air firmware updates** using the STM32U585's dual-bank flash architecture.
+
+### How It Works
+
+```
+┌──────────────┐     HTTP GET       ┌──────────────────┐
+│  STM32 Board │────────────────────►│  /firmware/version│ ← version check
+│              │                    └──────────────────┘
+│  (every 30m) │     HTTP GET       ┌──────────────────┐
+│              │────────────────────►│ /firmware/download│ ← stream .bin
+│              │                    └──────────────────┘
+│  Inactive    │
+│  Flash Bank  │ ← write chunks, CRC32 verify
+│              │
+│  OB_Launch() │ ← atomic bank swap + system reset
+└──────────────┘
+```
+
+### Safety Guarantees
+
+| Feature | Implementation |
+|---------|----------------|
+| **Atomic swap** | Single Option Byte write swaps the active flash bank |
+| **Old firmware preserved** | Previous firmware stays intact on the other bank |
+| **Automatic rollback** | Boot counter in RTC backup register — 3 failures → revert |
+| **Integrity check** | CRC32 verification before bank swap |
+| **Graceful failure** | Download errors leave current firmware running |
+| **Push + Poll** | Server pushes via MQTT, board also polls every 30 min |
+
+---
+
+## CI/CD Pipeline
+
+### GitHub Actions Workflow
+
+```
+git push main
+    ├── Stage 1: pytest (27 tests)
+    ├── Stage 2: Docker build + push to GHCR
+    └── Stage 3: Watchtower auto-pulls on server
+```
+
+### Production Deployment
+
+```bash
+# Deploy with production overlay (GHCR images + Watchtower)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# Watchtower polls GHCR every 5 minutes for new images
+# New pushes to main → automatic container restart
+```
+
+### Manual Firmware Upload (CI)
+
+```bash
+# Upload a new firmware binary to the server
+curl -X POST http://server:8000/api/firmware/upload \
+  -H "X-Firmware-Token: $FIRMWARE_UPLOAD_TOKEN" \
+  -F "version=0.3" \
+  -F "file=@build/firmware.bin"
+
+# The server computes CRC32 and notifies the board via MQTT
+```
+
+---
+
 ## Development
 
 ### Server (Local)
@@ -510,6 +620,7 @@ npm run dev
 cd server
 pip install -r requirements-dev.txt
 pytest tests/ -v
+# 27 tests: capture flow + scheduler + firmware OTA
 ```
 
 ### Serial Monitor
@@ -534,6 +645,8 @@ python monitor.py
 | **RTC time is wrong** | Board syncs RTC from `/api/time` on boot. Ensure server timezone is correct (`TZ` env var). |
 | **Schedule doesn't execute** | Verify schedule is activated (POST `/{id}/activate`). Check serial logs for task polling. |
 | **Docker build fails** | Run `docker-compose build --no-cache` for a clean rebuild. |
+| **OTA boot loop** | After 3 failed boots, board auto-reverts to previous firmware. Check serial logs for `OTA_ValidateBoot`. |
+| **OTA CRC mismatch** | Firmware binary may be corrupted during upload. Re-upload via `/api/firmware/upload`. |
 | **Serial monitor can't open port** | Close STM32CubeIDE/other serial tools. Check COM port in Device Manager. |
 
 ---

@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Production Docker Compose — Thesis IoT Visual Monitoring
+#
+#  Deploy with:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+#  Differences from dev compose:
+#    - Uses GHCR images instead of local builds
+#    - Adds Watchtower for automatic container updates
+#    - Mounts firmware volume for OTA binary storage
+#    - No hot-reload volume mounts
+# ═══════════════════════════════════════════════════════════════════════════
+
+services:
+  # ── Override server to use GHCR image ────────────────
+  server:
+    image: ${SERVER_IMAGE:-ghcr.io/user/thesis-server:latest}
+    build: !reset null
+    volumes:
+      - server_data:/app/data
+      - firmware_data:/app/data/firmware
+    environment:
+      - MQTT_BROKER_HOST=mosquitto
+      - MQTT_BROKER_PORT=1883
+      - DATABASE_URL=sqlite+aiosqlite:///./data/thesis.db
+      - VLLM_BASE_URL=http://host.docker.internal:8001/v1
+      - FIRMWARE_DIR=/app/data/firmware
+      - FIRMWARE_UPLOAD_TOKEN=${FIRMWARE_UPLOAD_TOKEN:-}
+      - TZ=Europe/Brussels
+
+  # ── Override dashboard to use GHCR image ─────────────
+  dashboard:
+    image: ${DASHBOARD_IMAGE:-ghcr.io/user/thesis-dashboard:latest}
+    build: !reset null
+
+  # ── Watchtower — Auto-update containers ──────────────
+  #
+  #  Polls GHCR every 5 minutes for new images.
+  #  When a new image is detected, pulls it and restarts the container.
+  #  This is the "git push → auto-deploy" mechanism.
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: thesis-watchtower
+    environment:
+      - WATCHTOWER_POLL_INTERVAL=300       # Check every 5 minutes
+      - WATCHTOWER_CLEANUP=true            # Remove old images
+      - WATCHTOWER_INCLUDE_RESTARTING=true
+      - WATCHTOWER_LABEL_ENABLE=false      # Watch ALL containers
+      - WATCHTOWER_NOTIFICATIONS=shoutrrr
+      - WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_CONFIG:-~/.docker}/config.json:/config.json:ro
+    restart: unless-stopped
+
+volumes:
+  firmware_data:
