@@ -41,9 +41,10 @@
 #define FLASH_PAGE_SIZE     (8 * 1024)       /* 8 KB per page */
 #define FLASH_PAGES_PER_BANK 128
 
-/* RTC Backup Register for boot counter (BKP0R is often used by HAL,
- * so we use BKP4R to avoid conflicts) */
-#define OTA_BOOT_COUNTER_REG   RTC->BKP4R
+/* TAMP Backup Register for boot counter (BKP0R..BKP3R may be used by HAL,
+ * so we use BKP4R to avoid conflicts).
+ * On STM32U5, backup registers are in the TAMP peripheral, NOT RTC. */
+#define OTA_BOOT_COUNTER_REG   TAMP->BKP4R
 #define OTA_MAX_BOOT_FAILURES  3
 
 /* ═══════════════════════════════════════════════════════════════════════════
