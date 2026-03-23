@@ -23,7 +23,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Server Configuration (FastAPI backend)
  * ═══════════════════════════════════════════════════════════════════════════ */
-#define SERVER_HOST                 "192.168.1.218"
+#define SERVER_HOST                 "89.167.11.147"
 #define SERVER_PORT                 8000
 #define SERVER_UPLOAD_PATH          "/api/upload"
 #define SERVER_UPLOAD_URL           "http://" SERVER_HOST ":" "8000" SERVER_UPLOAD_PATH
