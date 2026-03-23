@@ -180,3 +180,55 @@ async def upload_firmware(
         crc32=crc32,
         status="uploaded",
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  POST /api/firmware/notify
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/firmware/notify")
+async def notify_firmware_update(
+    commit_sha: str,
+    x_firmware_token: str | None = Header(None),
+):
+    """
+    CI/CD deploy notification — tells the STM32 board to check for updates.
+
+    Called by GitHub Actions after container images are built and pushed.
+    Publishes {"type": "firmware_update"} to MQTT so the board initiates
+    its OTA version-check flow.
+
+    Authentication: requires X-Firmware-Token header when configured.
+    """
+    from datetime import datetime, timezone
+
+    # ── Authentication ────────────────────────────────────
+    if settings.firmware_upload_token:
+        if x_firmware_token != settings.firmware_upload_token:
+            raise HTTPException(status_code=403, detail="Invalid firmware token")
+
+    # ── Publish OTA trigger to MQTT ──────────────────────
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    update_command = json.dumps({
+        "type": "firmware_update",
+        "source": "ci",
+        "commit": commit_sha,
+        "timestamp": timestamp,
+    })
+
+    try:
+        mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"MQTT publish failed: {exc}",
+        )
+
+    return {
+        "status": "notified",
+        "topic": settings.mqtt_topic_commands,
+        "commit": commit_sha,
+        "timestamp": timestamp,
+    }
+
