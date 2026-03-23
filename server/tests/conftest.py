@@ -28,7 +28,7 @@ def client():
     mock_mqtt.connection = AsyncMock()
     mock_mqtt.client = MagicMock()
     mock_mqtt.client.disconnect = AsyncMock()
-    mock_mqtt.publish = MagicMock()
+    mock_mqtt.publish = AsyncMock()
 
     # Create a fresh in-memory engine for each test
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
