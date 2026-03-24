@@ -7,7 +7,7 @@ import { useEffect, useState } from "react";
  * across image capture and OTA update lifecycles.
  *
  * Dynamically switches between capture steps and OTA steps based on
- * the current jobState.step value.
+ * the current jobState.step value. Shows per-step timing when available.
  */
 export default function DeviceStatusStepper({ jobState }) {
 	const [visible, setVisible] = useState(false);
@@ -29,7 +29,7 @@ export default function DeviceStatusStepper({ jobState }) {
 		{ id: "sending", label: "Sending", icon: "🚀" },
 		{ id: "received", label: "Job Received", icon: "📥" },
 		{ id: "camera_init", label: "Camera Init", icon: "⚙️" },
-		{ id: "capturing", label: "Capturing Image", icon: "📸" },
+		{ id: "capturing", label: "Capturing", icon: "📸" },
 		{ id: "uploading", label: "Uploading", icon: "📡" },
 		{ id: "finished", label: "Finished", icon: "✅" },
 	];
@@ -49,9 +49,30 @@ export default function DeviceStatusStepper({ jobState }) {
 	const getStepClass = (index) => {
 		if (jobState?.step === "error") return "error";
 		if (jobState?.step === "ota_up_to_date") return "completed";
-		if (index < currentStepIndex) return "completed";
+		if (index < currentStepIndex) return "completed dimmed";
 		if (index === currentStepIndex) return "active pulse";
 		return "pending";
+	};
+
+	/* ── Per-step timing ──────────────────────────────────── */
+	const getStepDuration = (stepId, stepIndex) => {
+		const timestamps = jobState?.stepTimestamps;
+		if (!timestamps || !timestamps[stepId]) return null;
+
+		const stepStartMs = timestamps[stepId];
+		// Find the next step's timestamp, or use now if this is the active step
+		const nextStep = steps[stepIndex + 1];
+		const endMs =
+			nextStep && timestamps[nextStep.id]
+				? timestamps[nextStep.id]
+				: stepIndex === currentStepIndex
+					? Date.now()
+					: null;
+
+		if (!endMs) return null;
+		const duration = endMs - stepStartMs;
+		if (duration < 1000) return `${duration}ms`;
+		return `${(duration / 1000).toFixed(1)}s`;
 	};
 
 	const ota = jobState?.otaProgress;
@@ -90,7 +111,16 @@ export default function DeviceStatusStepper({ jobState }) {
 						>
 							<div className="stepper-step">
 								<div className="step-icon">{step.icon}</div>
-								<div className="step-label">{step.label}</div>
+								<div className="step-text">
+									<div className="step-label">{step.label}</div>
+									{/* Per-step timing */}
+									{(() => {
+										const duration = getStepDuration(step.id, idx);
+										return duration ? (
+											<div className="step-duration">{duration}</div>
+										) : null;
+									})()}
+								</div>
 							</div>
 							{idx < steps.length - 1 && (
 								<div

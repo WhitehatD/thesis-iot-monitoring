@@ -1,5 +1,6 @@
 "use client";
 
+import BoardTelemetryPanel from "@/components/BoardTelemetryPanel";
 import CaptureButton from "@/components/CaptureButton";
 import ConnectionStatus from "@/components/ConnectionStatus";
 import DeviceStatusStepper from "@/components/DeviceStatusStepper";
@@ -16,6 +17,7 @@ export default function DashboardPage() {
 		isBoardOnline,
 		toasts,
 		startManualCapture,
+		boardTelemetry,
 	} = useMqttImages();
 
 	return (
@@ -36,6 +38,9 @@ export default function DashboardPage() {
 							className={`status-dot ${isBoardOnline ? "connected" : "disconnected"}`}
 						/>
 						{isBoardOnline ? "Board Online" : "Board Offline"}
+						{boardTelemetry?.firmware && (
+							<span className="firmware-chip">v{boardTelemetry.firmware}</span>
+						)}
 					</div>
 					<ConnectionStatus status={status} />
 					<CaptureButton onCaptureStart={startManualCapture} />
@@ -72,6 +77,12 @@ export default function DashboardPage() {
 					</div>
 				</div>
 			</div>
+
+			{/* ── Board Telemetry Panel ────────────────────────── */}
+			<BoardTelemetryPanel
+				boardTelemetry={boardTelemetry}
+				isBoardOnline={isBoardOnline}
+			/>
 
 			{/* ── Live Device Status ─────────────────────────────── */}
 			<DeviceStatusStepper jobState={jobState} />

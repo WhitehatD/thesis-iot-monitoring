@@ -26,6 +26,20 @@ export function useMqttImages() {
 	const [isBoardOnline, setIsBoardOnline] = useState(false);
 	const [toasts, setToasts] = useState([]);
 	const clientRef = useRef(null);
+
+	// ── Persistent Board Telemetry ──────────────────────────
+	const [boardTelemetry, setBoardTelemetry] = useState({
+		firmware: null,
+		lastSeen: null,
+		lastEvent: null,
+		captureStats: {
+			count: 0,
+			lastLatencyMs: null,
+			lastSizeBytes: null,
+			lastTrigger: null,
+		},
+		uptimeStart: null,
+	});
 	const boardTimeoutRef = useRef(null);
 
 	const mqttUrl =
@@ -126,6 +140,35 @@ export function useMqttImages() {
 						40000,
 					);
 
+					// ── Accumulate persistent board telemetry ──
+					setBoardTelemetry((prev) => {
+						const update = {
+							...prev,
+							lastSeen: Date.now(),
+							lastEvent: data.status,
+						};
+
+						// Extract firmware version from online pings
+						if (data.firmware) {
+							update.firmware = data.firmware;
+							if (!prev.uptimeStart) update.uptimeStart = Date.now();
+						}
+
+						// Extract capture performance on completion
+						if (data.status === "captured" || data.status === "uploaded") {
+							update.captureStats = {
+								count: prev.captureStats.count + 1,
+								lastLatencyMs:
+									data.latency_ms ?? prev.captureStats.lastLatencyMs,
+								lastSizeBytes:
+									data.size ?? data.bytes ?? prev.captureStats.lastSizeBytes,
+								lastTrigger: data.trigger ?? prev.captureStats.lastTrigger,
+							};
+						}
+
+						return update;
+					});
+
 					if (data.status === "online") {
 						return; // don't show generic online pings in the banner/stepper
 					}
@@ -216,6 +259,13 @@ export function useMqttImages() {
 									prev.step === "error"
 										? []
 										: prev.logs || [];
+								// Track step timestamps for per-step timing
+								const isNewJob = !prev.isActive && step !== "finished";
+								const prevTimestamps = isNewJob
+									? {}
+									: prev.stepTimestamps || {};
+								const stepTimestamps = { ...prevTimestamps };
+								if (!stepTimestamps[step]) stepTimestamps[step] = Date.now();
 								return {
 									isActive: true,
 									step,
@@ -226,6 +276,7 @@ export function useMqttImages() {
 											: null,
 									logs: [...prevLogs, newLog],
 									otaProgress: otaProgress || prev.otaProgress || null,
+									stepTimestamps,
 								};
 							});
 							if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
@@ -306,5 +357,6 @@ export function useMqttImages() {
 		isBoardOnline,
 		toasts,
 		startManualCapture,
+		boardTelemetry,
 	};
 }

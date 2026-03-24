@@ -15,6 +15,7 @@ import hashlib
 import os
 import struct
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, File, UploadFile, HTTPException, Header
@@ -31,6 +32,7 @@ router = APIRouter()
 FIRMWARE_DIR = Path(settings.firmware_dir)
 FIRMWARE_BIN = FIRMWARE_DIR / "firmware.bin"
 FIRMWARE_META = FIRMWARE_DIR / "firmware.json"
+DEPLOY_HISTORY = FIRMWARE_DIR / "deploy_history.json"
 
 
 def _compute_crc32(data: bytes) -> int:
@@ -63,6 +65,46 @@ def _save_metadata(meta: dict):
     FIRMWARE_DIR.mkdir(parents=True, exist_ok=True)
     with open(FIRMWARE_META, "w") as f:
         json.dump(meta, f, indent=2)
+
+
+def _append_deploy_history(entry: dict):
+    """Append a deploy event to the history log (max 50 entries)."""
+    FIRMWARE_DIR.mkdir(parents=True, exist_ok=True)
+    history = []
+    if DEPLOY_HISTORY.exists():
+        try:
+            with open(DEPLOY_HISTORY, "r") as f:
+                history = json.load(f)
+        except (json.JSONDecodeError, IOError):
+            history = []
+    history.append(entry)
+    history = history[-50:]  # Keep only last 50 entries
+    with open(DEPLOY_HISTORY, "w") as f:
+        json.dump(history, f, indent=2)
+
+
+def _load_deploy_history() -> list:
+    """Load deploy history from disk."""
+    if not DEPLOY_HISTORY.exists():
+        return []
+    try:
+        with open(DEPLOY_HISTORY, "r") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, IOError):
+        return []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GET /api/firmware/history
+# ══════════════════════════════════════════════════════════════════════════════
+
+@router.get("/firmware/history")
+async def get_firmware_history():
+    """
+    Return the firmware deployment history — a timeline of all CI/CD deploys
+    and OTA update triggers. Used by the dashboard to display version history.
+    """
+    return {"history": _load_deploy_history()}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -180,6 +222,15 @@ async def upload_firmware(
         # We don't fail the request because the file is safely saved on disk,
         # and the board will eventually fetch it on its 30-min polling cycle.
 
+    # ── Log to deploy history ────────────────────────────
+    _append_deploy_history({
+        "type": "firmware_upload",
+        "version": version,
+        "size": len(content),
+        "crc32": crc32,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+
     return FirmwareUploadResponse(
         version=version,
         size=len(content),
@@ -206,8 +257,6 @@ async def notify_firmware_update(
 
     Authentication: requires X-Firmware-Token header when configured.
     """
-    from datetime import datetime, timezone
-
     # ── Authentication ────────────────────────────────────
     if settings.firmware_upload_token:
         if x_firmware_token != settings.firmware_upload_token:
@@ -230,6 +279,13 @@ async def notify_firmware_update(
             status_code=503,
             detail=f"MQTT publish failed: {exc}",
         )
+
+    # ── Log to deploy history ────────────────────────────
+    _append_deploy_history({
+        "type": "firmware_notify",
+        "commit": commit_sha,
+        "timestamp": timestamp,
+    })
 
     return {
         "status": "notified",

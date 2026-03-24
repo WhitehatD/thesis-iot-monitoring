@@ -180,6 +180,16 @@ body {
 	color: var(--text-secondary);
 	font-family: "JetBrains Mono", monospace;
 }
+.firmware-chip {
+	padding: 2px 8px;
+	border-radius: 999px;
+	background: rgba(56, 189, 248, 0.12);
+	border: 1px solid rgba(56, 189, 248, 0.3);
+	color: var(--accent-blue);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+}
 .connection-badge {
 	display: flex;
 	align-items: center;
@@ -1005,6 +1015,173 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 }
 
 /* ═══════════════════════════════════════════════════════════
+   Board Telemetry Panel
+   ═══════════════════════════════════════════════════════════ */
+.board-telemetry-panel {
+	margin: 0 40px;
+	padding: 20px 28px;
+	background: var(--bg-glass);
+	backdrop-filter: blur(20px) saturate(160%);
+	-webkit-backdrop-filter: blur(20px) saturate(160%);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	border-radius: var(--radius-lg);
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+	position: relative;
+	overflow: hidden;
+	animation: card-enter 0.5s ease-out both;
+	transform: translateZ(0);
+}
+.board-telemetry-panel::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgba(56, 189, 248, 0.4) 50%,
+		transparent 100%
+	);
+}
+.telemetry-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+.telemetry-title {
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 1.2px;
+	color: var(--text-muted);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+.telemetry-pulse {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+}
+.telemetry-pulse.online {
+	background: var(--accent-emerald);
+	box-shadow: 0 0 8px var(--accent-emerald-glow);
+	animation: pulse-dot 2s infinite;
+}
+.telemetry-pulse.offline {
+	background: var(--text-muted);
+}
+.firmware-badge {
+	padding: 4px 12px;
+	border-radius: 999px;
+	background: linear-gradient(
+		135deg,
+		rgba(56, 189, 248, 0.15) 0%,
+		rgba(129, 140, 248, 0.15) 100%
+	);
+	border: 1px solid rgba(56, 189, 248, 0.3);
+	color: var(--accent-blue);
+	font-family: "JetBrains Mono", monospace;
+	font-size: 12px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+	position: relative;
+}
+.firmware-badge::after {
+	content: "";
+	position: absolute;
+	inset: -2px;
+	border-radius: inherit;
+	background: var(--gradient-hero);
+	filter: blur(8px);
+	opacity: 0.2;
+	z-index: -1;
+}
+.telemetry-grid {
+	display: grid;
+	grid-template-columns: repeat(6, 1fr);
+	gap: 16px;
+}
+.telemetry-item {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.telemetry-label {
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.8px;
+}
+.telemetry-value {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 14px;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+.telemetry-value.value-online {
+	color: var(--accent-emerald);
+}
+.telemetry-value.value-stale {
+	color: var(--text-muted);
+}
+
+.telemetry-history-section {
+	margin-top: 24px;
+	padding-top: 16px;
+	border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.telemetry-history-title {
+	font-size: 11px;
+	font-weight: 700;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	margin-bottom: 12px;
+}
+.telemetry-history-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.history-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 8px 12px;
+	background: rgba(0, 0, 0, 0.2);
+	border: 1px solid rgba(255, 255, 255, 0.03);
+	border-radius: var(--radius-sm);
+	font-size: 12px;
+}
+.history-badge {
+	padding: 2px 6px;
+	border-radius: 4px;
+	background: rgba(245, 158, 11, 0.1);
+	color: var(--accent-amber);
+	font-size: 9px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	font-family: "JetBrains Mono", monospace;
+}
+.history-detail {
+	flex: 1;
+	font-family: "JetBrains Mono", monospace;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+.history-time {
+	font-size: 11px;
+	color: var(--text-muted);
+	font-family: "Inter", sans-serif;
+}
+
+/* ═══════════════════════════════════════════════════════════
    Device Status Banner
    ═══════════════════════════════════════════════════════════ */
 .device-status-banner {
@@ -1141,7 +1318,7 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 10px;
+	gap: 8px;
 	position: relative;
 	z-index: 2;
 	width: 100px;
@@ -1159,11 +1336,25 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 	transition: all 0.4s ease;
 	box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
 }
+.step-text {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+}
 .step-label {
 	font-size: 13px;
 	font-weight: 600;
 	color: var(--text-muted);
 	transition: color 0.4s ease;
+	white-space: nowrap;
+}
+.step-duration {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--accent-blue);
+	opacity: 0.8;
 	white-space: nowrap;
 }
 
@@ -1194,40 +1385,63 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 	background: rgba(16, 185, 129, 0.15);
 	border-color: var(--accent-emerald);
 	color: var(--accent-emerald);
-	box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);
+	box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
 }
 .stepper-step-container.completed .step-label {
-	color: var(--text-primary);
+	color: var(--text-secondary);
 }
 .stepper-step-container.completed .step-line::after,
 .stepper-step-container.completed .active-line::after {
 	width: 100%;
 }
+/* Dim completed steps for visual hierarchy */
+.stepper-step-container.dimmed {
+	opacity: 0.55;
+	transition: opacity 0.4s ease;
+}
+.stepper-step-container.dimmed:hover {
+	opacity: 0.85;
+}
+.stepper-step-container.completed .step-duration {
+	color: var(--accent-emerald);
+}
 
 .stepper-step-container.active .step-icon {
-	background: rgba(56, 189, 248, 0.2);
+	background: rgba(56, 189, 248, 0.25);
 	border-color: var(--accent-blue);
 	color: var(--accent-blue);
-	transform: scale(1.15);
-	box-shadow: 0 0 20px rgba(56, 189, 248, 0.5);
+	transform: scale(1.2);
+	box-shadow:
+		0 0 24px rgba(56, 189, 248, 0.6),
+		0 0 48px rgba(56, 189, 248, 0.2);
 }
 .stepper-step-container.active.pulse .step-icon {
-	animation: step-pulse 2s infinite;
+	animation: step-pulse 1.5s infinite;
 }
 .stepper-step-container.active .step-label {
-	color: var(--accent-blue);
+	color: #fff;
 	font-weight: 700;
-	text-shadow: 0 0 10px rgba(56, 189, 248, 0.3);
+	text-shadow: 0 0 12px rgba(56, 189, 248, 0.5);
+}
+.stepper-step-container.active .step-duration {
+	color: var(--accent-blue);
+	animation: badge-pulse-opacity 2s infinite;
 }
 @keyframes step-pulse {
 	0% {
-		box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5);
+		box-shadow:
+			0 0 24px rgba(56, 189, 248, 0.6),
+			0 0 0 0 rgba(56, 189, 248, 0.5);
 	}
 	70% {
-		box-shadow: 0 0 0 15px rgba(56, 189, 248, 0);
+		box-shadow:
+			0 0 24px rgba(56, 189, 248, 0.6),
+			0 0 0 18px rgba(56, 189, 248, 0);
 	}
 	100% {
-		box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+		box-shadow:
+			0 0 24px rgba(56, 189, 248, 0.6),
+			0 0 0 0 rgba(56, 189, 248, 0);
 	}
 }
 
@@ -1375,6 +1589,17 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 		padding: 12px 16px;
 		font-size: 13px;
 	}
+	.board-telemetry-panel {
+		margin: 0 16px;
+		padding: 16px;
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
+		background: #101623 !important;
+	}
+	.telemetry-grid {
+		grid-template-columns: repeat(3, 1fr);
+		gap: 12px;
+	}
 	.stepper-banner {
 		margin: 0 16px -10px 16px;
 		padding: 16px;
@@ -1393,6 +1618,9 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 		flex-direction: row;
 		width: 100%;
 		margin-bottom: 8px;
+	}
+	.step-text {
+		align-items: flex-start;
 	}
 	.step-line {
 		width: 4px;
