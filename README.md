@@ -79,7 +79,7 @@ graph TD
 
     WIFI -- "MQTT (Commands, Status)" <--> Broker
     WIFI -- "HTTP POST (Raw Image)" --> Server
-    WIFI -- "HTTP GET (OTA Binary)" <-- Server
+    Server -- "HTTP GET (OTA Binary)" --> WIFI
     
     Server -- "REST API" <--> Dash
     Broker -- "WebSockets :9001" <--> Dash
