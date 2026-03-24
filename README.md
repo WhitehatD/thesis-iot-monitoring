@@ -6,7 +6,7 @@
   <p align="center">
     <em>Bachelor Thesis — Computer Science & Engineering</em>
     <br/>
-    <sub>by <strong>Alexandru-Ionut Cioc</strong></sub>
+    <sub>by <strong>Alexandru Cioc (WhitehatD)</strong></sub>
   </p>
 </p>
 
