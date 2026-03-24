@@ -523,6 +523,9 @@ int main(void)
      * Enterprise optimization: initialize the camera ONCE at boot.
      * The sensor stays powered and AEC-converged, enabling sub-second
      * warm captures for the entire uptime of the board. */
+#if WATCHDOG_ENABLED
+    HAL_IWDG_Refresh(&hiwdg);
+#endif
     if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
     {
         LOG_ERROR(TAG_BOOT, "WARNING: Camera init failed at boot — captures will cold-start");
