@@ -24,6 +24,7 @@ export default function DeviceStatusStepper({ jobState }) {
 	const steps = [
 		{ id: "sending", label: "Sending", icon: "🚀" },
 		{ id: "received", label: "Job Received", icon: "📥" },
+		{ id: "camera_init", label: "Camera Init", icon: "⚙️" },
 		{ id: "capturing", label: "Capturing Image", icon: "📸" },
 		{ id: "uploading", label: "Uploading", icon: "📡" },
 		{ id: "finished", label: "Finished", icon: "✅" },

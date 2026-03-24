@@ -647,12 +647,18 @@ int main(void)
                     /* Use warm capture if camera is already initialized */
                     if (Camera_IsInitialized())
                     {
+                        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%u}", next->task_id);
+                        MQTT_PublishStatus(status_msg);
+
                         cam_ret = Camera_WarmCapture(
                             s_image_buffer, sizeof(s_image_buffer), &captured_size);
                     }
                     else
                     {
                         LOG_WARN(TAG_CAM, "Camera cold — initializing for task %u", next->task_id);
+                        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"camera_init\",\"task_id\":%u}", next->task_id);
+                        MQTT_PublishStatus(status_msg);
+
                         if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
                         {
                             LOG_ERROR(TAG_CAM, "Camera init failed for task %u", next->task_id);
@@ -660,6 +666,9 @@ int main(void)
                         }
                         else
                         {
+                            snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%u}", next->task_id);
+                            MQTT_PublishStatus(status_msg);
+
                             cam_ret = Camera_CaptureFrame(
                                 s_image_buffer, sizeof(s_image_buffer), &captured_size);
                         }
@@ -963,6 +972,10 @@ static void _do_button_capture(void)
     LOG_INFO(TAG_BOOT, "=== BUTTON CAPTURE (task_id=%lu) ===",
              (unsigned long)s_button_task_id);
 
+    char status_msg[256];
+    snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
+    MQTT_PublishStatus(status_msg);
+
     /* Use warm capture if camera is already initialized (boot-time init),
      * otherwise fall back to cold init + standard capture. */
     uint32_t captured_size = 0;
@@ -973,18 +986,28 @@ static void _do_button_capture(void)
 
     if (Camera_IsInitialized())
     {
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
+        MQTT_PublishStatus(status_msg);
+
         cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
     else
     {
         LOG_WARN(TAG_CAM, "Camera cold — initializing for button capture");
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"camera_init\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
+        MQTT_PublishStatus(status_msg);
+
         if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
         {
             LOG_ERROR(TAG_CAM, "Camera init failed for button capture");
             BSP_LED_Off(LED_RED);
             return;
         }
+
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
+        MQTT_PublishStatus(status_msg);
+
         cam_ret = Camera_CaptureFrame(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
@@ -1001,7 +1024,6 @@ static void _do_button_capture(void)
              (unsigned long)captured_size);
 
     /* Notify UI that upload is starting */
-    char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
     MQTT_PublishStatus(status_msg);
 
@@ -1051,6 +1073,10 @@ static void _do_capture_now(void)
     LOG_INFO(TAG_BOOT, "=== CAPTURE NOW (task_id=%lu) ===",
              (unsigned long)task_id);
 
+    char status_msg[256];
+    snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)task_id);
+    MQTT_PublishStatus(status_msg);
+
     /* Use warm capture if camera is already initialized (boot-time init),
      * otherwise fall back to cold init + standard capture. */
     uint32_t captured_size = 0;
@@ -1061,18 +1087,28 @@ static void _do_capture_now(void)
 
     if (Camera_IsInitialized())
     {
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
+
         cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
     else
     {
         LOG_WARN(TAG_CAM, "Camera cold — initializing for capture_now");
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"camera_init\",\"task_id\":%lu}", (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
+
         if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
         {
             LOG_ERROR(TAG_CAM, "Camera init failed for capture_now");
             BSP_LED_Off(LED_RED);
             return;
         }
+
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
+
         cam_ret = Camera_CaptureFrame(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
@@ -1090,7 +1126,6 @@ static void _do_capture_now(void)
              (unsigned long)captured_size);
 
     /* Notify UI that upload is starting */
-    char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)task_id);
     MQTT_PublishStatus(status_msg);
 
@@ -1183,6 +1218,11 @@ static void _do_capture_sequence(void)
 
         /* Use warm capture — sensor is already converged */
         BSP_LED_On(LED_RED);
+        
+        char status_msg[256];
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
+
         uint32_t captured_size = 0;
         CameraStatus_t cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
@@ -1203,7 +1243,6 @@ static void _do_capture_sequence(void)
                  (unsigned long)target_ms);
 
         /* Notify UI that upload is starting */
-        char status_msg[256];
         snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)task_id);
         MQTT_PublishStatus(status_msg);
 
