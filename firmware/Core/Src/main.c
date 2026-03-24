@@ -499,6 +499,9 @@ int main(void)
         BSP_LED_Off(LED_GREEN);
         HAL_Delay(100);
     }
+    
+    /* Turn OFF RED LED since boot is now fully complete (it was turned ON at init) */
+    BSP_LED_Off(LED_RED);
 
     /* ── Phase 3b: Persistent Camera Init ──────────────
      *
