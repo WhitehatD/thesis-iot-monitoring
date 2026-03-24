@@ -112,7 +112,10 @@ React 19 / Next.js 16 highly-responsive frontend.
 *   Progressive Status Stepper: Visually tracks the exact state of IoT board job execution in real-time, completely synchronized via MQTT. 
 
 ### 4. `scripts/` & `.github/workflows/` (The Factory)
-*   **`ci.yml`**: Comprehensive automated factory. Stages include PyTest gating -> ARM Binary Compilation -> Container Image Generation -> VPS Server Synchronization -> OTA Trigger.
+*   **`ci.yml`**: Enterprise-grade adaptive pipeline. Uses `dorny/paths-filter` to dynamically isolate builds (Dashboard, Server, Firmware).
+    *   **Dashboard Validation**: Strictly enforced Biome linting and TypeScript type-checking.
+    *   **Server Validation**: PyTest gating and dependency audits.
+    *   **Smart Orchestration**: Builds Docker images & synchronizes the VPS only for modules that inherently changed, optimizing CI minute consumption and eliminating redundant deployments.
 
 ---
 
