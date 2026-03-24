@@ -127,9 +127,9 @@ Ambiguous flashing LEDs are the bane of IoT engineering. This system employs a s
 | :--- | :--- | :--- |
 | **Boot Success** | 🟢 3× Fast Flashes | Hardware initialized, mapped to MQTT, ready. |
 | **Idling** | 🟢 50ms Pulse / 3 sec | Ultra-low power "heartbeat" proving system vitality. |
-| **Capture & Upload** | 🔴 Solid Red | Sensor captures frame (~40ms latency) and streams via HTTP. Kept solid throughout to ensure human visibility. |
+| **Capture & Upload** | 🔴 Solid + 🟢 Rapid Flicker (Upload) | Sensor captures frame (Red) and streams via HTTP (Green flickers during transfer). |
 | **OTA Initialize** | 🔴+🟢 5× Strobe | Over-The-Air firmware manipulation is imminent. |
-| **OTA Flashing** | 🔴 Solid + 🟢 Pulse | Critical memory write in progress. Do not unplug. |
+| **OTA Flashing** | 🔴+🟢 Solid (Erase) → 🔴 Solid + 🟢 Pulse (Write) | Critical memory wiping and writing in progress. Do not unplug. |
 
 ---
 

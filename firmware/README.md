@@ -137,10 +137,10 @@ The physical `LED_GREEN` and `LED_RED` embedded on the board provide distinct vi
 
 - **Booting Initialization**: Both **GREEN** and **RED** are solidly ON during hardware config.
 - **Board Ready**: 3 crisp **GREEN** flashes signal a successful network/MQTT connection.
-- **Idle / Monitoring**: Slow ~1Hz "breathing" toggle on **GREEN** confirms the node is monitoring.
+- **Idle / Monitoring**: Slow 50ms pulse on **GREEN** every 3 seconds confirms the node is monitoring.
 - **MQTT Command Received**: Brief 50ms pulse of **GREEN + RED** confirms packet delivery.
 - **Image Capturing**: **RED** turns solid ON (functioning identically to a camera recording light).
-- **Image Uploading (HTTP POST)**: **GREEN** flickers rapidly to symbolize dense data transfer.
+- **Image Uploading (HTTP POST)**: **RED** stays solid, while **GREEN** flickers rapidly to symbolize dense data transfer.
 - **Fatal Error**: **RED** continuously blinks rapidly across infinite blocking loops.
 
 ### Over-The-Air (OTA) Updates
@@ -148,7 +148,7 @@ The physical `LED_GREEN` and `LED_RED` embedded on the board provide distinct vi
 - **Update Checking**: **RED** stays ON during the blocking HTTP version request.
 - **Update Received**: 5 rapid strobe flashes on both **RED + GREEN** before commencing flash ops.
 - **Flushing Update (Flash Erase)**: Both **GREEN** and **RED** stay solidly ON representing a volatile hardware erasure state.
-- **Diff Update (Downloading)**: **RED** and **GREEN** rapidly alternate (police-siren effect) as granular chunks are dynamically streamed and programmed into flash.
+- **Diff Update (Downloading)**: **RED** is mostly solid and **GREEN** rapidly pulses as granular chunks are dynamically streamed and programmed into flash.
 - **OTA Success**: **GREEN** guarantees integrity and completes a solid 1.5-second sequence right before hardware restart.
 
 ## Over-The-Air (OTA) Architecture
