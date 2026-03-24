@@ -155,8 +155,16 @@ export function useMqttImages() {
 						);
 					} else {
 						let step = "idle";
-						if (data.status === "schedule_received" || data.status === "job_received") step = "received";
-						else if (data.status === "executing" || data.status === "camera_init") step = "camera_init";
+						if (
+							data.status === "schedule_received" ||
+							data.status === "job_received"
+						)
+							step = "received";
+						else if (
+							data.status === "executing" ||
+							data.status === "camera_init"
+						)
+							step = "camera_init";
 						else if (data.status === "capturing") step = "capturing";
 						else if (data.status === "uploading") step = "uploading";
 						else if (

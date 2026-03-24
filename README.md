@@ -109,7 +109,7 @@ Modern Python `FastAPI` application engineered for speed and resilience.
 React 19 / Next.js 16 highly-responsive frontend.
 *   Utilizes WebSocket-MQTT listeners for instantaneous feed updates without HTTP polling lag.
 *   Clean aesthetics tailored for efficient human-machine supervision. 
-*   Progressive Status Stepper: Visually tracks the exact state of IoT board job execution in real-time, completely synchronized via MQTT. 
+*   Progressive Status Stepper: Visually tracks the exact state of IoT board job execution in real-time. Granularly resolves 6 complete phases: `Sending`, `Job Received`, `Camera Init`, `Capturing Image`, `Uploading`, and `Finished`. Completely synchronized via MQTT without artificial delays.
 
 ### 4. `scripts/` & `.github/workflows/` (The Factory)
 *   **`ci.yml`**: Enterprise-grade adaptive pipeline. Uses `dorny/paths-filter` to dynamically isolate builds (Dashboard, Server, Firmware).

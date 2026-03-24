@@ -125,6 +125,16 @@ The board acts dynamically based on JSON payloads sent to `device/stm32/commands
 - **Sleep Toggle (`"type":"sleep_mode"`, `"enabled":true`)**: Modifies behavioral routing to STOP2 low-power mode between tasks.
 - **Firmware Update (`"type":"firmware_update"`)**: Initiates the Dual-Bank OTA sequence.
 
+## Status Telemetry (MQTT)
+
+During any image capture cycle (manual or scheduled), the board broadcasts its exact hardware state to `device/stm32/status` to feed the dashboard's real-time stepper:
+
+1. `{"status":"job_received"}` — Command intercepted / Alarm triggered.
+2. `{"status":"camera_init"}` — Sensor power-up and warm-up sequence (emitted if cold).
+3. `{"status":"capturing"}` — DCMI/DMA engaged; exact moment the image is being taken.
+4. `{"status":"uploading"}` — HTTP POST transfer to the server initiated.
+5. `{"status":"captured"}` / `{"status":"uploaded"}` — Cycle complete successfully.
+
 ## Hardware Triggers
 
 - **B3 USER Button (Blue)**: Pressing this hardware interrupt instantly triggers a warm image capture and HTTP upload.
