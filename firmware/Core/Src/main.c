@@ -1000,8 +1000,12 @@ static void _do_button_capture(void)
     LOG_INFO(TAG_BOOT, "Captured %lu bytes — uploading...",
              (unsigned long)captured_size);
 
-    /* Upload via HTTP POST */
+    /* Notify UI that upload is starting */
     char status_msg[256];
+    snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
+    MQTT_PublishStatus(status_msg);
+
+    /* Upload via HTTP POST */
     WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
         SERVER_UPLOAD_URL, (uint16_t)s_button_task_id,
         s_image_buffer, captured_size);
@@ -1085,8 +1089,12 @@ static void _do_capture_now(void)
     LOG_INFO(TAG_BOOT, "Captured %lu bytes — uploading...",
              (unsigned long)captured_size);
 
-    /* Upload via HTTP POST */
+    /* Notify UI that upload is starting */
     char status_msg[256];
+    snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)task_id);
+    MQTT_PublishStatus(status_msg);
+
+    /* Upload via HTTP POST */
     WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
         SERVER_UPLOAD_URL, (uint16_t)task_id,
         s_image_buffer, captured_size);
@@ -1194,12 +1202,16 @@ static void _do_capture_sequence(void)
                  (unsigned long)capture_tick,
                  (unsigned long)target_ms);
 
+        /* Notify UI that upload is starting */
+        char status_msg[256];
+        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
+
         /* Upload immediately */
         WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
             SERVER_UPLOAD_URL, (uint16_t)task_id,
             s_image_buffer, captured_size);
 
-        char status_msg[256];
         snprintf(status_msg, sizeof(status_msg),
                  "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,"
                  "\"trigger\":\"sequence\",\"seq_index\":%lu,\"seq_total\":%lu,"

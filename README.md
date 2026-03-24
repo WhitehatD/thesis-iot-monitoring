@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">🔬 Autonomous IoT Visual Monitoring System</h1>
   <p align="center">
-    <strong>Enterprise-Grade STM32 Edge Camera with Multimodal LLM Intelligence</strong>
+    <strong>STM32 Edge Camera with Multimodal LLM Intelligence</strong>
   </p>
   <p align="center">
     <em>Bachelor Thesis — Computer Science & Engineering</em>
@@ -28,18 +28,18 @@ Legacy industrial monitoring relies on dumb network cameras streaming petabytes 
 
 By combining a heavily optimized bare-metal STM32 microcontroller with state-of-the-art Multimodal Large Language Models (Gemini 3 Flash, Qwen3-VL), we deploy a zero-maintenance "eye" that actively understands its environment. It processes natural language prompts, creates its own execution schedules, captures high-fidelity RGB565 frames, and interprets the scene—all autonomously.
 
-Built with YC-grade engineering rigor, the system features a complete CI/CD-driven Over-The-Air (OTA) update pipeline, ensuring the edge devices continuously evolve without ever being physically touched.
+Built for reliability, the system features a complete CI/CD-driven Over-The-Air (OTA) update pipeline, ensuring the edge devices continuously evolve without ever being physically touched.
 
 ---
 
-## ✨ Enterprise-Grade Features
+## ✨ Core Features
 
 *   🧠 **LLM-Driven Scheduling**: NLP planning engine translates human instructions ("Check if the delivery bay is clear every morning at 9 AM") into machine-executable RTC alarm sequences over MQTT.
 *   ⚡ **Bare-Metal Performance**: Stripped-down, zero-RTOS C firmware maximizing the Cortex-M33's 160MHz capabilities. Complete memory control via stack watermark auditing.
-*   📸 **Extreme Capture Optimization**: YC-grade sub-second image acquisition. OV5640 PCLK boosted with an 800-line VTS (~30fps) and 20ms AEC hardware polling. DCMI DMA leverages perfect End-of-Frame hardware suspension (`HAL_DCMI_Suspend`) to eliminate tearing and top-line artifacts.
+*   📸 **Capture Optimization**: Sub-second image acquisition. OV5640 PCLK boosted with an 800-line VTS (~30fps) and 20ms AEC hardware polling. DCMI DMA leverages perfect End-of-Frame hardware suspension (`HAL_DCMI_Suspend`) to eliminate tearing and top-line artifacts.
 *   🔄 **Zero-Downtime OTA Updates**: Dual-bank flash architecture. New firmware streams via chunked HTTP, verifies via CRC32, and executes an atomic memory bank swap. Built-in automatic rollback upon boot failure ensures devices can't be bricked remotely.
 *   🚦 **Mutually Exclusive Observability**: A strictly defined visual state machine through onboard LEDs guarantees zero ambiguity during diagnostics (Green heartbeat for Idle, Solid Red for Capture & Upload, Red/Green Strobe for OTA Updates).
-*   🌐 **"Mechanical Luxury" Dashboard**: A Next.js 16 control center featuring sub-millisecond tactile feedback, real-time MQTT WebSocket pipelines, and live visual feeds.
+*   🌐 **Monitoring Dashboard**: A Next.js 16 control center featuring low-latency tactile feedback, real-time MQTT WebSocket pipelines, and live visual feeds.
 *   🛡️ **Resilient CI/CD Deployment**: End-to-end GitHub Actions pipeline. A single `git push` runs tests, compiles the ARM GCC payload, builds Docker containers, synchronizes the cloud VPS, and pushes the binary update directly to the edge hardware over-the-air.
 
 ---
@@ -106,9 +106,9 @@ Modern Python `FastAPI` application engineered for speed and resilience.
 *   **AI Planner**: Converts abstract prompt strings to discrete JSON cron tasks using `gemini-3-flash` or local `vLLM`.
 
 ### 3. `dashboard/` (The Cockpit)
-React 19 / Next.js 16 highly-responsive "YC-grade" frontend.
+React 19 / Next.js 16 highly-responsive frontend.
 *   Utilizes WebSocket-MQTT listeners for instantaneous feed updates without HTTP polling lag.
-*   "Mechanical Luxury" interactions: Clean aesthetics tailored for efficient human-machine supervision. 
+*   Clean aesthetics tailored for efficient human-machine supervision. 
 *   Progressive Status Stepper: Visually tracks the exact state of IoT board job execution in real-time, completely synchronized via MQTT. 
 
 ### 4. `scripts/` & `.github/workflows/` (The Factory)
@@ -124,7 +124,7 @@ Ambiguous flashing LEDs are the bane of IoT engineering. This system employs a s
 | :--- | :--- | :--- |
 | **Boot Success** | 🟢 3× Fast Flashes | Hardware initialized, mapped to MQTT, ready. |
 | **Idling** | 🟢 50ms Pulse / 3 sec | Ultra-low power "heartbeat" proving system vitality. |
-| **Capture & Upload** | 🔴 Solid Red | Sensor captures frame (~40ms extreme speed) and streams via HTTP. Kept solid throughout to ensure human visibility. |
+| **Capture & Upload** | 🔴 Solid Red | Sensor captures frame (~40ms latency) and streams via HTTP. Kept solid throughout to ensure human visibility. |
 | **OTA Initialize** | 🔴+🟢 5× Strobe | Over-The-Air firmware manipulation is imminent. |
 | **OTA Flashing** | 🔴 Solid + 🟢 Pulse | Critical memory write in progress. Do not unplug. |
 

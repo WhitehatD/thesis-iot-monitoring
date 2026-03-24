@@ -105,9 +105,9 @@ export function useMqttImages() {
                     } else {
                         let step = "idle";
                         if (data.status === "schedule_received") step = "received";
-                        else if (data.status === "executing") step = "capturing";
+                        else if (data.status === "executing" || data.status === "capturing") step = "capturing";
                         else if (data.status === "uploading") step = "uploading";
-                        else if (data.status === "uploaded" || data.status === "complete") step = "finished";
+                        else if (data.status === "uploaded" || data.status === "complete" || data.status === "captured") step = "finished";
                         
                         if (step !== "idle") {
                             setJobState({ isActive: true, step, taskId: data.task_id || data.tasks || null, error: null });
