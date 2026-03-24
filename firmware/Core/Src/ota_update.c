@@ -102,13 +102,16 @@ static uint32_t _get_inactive_bank(void)
 
 /**
  * @brief  Get the base address of the inactive bank.
+ *
+ * The SWAP_BANK option bit controls which physical bank is mapped at
+ * 0x0800_0000 (active/executing) and which at 0x0810_0000 (inactive).
+ * Regardless of which physical bank is "inactive", it is ALWAYS mapped
+ * at 0x0810_0000 in the CPU address space — that's the whole point of
+ * the swap mechanism.
  */
 static uint32_t _get_inactive_bank_base(void)
 {
-    /* In non-swapped mode, Bank 2 starts at FLASH_BANK2_BASE.
-     * In swapped mode, Bank 1 starts at FLASH_BANK2_BASE.
-     * The physical address is always Bank1=0x0800_0000, Bank2=0x0810_0000. */
-    return (_get_inactive_bank() == FLASH_BANK_1) ? FLASH_BANK1_BASE : FLASH_BANK2_BASE;
+    return FLASH_BANK2_BASE;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

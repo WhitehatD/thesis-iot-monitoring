@@ -1119,7 +1119,7 @@ static void _do_capture_now(void)
 
         /* Full power-cycle of the camera subsystem */
         Camera_DeInit();
-        HAL_Delay(100);  /* Let sensor power settle */
+        HAL_Delay(200);  /* Let sensor PLL re-lock after power cycle */
 
         if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) == CAMERA_OK)
         {

@@ -50,6 +50,7 @@ _Static_assert(CAMERA_FRAME_BUFFER_SIZE <= CAMERA_FRAME_BUFFER_MAX,
 static volatile uint32_t s_frame_count = 0;   /* Counts frames in continuous mode */
 static volatile uint32_t s_frame_size  = 0;
 static volatile uint8_t  s_initialized = 0;    /* 1 = camera is warm and ready */
+static volatile uint8_t  s_continuous_mode = 0; /* 1 = continuous capture active (ISR suspend enabled) */
 
 /* Pointer to the active capture buffer (set by Camera_CaptureFrame) */
 static uint8_t *s_active_buffer = NULL;
@@ -291,6 +292,7 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
     s_frame_count = 0;
     s_frame_size  = 0;
     s_active_buffer = buffer;
+    s_continuous_mode = 1;  /* Enable ISR suspend logic for continuous capture */
 
     /* Turn ON tally light (Red LED) directly before capture */
     BSP_LED_On(LED_RED);
@@ -335,6 +337,7 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
     BSP_CAMERA_Stop(0);
     BSP_LED_Off(LED_RED);
     s_active_buffer = NULL;
+    s_continuous_mode = 0;
 
     /* Determine frame size */
     uint32_t copy_size = s_frame_size;
@@ -435,9 +438,14 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
         s_frame_count = 0;
         s_frame_size  = 0;
         s_active_buffer = buffer;
+        s_continuous_mode = 0;  /* Snapshot mode — ISR must NOT call suspend */
 
         /* Turn ON tally light (Red LED) */
         BSP_LED_On(LED_RED);
+
+        /* Defensive: ensure DCMI is fully stopped before starting.
+         * Recovers from any previous abnormal suspend/stale DMA state. */
+        BSP_CAMERA_Stop(0);
 
         /* Start snapshot capture */
         int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_SNAPSHOT);
@@ -531,13 +539,13 @@ void BSP_CAMERA_FrameEventCallback(uint32_t Instance)
     (void)Instance;
     s_frame_count++;
 
-    /* YC-Grade Extreme Optimization & Bugfix:
-     * When using continuous capture for warmup, we must ask the DCMI hardware
-     * to suspend exactly when the warmup frames are complete.
-     * HAL_DCMI_Suspend stops capture perfectly at the EOF of the *next* frame.
-     * This eliminates the "weird line at the top" caused by DMA overrunning
-     * into the next frame before the CPU can stop it manually. */
-    if (s_frame_count == CAMERA_WARMUP_FRAMES)
+    /* Suspend DCMI only during continuous captures, and only after all
+     * needed frames (warmup + final) are complete. This prevents DMA
+     * overrun into the next unwanted frame.
+     *
+     * CRITICAL: Must NOT fire during snapshot mode — calling Suspend on
+     * a snapshot-mode DCMI corrupts the peripheral state machine. */
+    if (s_continuous_mode && s_frame_count == (CAMERA_WARMUP_FRAMES + 1))
     {
         BSP_CAMERA_Suspend(0);
     }
