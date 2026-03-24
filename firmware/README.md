@@ -4,7 +4,7 @@ Embedded firmware for the **B-U585I-IOT02A Discovery Kit** that implements the e
 
 ## Architecture
 
-```
+```text
 ┌───────────────────────────────────────────────────┐
 │                  main.c (Orchestrator)              │
 │                                                     │
@@ -38,7 +38,7 @@ Embedded firmware for the **B-U585I-IOT02A Discovery Kit** that implements the e
 
 ## File Structure
 
-```
+```text
 firmware/
 ├── Core/
 │   ├── Inc/
@@ -93,7 +93,7 @@ Edit `Core/Inc/firmware_config.h` before building:
 
 ## UART Debug Output
 
-```
+```text
 [      0ms] [INFO] [BOOT] ========================================
 [      0ms] [INFO] [BOOT]   IoT Visual Monitoring Firmware v0.1
 [      1ms] [INFO] [BOOT]   Board: B-U585I-IOT02A
@@ -107,8 +107,56 @@ Edit `Core/Inc/firmware_config.h` before building:
 
 ## Communication Protocols
 
-| Channel | Protocol | Direction | Purpose |
-|---------|----------|-----------|---------|
-| MQTT | `device/stm32/commands` | Server → Board | AI schedule delivery |
-| MQTT | `device/stm32/status` | Board → Server | Status updates |
-| HTTP | `POST /api/upload` | Board → Server | Image upload |
+| Channel | Protocol                     | Direction      | Purpose                                      |
+|---------|------------------------------|----------------|----------------------------------------------|
+| MQTT    | `device/stm32/commands`      | Server → Board | General command & schedule delivery          |
+| MQTT    | `device/stm32/status`        | Board → Server | Status updates and telemetry                 |
+| HTTP    | `POST /api/upload`           | Board → Server | High-bandwidth image/binary payload upload   |
+| HTTP    | `GET /api/firmware/version`  | Board → Server | OTA firmware version check                   |
+| HTTP    | `GET /api/firmware/download` | Board → Server | OTA `.bin` stream download                   |
+
+## Supported MQTT Commands
+
+The board acts dynamically based on JSON payloads sent to `device/stm32/commands`:
+
+- **Schedule (`"type":"schedule"` or legacy array)**: Parses a list of tasks and sleeps/wakes to execute them autonomously.
+- **Capture Now (`"type":"capture_now"`)**: Instantly captures an image.
+- **Capture Sequence (`"type":"capture_sequence"`, `"delays_ms":[...]`)**: Captures multiple images at exact sub-second millisecond offsets.
+- **Sleep Toggle (`"type":"sleep_mode"`, `"enabled":true`)**: Modifies behavioral routing to STOP2 low-power mode between tasks.
+- **Firmware Update (`"type":"firmware_update"`)**: Initiates the Dual-Bank OTA sequence.
+
+## Hardware Triggers
+
+- **B3 USER Button (Blue)**: Pressing this hardware interrupt instantly triggers a warm image capture and HTTP upload bypass.
+
+## LED Status Indicators
+
+The physical `LED_GREEN` and `LED_RED` embedded on the board provide distinct visual feedback for every system state.
+
+### General Operation
+
+- **Booting Initialization**: Both **GREEN** and **RED** are solidly ON during hardware config.
+- **Board Ready**: 3 crisp **GREEN** flashes signal a successful network/MQTT connection.
+- **Idle / Monitoring**: Slow ~1Hz "breathing" toggle on **GREEN** confirms the node is monitoring.
+- **MQTT Command Received**: Brief 50ms pulse of **GREEN + RED** confirms packet delivery.
+- **Image Capturing**: **RED** turns solid ON (functioning identically to a camera recording light).
+- **Image Uploading (HTTP POST)**: **GREEN** flickers rapidly to symbolize dense data transfer.
+- **Fatal Error**: **RED** continuously blinks rapidly across infinite blocking loops.
+
+### Over-The-Air (OTA) Updates
+
+- **Update Checking**: **RED** stays ON during the blocking HTTP version request.
+- **Update Received**: 5 rapid strobe flashes on both **RED + GREEN** before commencing flash ops.
+- **Flushing Update (Flash Erase)**: Both **GREEN** and **RED** stay solidly ON representing a volatile hardware erasure state.
+- **Diff Update (Downloading)**: **RED** and **GREEN** rapidly alternate (police-siren effect) as granular chunks are dynamically streamed and programmed into flash.
+- **OTA Success**: **GREEN** guarantees integrity and completes a solid 1.5-second sequence right before hardware restart.
+
+## Over-The-Air (OTA) Architecture
+
+This firmware deeply utilizes the STM32U585's 2MB dual-bank flash architecture to provide resilient, atomic firmware updates.
+
+1. **Poll**: The board verifies the latest application version with the server API.
+2. **Download**: The new `.bin` is natively streamed bit-by-bit directly into the *inactive* flash bank.
+3. **Verify**: Native software CRC32 validation guarantees bit-level accuracy against the file.
+4. **Swap & Reboot**: The non-volatile `SWAP_BANK` option bytes are flipped atomically during reboot.
+5. **Rollback (Rescue)**: If the new firmware fails to boot properly across 3 consecutive times, the MCU trips its RTC backup registry threshold and intrinsically forces a secondary bootbank reversion swap to rescue the node.

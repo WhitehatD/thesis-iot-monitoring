@@ -486,6 +486,15 @@ int main(void)
      * This resets the OTA boot failure counter, preventing rollback. */
     OTA_MarkBootSuccessful();
 
+    /* ── Hyper-distinct Board Ready Pattern ── */
+    /* 3 crisp GREEN flashes indicate the board is fully initialized and online */
+    for (int i = 0; i < 3; i++) {
+        BSP_LED_On(LED_GREEN);
+        HAL_Delay(100);
+        BSP_LED_Off(LED_GREEN);
+        HAL_Delay(100);
+    }
+
     /* ── Phase 3b: Persistent Camera Init ──────────────
      *
      * Enterprise optimization: initialize the camera ONCE at boot.
@@ -1234,6 +1243,17 @@ static void _do_ota_update(void)
              "{\"status\":\"ota_downloading\",\"new_version\":\"%s\",\"size\":%lu}",
              info.version, (unsigned long)info.size);
     MQTT_PublishStatus(msg);
+
+    /* ── Hyper-distinct Update Received Pattern ── */
+    /* 5 rapid RED+GREEN strobe flashes before freezing for Flash Erase (Flushing) */
+    for (int i = 0; i < 5; i++) {
+        BSP_LED_On(LED_RED);
+        BSP_LED_On(LED_GREEN);
+        HAL_Delay(80);
+        BSP_LED_Off(LED_RED);
+        BSP_LED_Off(LED_GREEN);
+        HAL_Delay(80);
+    }
 
     status = OTA_DownloadAndFlash(&info);
     if (status != OTA_OK)
