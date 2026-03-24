@@ -53,7 +53,9 @@ extern "C" {
 #define MX_WIFI_SOCKET_DATA_SIZE                    (MX_WIFI_IPC_PAYLOAD_SIZE - 12)
 
 /* ─── Timeouts ────────────────────────────────────────── */
-#define MX_WIFI_CMD_TIMEOUT                         (10000)
+/* HARDENED: 30s timeout for OTA reliability — default 10s causes SPI stalls during
+ * large HTTP transfers when the EMW3080 is buffering TCP data */
+#define MX_WIFI_CMD_TIMEOUT                         (30000)
 
 /* ─── Limits ──────────────────────────────────────────── */
 #define MX_WIFI_MAX_SOCKET_NBR                      (8)

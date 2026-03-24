@@ -163,10 +163,10 @@ export function useMqttImages() {
 					// ANY message from the board proves it is online
 					setIsBoardOnline(true);
 					if (boardTimeoutRef.current) clearTimeout(boardTimeoutRef.current);
-					// Board pings every 30s, timeout after 40s
+					// Board pings every 5s, timeout after 12s
 					boardTimeoutRef.current = setTimeout(
 						() => setIsBoardOnline(false),
-						40000,
+						12000,
 					);
 
 					// ── Accumulate persistent board telemetry ──

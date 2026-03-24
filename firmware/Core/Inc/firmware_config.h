@@ -143,11 +143,11 @@
 #define FW_VERSION                  "0.3"          /* Current firmware version string */
 #endif
 #define OTA_CHECK_INTERVAL_MS       (1 * 60 * 1000)   /* Check every 1 minute */
-#define OTA_DOWNLOAD_CHUNK_SIZE     8192           /* 8KB download chunks */
+#define OTA_DOWNLOAD_CHUNK_SIZE     2048           /* 2KB chunks — fits in single MIPC frame (2494 payload max) */
 #define OTA_MAX_FW_SIZE             (896 * 1024)   /* 896KB max — leave room for vector table */
-#define OTA_DOWNLOAD_MAX_RETRIES    3              /* Full download attempts before giving up */
-#define OTA_DOWNLOAD_RETRY_BASE_MS  2000           /* Exponential backoff base: 2s → 4s → 8s */
-#define OTA_PROGRESS_INTERVAL_BYTES (16 * 1024)    /* MQTT progress update every 16KB */
+#define OTA_DOWNLOAD_MAX_RETRIES    5              /* Full download attempts before giving up */
+#define OTA_DOWNLOAD_RETRY_BASE_MS  3000           /* Exponential backoff base: 3s → 6s → 12s → 24s */
+#define OTA_PROGRESS_INTERVAL_BYTES (32 * 1024)    /* MQTT progress update every 32KB */
 #define OTA_VERSION_PATH            "/api/firmware/version"
 #define OTA_DOWNLOAD_PATH           "/api/firmware/download"
 

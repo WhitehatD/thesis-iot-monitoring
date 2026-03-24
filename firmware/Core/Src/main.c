@@ -595,8 +595,8 @@ int main(void)
         HAL_IWDG_Refresh(&hiwdg);
 #endif
 
-        /* Send MQTT keepalive ping and online status every 30 seconds */
-        if ((HAL_GetTick() - last_ping) > 30000)
+        /* Send MQTT keepalive ping and online status every 5 seconds (instant-feel dashboard) */
+        if ((HAL_GetTick() - last_ping) > 5000)
         {
             MQTT_SendPing();
             MQTT_PublishStatus("{\"status\":\"online\",\"firmware\":\"" FW_VERSION "\"}");
@@ -1475,10 +1475,45 @@ static void _do_ota_update(void)
         HAL_Delay(80);
     }
 
+    /* ═════════════════════════════════════════════════════════════════════
+     * CRITICAL: MQTT Quiesce Before Download
+     *
+     * The EMW3080 SPI transport shares a single bus for ALL socket traffic.
+     * MQTT keepalive frames compete with HTTP download data, causing the
+     * SPI command queue to stall and hit MX_WIFI_CMD_TIMEOUT.
+     *
+     * Solution: Disconnect MQTT → drain SPI queue → download in isolation
+     * → reconnect MQTT after flashing.
+     * ═════════════════════════════════════════════════════════════════════ */
+    LOG_INFO(TAG_OTA, "Quiescing MQTT to isolate SPI bus for download...");
+    MQTT_Disconnect();
+
+    /* Drain any residual SPI traffic from the MQTT disconnect */
+    for (int drain = 0; drain < 10; drain++)
+    {
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
+#if WATCHDOG_ENABLED
+        IWDG->KR = 0x0000AAAAu;
+#endif
+    }
+    LOG_INFO(TAG_OTA, "MQTT disconnected — SPI bus dedicated to OTA");
+
     status = OTA_DownloadAndFlash(&info, s_image_buffer, sizeof(s_image_buffer));
+
     if (status != OTA_OK)
     {
-        LOG_ERROR(TAG_OTA, "Download/flash failed (err=%d)", status);
+        LOG_ERROR(TAG_OTA, "Download/flash failed (err=%d) — reconnecting MQTT", status);
+
+        /* Reconnect MQTT so the board stays manageable */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+        MQTTConfig_t re_cfg = {
+            .broker_host = MQTT_BROKER_HOST,
+            .broker_port = MQTT_BROKER_PORT,
+            .client_id   = MQTT_CLIENT_ID,
+        };
+        MQTT_Init(&re_cfg);
+        MQTT_SubscribeCommands(on_command_received);
+
         snprintf(msg, sizeof(msg),
                  "{\"status\":\"ota_error\",\"reason\":\"flash_failed\",\"code\":%d}",
                  status);
@@ -1486,9 +1521,20 @@ static void _do_ota_update(void)
         return;
     }
 
-    /* Success — swap banks and reset */
+    /* Success — publish reboot notice via fresh MQTT, then swap banks */
+    MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+    {
+        MQTTConfig_t re_cfg = {
+            .broker_host = MQTT_BROKER_HOST,
+            .broker_port = MQTT_BROKER_PORT,
+            .client_id   = MQTT_CLIENT_ID,
+        };
+        MQTT_Init(&re_cfg);
+        MQTT_SubscribeCommands(on_command_received);
+    }
+
     MQTT_PublishStatus("{\"status\":\"ota_rebooting\"}");
-    HAL_Delay(100);  /* Let MQTT message send before reset */
+    HAL_Delay(200);  /* Let MQTT message send before reset */
 
     OTA_SwapBankAndReset();
 
