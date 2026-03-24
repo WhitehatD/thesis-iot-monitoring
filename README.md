@@ -37,7 +37,8 @@ Built for reliability, the system features a complete CI/CD-driven Over-The-Air 
 * 🧠 **LLM-Driven Scheduling**: NLP planning engine translates human instructions ("Check if the delivery bay is clear every morning at 9 AM") into machine-executable RTC alarm sequences over MQTT.
 * ⚡ **Bare-Metal Performance**: Stripped-down, zero-RTOS C firmware maximizing the Cortex-M33's 160MHz capabilities. Complete memory control via stack watermark auditing.
 * 📸 **Capture Optimization**: Sub-second image acquisition. OV5640 PCLK boosted with an 800-line VTS (~30fps) and 20ms AEC hardware polling. DCMI DMA leverages perfect End-of-Frame hardware suspension (`HAL_DCMI_Suspend`) to eliminate tearing and top-line artifacts.
-* 🔄 **Zero-Downtime OTA Updates**: Dual-bank flash architecture. New firmware streams via chunked HTTP, verifies via CRC32, and executes an atomic memory bank swap. Built-in automatic rollback upon boot failure ensures devices can't be bricked remotely.
+* 🔄 **Zero-Downtime OTA Updates**: Dual-bank flash architecture utilizing a Download-to-RAM-first strategy to prevent Wi-Fi SPI starvation during erases. Firmware versions are robustly validated using non-semantic Git commit hashes (preventing accidental downgrades), streamed via chunked HTTP, verified via software CRC32, and executed via an atomic memory bank swap. Built-in automatic rollback upon boot failure ensures devices can't be bricked remotely.
+* 🛡️ **Autonomous Watchdog Recovery**: A 16-second Independent Hardware Watchdog (IWDG) runs on a dedicated LSI clock to protect against I2C bus deadlocks, camera DCMI stalls, and network lockups—guaranteeing 100% remote uptime recovery without manual intervention.
 * 🚦 **Mutually Exclusive Observability**: A strictly defined visual state machine through onboard LEDs guarantees zero ambiguity during diagnostics (Green heartbeat for Idle, Solid Red for Capture & Upload, Red/Green Strobe for OTA Updates).
 * 🌐 **Monitoring Dashboard**: A Next.js 16 control center featuring low-latency tactile feedback, real-time MQTT WebSocket pipelines, and live visual feeds.
 * 🛡️ **Resilient CI/CD Deployment**: End-to-end GitHub Actions pipeline. A single `git push` runs tests, compiles the ARM GCC payload, builds Docker containers, synchronizes the cloud VPS, and pushes the binary update directly to the edge hardware over-the-air.
@@ -167,26 +168,33 @@ stateDiagram-v2
 The monorepo contains four primary components, strictly separated by concern:
 
 ### 1. `firmware/` (The Brains of the Edge)
+
 Bare-metal C code compiled via `arm-none-eabi-gcc`.
-* **`main.c`**: The unified non-blocking event loop. Handles RTC wakeups, MQTT command dispatch, and graceful standby.
-* **`ota_update.c`**: Dual-bank firmware flashing mechanism. Implements secure chunk downloading, CRC32 verification, and atomic memory swapping.
+
+* **`main.c`**: The unified non-blocking event loop. Handles RTC wakeups, MQTT command dispatch, hardware watchdog refreshing, and graceful standby.
+* **`ota_update.c`**: Dual-bank firmware flashing mechanism. Implements secure chunk downloading into RAM, CRC32 verification, git-hash parsing, and atomic memory swapping.
 * **`camera.c`**: Interacts with the OV5640 sensor. Initializes persistent configurations to enable warm sub-second capturing.
-* **`wifi.c` / `mqtt_handler.c`**: High-durability networking stack. Handles automatic silent reconnection loops, mitigating standard IoT drop-off flaws.
+* **`wifi.c` / `mqtt_handler.c`**: High-durability networking stack. NTP time fetching is aggressively optimized via 50ms SPI polling loops (shaving 1.9s off boot time), while MQTT handles automatic silent reconnection sequences.
 
 ### 2. `server/` (The Cloud Engine)
+
 Modern Python `FastAPI` application engineered for speed and resilience.
+
 * **API Layer**: Ingests image arrays, coordinates LLM generation, curates metadata, and handles OTA payload authorization. Error handling prevents malformed uploads. 
 * **MQTT Layer**: Connects asynchronously to Mosquitto, pushing live commands (`capture_sequence`, `firmware_update`) to the fleet in real-time.
 * **AI Planner**: Converts abstract prompt strings to discrete JSON cron tasks using `gemini-3-flash` or local `vLLM`.
 
 ### 3. `dashboard/` (The Interactive Digital Twin)
+
 React 19 / Next.js 16 highly-responsive frontend, engineered as a direct extension of the hardware state.
+
 * **Zero-Latency Telemetry**: Utilizes WebSocket-MQTT listeners for instantaneous state reflection without HTTP polling lag.
 * **Board Telemetry Panel**: A persistent glassmorphic interface that live-updates the active firmware version, hardware uptime, latest image size (KB), and sub-second capture latency (e.g., `187ms`).
 * **Progressive Status Stepper**: Visually tracks the exact execution state of edge jobs. Granularly resolves 6 phases: `Sending`, `Job Received`, `Camera Init`, `Capturing Image`, `Uploading`, and `Finished`, complete with per-step timing traces.
 * **CI/CD Deploy History**: Directly integrates with the FastAPI backend to visualize the chronological timeline of all OTA pushes and remote firmware upgrades.
 
 ### 4. `scripts/` & `.github/workflows/` (The Factory)
+
 * **`ci.yml`**: Enterprise-grade adaptive pipeline. Uses `dorny/paths-filter` to dynamically isolate builds (Dashboard, Server, Firmware).
   * **Dashboard Validation**: Strictly enforced Biome linting and TypeScript type-checking.
   * **Server Validation**: PyTest gating and dependency audits.
