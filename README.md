@@ -35,9 +35,10 @@ Built with YC-grade engineering rigor, the system features a complete CI/CD-driv
 ## ✨ Enterprise-Grade Features
 
 *   🧠 **LLM-Driven Scheduling**: NLP planning engine translates human instructions ("Check if the delivery bay is clear every morning at 9 AM") into machine-executable RTC alarm sequences over MQTT.
-*   ⚡ **Bare-Metal Performance**: Stripped-down, zero-RTOS C firmware maximizing the Cortex-M33's 160MHz capabilities. Total memory control via comprehensive stack watermark auditing.
+*   ⚡ **Bare-Metal Performance**: Stripped-down, zero-RTOS C firmware maximizing the Cortex-M33's 160MHz capabilities. Complete memory control via stack watermark auditing.
+*   📸 **Extreme Capture Optimization**: YC-grade sub-second image acquisition. OV5640 PCLK boosted with an 800-line VTS (~30fps) and 20ms AEC hardware polling. DCMI DMA leverages perfect End-of-Frame hardware suspension (`HAL_DCMI_Suspend`) to eliminate tearing and top-line artifacts.
 *   🔄 **Zero-Downtime OTA Updates**: Dual-bank flash architecture. New firmware streams via chunked HTTP, verifies via CRC32, and executes an atomic memory bank swap. Built-in automatic rollback upon boot failure ensures devices can't be bricked remotely.
-*   🚦 **Mutually Exclusive Observability**: A strictly defined visual state machine through onboard LEDs guarantees zero ambiguity during diagnostics (Green heartbeat for Idle, Solid Red for Capture, Green Blink for Network Transfer, Strobe Warnings for OTA Updates).
+*   🚦 **Mutually Exclusive Observability**: A strictly defined visual state machine through onboard LEDs guarantees zero ambiguity during diagnostics (Green heartbeat for Idle, Solid Red for Capture & Upload, Red/Green Strobe for OTA Updates).
 *   🌐 **"Mechanical Luxury" Dashboard**: A Next.js 16 control center featuring sub-millisecond tactile feedback, real-time MQTT WebSocket pipelines, and live visual feeds.
 *   🛡️ **Resilient CI/CD Deployment**: End-to-end GitHub Actions pipeline. A single `git push` runs tests, compiles the ARM GCC payload, builds Docker containers, synchronizes the cloud VPS, and pushes the binary update directly to the edge hardware over-the-air.
 
@@ -108,6 +109,7 @@ Modern Python `FastAPI` application engineered for speed and resilience.
 React 19 / Next.js 16 highly-responsive "YC-grade" frontend.
 *   Utilizes WebSocket-MQTT listeners for instantaneous feed updates without HTTP polling lag.
 *   "Mechanical Luxury" interactions: Clean aesthetics tailored for efficient human-machine supervision. 
+*   Progressive Status Stepper: Visually tracks the exact state of IoT board job execution in real-time, completely synchronized via MQTT. 
 
 ### 4. `scripts/` & `.github/workflows/` (The Factory)
 *   **`ci.yml`**: Comprehensive automated factory. Stages include PyTest gating -> ARM Binary Compilation -> Container Image Generation -> VPS Server Synchronization -> OTA Trigger.
@@ -122,8 +124,7 @@ Ambiguous flashing LEDs are the bane of IoT engineering. This system employs a s
 | :--- | :--- | :--- |
 | **Boot Success** | 🟢 3× Fast Flashes | Hardware initialized, mapped to MQTT, ready. |
 | **Idling** | 🟢 50ms Pulse / 3 sec | Ultra-low power "heartbeat" proving system vitality. |
-| **Image Capture** | 🔴 Solid Red | Sensor is active and acquiring frame data. |
-| **Data Transfer** | 🟢 Rapid Strobe | Active HTTP chunk transfer (Upload / Check). |
+| **Capture & Upload** | 🔴 Solid Red | Sensor captures frame (~40ms extreme speed) and streams via HTTP. Kept solid throughout to ensure human visibility. |
 | **OTA Initialize** | 🔴+🟢 5× Strobe | Over-The-Air firmware manipulation is imminent. |
 | **OTA Flashing** | 🔴 Solid + 🟢 Pulse | Critical memory write in progress. Do not unplug. |
 
