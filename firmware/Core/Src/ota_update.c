@@ -436,6 +436,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 
     for (int dl_attempt = 0; dl_attempt < OTA_DOWNLOAD_MAX_RETRIES; dl_attempt++)
     {
+#if WATCHDOG_ENABLED
+        IWDG->KR = 0x0000AAAAu; /* Kick watchdog on new attempt */
+#endif
         if (dl_attempt > 0)
         {
             LOG_WARN(TAG_OTA, "Download retry %d/%d after %lums cooldown...",
@@ -583,6 +586,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 
         while (total_downloaded < info->size)
         {
+#if WATCHDOG_ENABLED
+            IWDG->KR = 0x0000AAAAu; /* Critical kick during large download */
+#endif
             /* Progress LED blink */
             BSP_LED_On(LED_RED);
             if (toggle_led) BSP_LED_On(LED_GREEN);
@@ -735,6 +741,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
     uint32_t aligned_len = total_downloaded & ~0x0FUL;
     for (uint32_t i = 0; i < aligned_len; i += 16)
     {
+#if WATCHDOG_ENABLED
+        IWDG->KR = 0x0000AAAAu; /* Kick watchdog during flash writing */
+#endif
         hal_ret = HAL_FLASH_Program(
             FLASH_TYPEPROGRAM_QUADWORD,
             flash_addr,
