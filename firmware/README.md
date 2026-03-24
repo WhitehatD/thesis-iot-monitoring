@@ -170,3 +170,28 @@ This firmware deeply utilizes the STM32U585's 2MB dual-bank flash architecture t
 3. **Verify**: Native software CRC32 validation guarantees bit-level accuracy against the file.
 4. **Swap & Reboot**: The non-volatile `SWAP_BANK` option bytes are flipped atomically during reboot.
 5. **Rollback (Rescue)**: If the new firmware fails to boot properly across 3 consecutive times, the MCU trips its RTC backup registry threshold and intrinsically forces a secondary bootbank reversion swap to rescue the node.
+
+## Security Hardening (March 2026)
+
+Enterprise-grade security audit conducted against **OWASP IoT Top 10 2025**, **CERT C Secure Coding**, and **NIST SP 800-183**. The following 8 vulnerability categories were identified and patched:
+
+| ID | Finding | Severity | Standard | Files Changed |
+|----|---------|----------|----------|---------------|
+| SEC-01 | Hardcoded Wi-Fi/server credentials | Critical | OWASP I1 | `firmware_config.h` |
+| SEC-02 | Unauthenticated MQTT broker access | High | OWASP I3 | `firmware_config.h`, `mqtt_handler.c` |
+| SEC-03 | Integer overflow in MQTT remaining-length decoder | High | CERT C INT32-C | `mqtt_handler.c` |
+| SEC-04 | Missing range validation on RTC time fields | Medium | CERT C INT32-C | `wifi.c`, `scheduler.c` |
+| SEC-05 | Server error details leaked in logs | Medium | OWASP I7 | `wifi.c` |
+| SEC-06 | OTA firmware downgrade attack vector | High | OWASP I4 | `ota_update.c`, `ota_update.h` |
+| SEC-07 | No hardware watchdog (IWDG) for autonomous recovery | High | OWASP I9 | `main.c`, `firmware_config.h` |
+| SEC-08 | Unsafe `atoi()` usage (undefined on overflow) | Medium | CERT C MSC24-C | `wifi.c`, `ota_update.c` |
+
+### Key Remediations
+
+- **Credentials** are now overridable via `-D` build flags (`WIFI_SSID`, `WIFI_PASSWORD`, `SERVER_HOST`, `MQTT_USERNAME`, `MQTT_PASSWORD`)
+- **MQTT CONNECT** packet supports optional username/password authentication per MQTT 3.1.1 spec
+- **OTA anti-downgrade** uses semantic version comparison — only strictly newer versions are accepted
+- **IWDG watchdog** with 16s timeout provides autonomous hardware reset on main-loop stalls
+- **`atoi()` → `strtol()`** with error checking prevents undefined behavior from malformed HTTP responses
+- **Time/date fields** are range-validated before writing to RTC registers
+

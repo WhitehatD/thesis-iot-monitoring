@@ -103,7 +103,14 @@ static int _build_connect_packet(uint8_t *buf, int buf_size)
     buf[pos++] = 0x04;
 
     /* Connect Flags: Clean Session = 1 */
-    buf[pos++] = 0x02;
+    uint8_t connect_flags = 0x02;  /* Clean Session */
+
+    /* SEC-02: Conditionally set Username/Password flags */
+    int has_username = (MQTT_USERNAME[0] != '\0');
+    int has_password = (MQTT_PASSWORD[0] != '\0');
+    if (has_username) connect_flags |= 0x80;  /* bit 7: Username Flag */
+    if (has_password) connect_flags |= 0x40;  /* bit 6: Password Flag */
+    buf[pos++] = connect_flags;
 
     /* Keep Alive */
     buf[pos++] = (uint8_t)(MQTT_KEEPALIVE_SECONDS >> 8);
@@ -111,6 +118,14 @@ static int _build_connect_packet(uint8_t *buf, int buf_size)
 
     /* Payload: Client ID */
     pos += _write_utf8_string(buf + pos, MQTT_CLIENT_ID);
+
+    /* Payload: Username (if set) */
+    if (has_username)
+        pos += _write_utf8_string(buf + pos, MQTT_USERNAME);
+
+    /* Payload: Password (if set) */
+    if (has_password)
+        pos += _write_utf8_string(buf + pos, MQTT_PASSWORD);
 
     /* Patch remaining length */
     buf[remaining_pos] = (uint8_t)(pos - remaining_pos - 1);
@@ -356,18 +371,20 @@ void MQTT_ProcessLoop(void)
              */
             int pos = 1;
 
-            /* Decode remaining length */
+            /* Decode remaining length (SEC-03: max 4 bytes per MQTT 3.1.1 §2.2.3) */
             uint32_t remaining = 0;
             uint32_t multiplier = 1;
             uint8_t byte;
+            int rl_bytes = 0;
             do {
-                if (pos >= recv_len) {
-                    LOG_WARN(TAG_MQTT, "Malformed PUBLISH: truncated remaining length");
+                if (pos >= recv_len || rl_bytes >= 4) {
+                    LOG_WARN(TAG_MQTT, "Malformed PUBLISH: truncated/overlong remaining length");
                     return;
                 }
                 byte = s_rx_buf[pos++];
                 remaining += (byte & 0x7F) * multiplier;
                 multiplier *= 128;
+                rl_bytes++;
             } while (byte & 0x80);
 
             /* Bounds-check: remaining must fit within received data */

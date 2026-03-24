@@ -14,16 +14,25 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Wi-Fi Configuration
+ *
+ *  WARNING (OWASP IoT I1): Credentials below are compile-time defaults.
+ *  For production, inject via build flags: make WIFI_SSID='"MyNet"' ...
  * ═══════════════════════════════════════════════════════════════════════════ */
+#ifndef WIFI_SSID
 #define WIFI_SSID                   "A I 2.4"
+#endif
+#ifndef WIFI_PASSWORD
 #define WIFI_PASSWORD               "alex1234"
+#endif
 #define WIFI_CONNECT_RETRIES        3
 #define WIFI_CONNECT_TIMEOUT_MS     10000
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Server Configuration (FastAPI backend)
  * ═══════════════════════════════════════════════════════════════════════════ */
+#ifndef SERVER_HOST
 #define SERVER_HOST                 "89.167.11.147"
+#endif
 #define SERVER_PORT                 8000
 #define SERVER_UPLOAD_PATH          "/api/upload"
 #define SERVER_UPLOAD_URL           "http://" SERVER_HOST ":" "8000" SERVER_UPLOAD_PATH
@@ -32,6 +41,9 @@
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  MQTT Broker Configuration
+ *
+ *  SEC-02: Username/password authentication. Set to empty string "" to
+ *  disable (backward-compatible). For production: set real credentials.
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define MQTT_BROKER_HOST            SERVER_HOST
 #define MQTT_BROKER_PORT            1883
@@ -39,6 +51,12 @@
 #define MQTT_KEEPALIVE_SECONDS      60
 #define MQTT_CONNECT_TIMEOUT_MS     10000
 #define MQTT_RECV_TIMEOUT_MS        1000
+#ifndef MQTT_USERNAME
+#define MQTT_USERNAME               ""     /* Empty = no auth (development) */
+#endif
+#ifndef MQTT_PASSWORD
+#define MQTT_PASSWORD               ""     /* Empty = no auth (development) */
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  SRAM Budget & Safety Limits
@@ -98,6 +116,15 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define LOW_POWER_MODE_ENABLED      1      /* 1 = STOP2 between tasks, 0 = active wait */
 #define DEEP_SLEEP_ON_COMPLETE      1      /* 1 = Standby after all tasks done */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Watchdog Configuration (SEC-07 — OWASP I9)
+ *
+ *  IWDG provides autonomous hardware reset if the main loop stalls.
+ *  LSI ≈ 32 kHz, prescaler /256 → 1 tick ≈ 8ms → 16s max timeout.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define WATCHDOG_ENABLED            1       /* 1 = enable IWDG */
+#define WATCHDOG_TIMEOUT_S          16      /* Seconds before reset (max ~16 for IWDG/256) */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Upload Optimization

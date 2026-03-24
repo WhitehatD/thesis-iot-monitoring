@@ -147,9 +147,13 @@ int Scheduler_ParseJSON(Schedule_t *schedule, const char *json_str)
             int n = sscanf(time_item->valuestring, "%d:%d:%d", &h, &m, &s);
             if (n >= 2)
             {
-                task->hour   = (uint8_t)(h & 0xFF);
-                task->minute = (uint8_t)(m & 0xFF);
-                task->second = (n >= 3) ? (uint8_t)(s & 0xFF) : 0;
+                /* SEC-04: clamp to valid RTC ranges */
+                if (h < 0 || h > 23) h = 0;
+                if (m < 0 || m > 59) m = 0;
+                if (s < 0 || s > 59) s = 0;
+                task->hour   = (uint8_t)h;
+                task->minute = (uint8_t)m;
+                task->second = (n >= 3) ? (uint8_t)s : 0;
             }
         }
 

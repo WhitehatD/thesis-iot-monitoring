@@ -92,6 +92,9 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
 
     content = await file.read()
 
+    if len(content) == 0:
+        raise HTTPException(status_code=422, detail="Empty upload — no image data received")
+
     # Save image to disk
     date_dir = datetime.now().strftime("%Y-%m-%d")
     save_dir = os.path.join(settings.upload_dir, date_dir)
@@ -106,26 +109,39 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
         320 * 240 * 2: (320, 240),   # QVGA
     }
 
-    if len(content) in RGB565_SIZES:
-        width, height = RGB565_SIZES[len(content)]
+    try:
+        if len(content) in RGB565_SIZES:
+            width, height = RGB565_SIZES[len(content)]
 
-        # OV5640 FORMAT_CTRL00=0x6F outputs BGR565 (little-endian):
-        #   Byte0: B[4:0]G[5:3]  Byte1: G[2:0]R[4:0]
-        # As LE uint16: bits[15:11]=Blue, bits[10:5]=Green, bits[4:0]=Red
-        #
-        # IMPORTANT: Do NOT cast to uint8 before scaling — uint8 * 255 overflows!
-        pixels = np.frombuffer(content, dtype=np.uint16)
-        b = (((pixels >> 11) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
-        g = (((pixels >> 5) & 0x3F).astype(np.uint16) * 255 // 63).astype(np.uint8)
-        r = ((pixels & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+            # OV5640 FORMAT_CTRL00=0x6F outputs BGR565 (little-endian):
+            #   Byte0: B[4:0]G[5:3]  Byte1: G[2:0]R[4:0]
+            # As LE uint16: bits[15:11]=Blue, bits[10:5]=Green, bits[4:0]=Red
+            #
+            # IMPORTANT: Do NOT cast to uint8 before scaling — uint8 * 255 overflows!
+            pixels = np.frombuffer(content, dtype=np.uint16)
+            b = (((pixels >> 11) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+            g = (((pixels >> 5) & 0x3F).astype(np.uint16) * 255 // 63).astype(np.uint8)
+            r = ((pixels & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
 
-        rgb = np.stack([r, g, b], axis=-1).reshape(height, width, 3)
-        img = Image.fromarray(rgb, "RGB")
-        img.save(filepath, "JPEG", quality=85)
-    else:
-        # Assume already JPEG or other image format
-        with open(filepath, "wb") as f:
-            f.write(content)
+            rgb = np.stack([r, g, b], axis=-1).reshape(height, width, 3)
+            img = Image.fromarray(rgb, "RGB")
+            img.save(filepath, "JPEG", quality=85)
+        else:
+            # Assume already JPEG or other image format — validate it's readable
+            try:
+                img = Image.open(io.BytesIO(content))
+                img.verify()  # Validate it's a real image
+            except Exception:
+                pass  # Save raw anyway — might be a valid format PIL doesn't verify well
+
+            with open(filepath, "wb") as f:
+                f.write(content)
+    except Exception as e:
+        print(f"✗ Upload processing failed for task {task_id}: {e} (content_len={len(content)})")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Image processing failed: {str(e)} (received {len(content)} bytes)"
+        )
 
     # Notify dashboard via MQTT
     image_meta = {

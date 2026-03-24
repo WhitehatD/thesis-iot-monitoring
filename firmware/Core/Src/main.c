@@ -39,6 +39,11 @@
 
 RTC_HandleTypeDef hrtc;
 
+/* SEC-07: Independent Watchdog for autonomous recovery */
+#if WATCHDOG_ENABLED
+static IWDG_HandleTypeDef hiwdg;
+#endif
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Private Variables
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -89,6 +94,11 @@ static void _do_button_capture(void);
 static void _do_capture_now(void);
 static void _do_capture_sequence(void);
 static void _do_ota_update(void);
+
+/* SEC-07: Watchdog initialization */
+#if WATCHDOG_ENABLED
+static void Watchdog_Init(void);
+#endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Stack Watermark — Enterprise RAM Safety
@@ -379,6 +389,11 @@ int main(void)
     RAM_PaintStackCanary();
 #endif
 
+    /* SEC-07: Initialize IWDG — must be after all blocking HAL inits */
+#if WATCHDOG_ENABLED
+    Watchdog_Init();
+#endif
+
     /* ── Phase 2: Connectivity ──────────────────────── */
 
     /* Wi-Fi */
@@ -535,6 +550,11 @@ int main(void)
     {
         MQTT_ProcessLoop();
 
+        /* SEC-07: Refresh watchdog every loop iteration */
+#if WATCHDOG_ENABLED
+        HAL_IWDG_Refresh(&hiwdg);
+#endif
+
         /* Send MQTT keepalive ping and online status every 30 seconds */
         if ((HAL_GetTick() - last_ping) > 30000)
         {
@@ -589,6 +609,9 @@ int main(void)
         if (s_ota_requested)
         {
             s_ota_requested = 0;
+#if WATCHDOG_ENABLED
+            HAL_IWDG_Refresh(&hiwdg);  /* OTA is long — refresh before starting */
+#endif
             _do_ota_update();
             poll_start = HAL_GetTick();
         }
@@ -941,8 +964,38 @@ static void LED_SignalError(void)
     {
         BSP_LED_Toggle(LED_RED);
         HAL_Delay(150);
+#if WATCHDOG_ENABLED
+        HAL_IWDG_Refresh(&hiwdg);  /* Keep alive during error blink — allows debugger attach */
+#endif
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  SEC-07: IWDG Initialization
+ *
+ *  LSI ≈ 32 kHz, Prescaler = /256 → 1 tick ≈ 8ms.
+ *  Reload = WATCHDOG_TIMEOUT_S * 125 → timeout in seconds.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#if WATCHDOG_ENABLED
+static void Watchdog_Init(void)
+{
+    hiwdg.Instance = IWDG;
+    hiwdg.Init.Prescaler = IWDG_PRESCALER_256;
+    hiwdg.Init.Reload = (uint32_t)(WATCHDOG_TIMEOUT_S * 125) - 1;  /* ~16s max */
+    hiwdg.Init.Window = IWDG_WINDOW_DISABLE;
+    hiwdg.Init.EWI = 0;
+
+    if (HAL_IWDG_Init(&hiwdg) != HAL_OK)
+    {
+        LOG_ERROR(TAG_BOOT, "IWDG init failed — watchdog NOT active");
+    }
+    else
+    {
+        LOG_INFO(TAG_BOOT, "IWDG initialized (%ds timeout)", WATCHDOG_TIMEOUT_S);
+    }
+}
+#endif /* WATCHDOG_ENABLED */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  B3 USER Button — Instant Capture + Upload

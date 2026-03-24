@@ -43,6 +43,7 @@ typedef enum {
     OTA_ERROR_VERIFY,        /* CRC32 mismatch after write */
     OTA_ERROR_TOO_LARGE,     /* Firmware exceeds max size */
     OTA_ERROR_SWAP,          /* Bank swap failed */
+    OTA_ERROR_DOWNGRADE,     /* SEC-06: Server version is older than current */
 } OTAStatus_t;
 
 /* ═══════════════════════════════════════════════════════════════════════════

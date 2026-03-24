@@ -31,6 +31,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Flash Constants
@@ -70,6 +71,26 @@ static uint32_t _crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
         }
     }
     return crc;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  SEC-06: Semantic Version Comparator (anti-downgrade)
+ *
+ *  Parses "major.minor" strings and returns 1 if 'candidate'
+ *  is strictly newer than 'current'. Rejects equal or older versions.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static int _is_version_newer(const char *candidate, const char *current)
+{
+    int c_major = 0, c_minor = 0;
+    int n_major = 0, n_minor = 0;
+
+    sscanf(current,   "%d.%d", &c_major, &c_minor);
+    sscanf(candidate, "%d.%d", &n_major, &n_minor);
+
+    if (n_major > c_major) return 1;
+    if (n_major == c_major && n_minor > c_minor) return 1;
+    return 0;  /* Equal or older */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -322,11 +343,18 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
 
     cJSON_Delete(root);
 
-    /* Compare versions */
+    /* Compare versions — SEC-06: reject downgrades */
     if (strcmp(info->version, FW_VERSION) == 0)
     {
         LOG_INFO(TAG_OTA, "Firmware is up-to-date (v%s)", FW_VERSION);
         return OTA_NO_UPDATE;
+    }
+
+    if (!_is_version_newer(info->version, FW_VERSION))
+    {
+        LOG_WARN(TAG_OTA, "Server version v%s is not newer than current v%s — rejecting (anti-downgrade)",
+                 info->version, FW_VERSION);
+        return OTA_ERROR_DOWNGRADE;
     }
 
     /* Size sanity check */
@@ -460,9 +488,16 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         recv_buf[recv_len] = '\0';  /* Safe — recv_buf has +512 headroom */
 
         int http_status = 0;
-        const char *space = strchr((char *)recv_buf, ' ');
-        if (space != NULL)
-            http_status = atoi(space + 1);
+        {
+            const char *space = strchr((char *)recv_buf, ' ');
+            if (space != NULL)
+            {
+                char *endptr = NULL;
+                long parsed = strtol(space + 1, &endptr, 10);
+                if (endptr != space + 1 && parsed >= 100 && parsed <= 599)
+                    http_status = (int)parsed;
+            }
+        }
 
         if (http_status < 200 || http_status >= 300)
         {
@@ -486,7 +521,10 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 
         if (cl_hdr != NULL)
         {
-            uint32_t content_length = (uint32_t)atoi(cl_hdr + 16);
+            char *endptr = NULL;
+            long parsed = strtol(cl_hdr + 16, &endptr, 10);
+            uint32_t content_length = (endptr != cl_hdr + 16 && parsed >= 0)
+                                      ? (uint32_t)parsed : 0;
             if (content_length != info->size)
             {
                 LOG_WARN(TAG_OTA, "Content-Length mismatch: HTTP=%lu expected=%lu",

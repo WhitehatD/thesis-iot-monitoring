@@ -27,6 +27,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "cJSON.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -413,7 +414,10 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
                 const char *space = strchr((char *)resp_buf, ' ');
                 if (space != NULL)
                 {
-                    http_code = atoi(space + 1);
+                    char *endptr = NULL;
+                    long parsed = strtol(space + 1, &endptr, 10);
+                    if (endptr != space + 1 && parsed >= 100 && parsed <= 599)
+                        http_code = (int)parsed;
                 }
 
                 if (http_code >= 200 && http_code < 300)
@@ -601,13 +605,33 @@ WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
         return WIFI_ERROR_SEND;
     }
 
-    *hour    = (uint8_t)j_hour->valueint;
-    *minute  = (uint8_t)j_minute->valueint;
-    *second  = (uint8_t)j_second->valueint;
-    *year    = cJSON_IsNumber(j_year)    ? (uint8_t)j_year->valueint    : 26;
-    *month   = cJSON_IsNumber(j_month)   ? (uint8_t)j_month->valueint   : 1;
-    *day     = cJSON_IsNumber(j_day)     ? (uint8_t)j_day->valueint     : 1;
-    *weekday = cJSON_IsNumber(j_weekday) ? (uint8_t)j_weekday->valueint : 1;
+    /* ── SEC-04: Range-validate all fields before writing to RTC ── */
+    int raw_h = j_hour->valueint;
+    int raw_m = j_minute->valueint;
+    int raw_s = j_second->valueint;
+    int raw_y = cJSON_IsNumber(j_year)    ? j_year->valueint    : 26;
+    int raw_mo = cJSON_IsNumber(j_month)  ? j_month->valueint   : 1;
+    int raw_d = cJSON_IsNumber(j_day)     ? j_day->valueint     : 1;
+    int raw_wd = cJSON_IsNumber(j_weekday)? j_weekday->valueint : 1;
+
+    if (raw_h < 0 || raw_h > 23 || raw_m < 0 || raw_m > 59 ||
+        raw_s < 0 || raw_s > 59 || raw_mo < 1 || raw_mo > 12 ||
+        raw_d < 1 || raw_d > 31 || raw_wd < 1 || raw_wd > 7 ||
+        raw_y < 0 || raw_y > 99)
+    {
+        LOG_ERROR(TAG_HTTP, "Time sync: field out of range (h=%d m=%d s=%d)",
+                  raw_h, raw_m, raw_s);
+        cJSON_Delete(root);
+        return WIFI_ERROR_SEND;
+    }
+
+    *hour    = (uint8_t)raw_h;
+    *minute  = (uint8_t)raw_m;
+    *second  = (uint8_t)raw_s;
+    *year    = (uint8_t)raw_y;
+    *month   = (uint8_t)raw_mo;
+    *day     = (uint8_t)raw_d;
+    *weekday = (uint8_t)raw_wd;
 
     LOG_INFO(TAG_HTTP, "Server time: %02u:%02u:%02u  %04u-%02u-%02u (wd=%u)",
              *hour, *minute, *second, 2000 + *year, *month, *day, *weekday);
