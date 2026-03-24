@@ -162,10 +162,15 @@ export function useMqttImages() {
 							step = "received";
 						else if (
 							data.status === "executing" ||
-							data.status === "camera_init"
+							data.status === "camera_init" ||
+							data.status === "camera_reinit"
 						)
 							step = "camera_init";
-						else if (data.status === "capturing") step = "capturing";
+						else if (
+							data.status === "capturing" ||
+							data.status === "capture_retry"
+						)
+							step = "capturing";
 						else if (data.status === "uploading") step = "uploading";
 						else if (
 							data.status === "uploaded" ||
@@ -173,6 +178,7 @@ export function useMqttImages() {
 							data.status === "captured"
 						)
 							step = "finished";
+						else if (data.status === "capture_failed") step = "error";
 
 						if (step !== "idle") {
 							const newLog = `[${new Date().toLocaleTimeString()}] ⚡ Status changed to: ${data.status}`;

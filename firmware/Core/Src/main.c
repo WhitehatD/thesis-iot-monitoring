@@ -976,14 +976,13 @@ static void _do_button_capture(void)
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
     MQTT_PublishStatus(status_msg);
 
-    /* Use warm capture if camera is already initialized (boot-time init),
-     * otherwise fall back to cold init + standard capture. */
     uint32_t captured_size = 0;
-    CameraStatus_t cam_ret;
+    CameraStatus_t cam_ret = CAMERA_ERROR_CAPTURE;
 
     /* Turn on RED LED during image capture */
     BSP_LED_On(LED_RED);
 
+    /* ── Attempt 1: Warm capture (with internal retries) ── */
     if (Camera_IsInitialized())
     {
         snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
@@ -992,29 +991,44 @@ static void _do_button_capture(void)
         cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
-    else
-    {
-        LOG_WARN(TAG_CAM, "Camera cold — initializing for button capture");
-        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"camera_init\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
-        MQTT_PublishStatus(status_msg);
 
-        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
-        {
-            LOG_ERROR(TAG_CAM, "Camera init failed for button capture");
-            BSP_LED_Off(LED_RED);
-            return;
-        }
-
-        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
-        MQTT_PublishStatus(status_msg);
-
-        cam_ret = Camera_CaptureFrame(
-            s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
-    }
+    /* ── Attempt 2: Cold-reinit fallback ── */
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
-        LOG_ERROR(TAG_CAM, "Capture failed (ret=%d, size=%lu)",
+        LOG_WARN(TAG_CAM, "Warm capture failed (ret=%d) — cold-reinit fallback", cam_ret);
+        snprintf(status_msg, sizeof(status_msg),
+                 "{\"status\":\"camera_reinit\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
+        MQTT_PublishStatus(status_msg);
+
+        Camera_DeInit();
+        HAL_Delay(100);
+
+        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) == CAMERA_OK)
+        {
+            snprintf(status_msg, sizeof(status_msg),
+                     "{\"status\":\"capturing\",\"task_id\":%lu,\"fallback\":\"cold\"}", (unsigned long)s_button_task_id);
+            MQTT_PublishStatus(status_msg);
+
+            captured_size = 0;
+            cam_ret = Camera_CaptureFrame(
+                s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+        }
+        else
+        {
+            LOG_ERROR(TAG_CAM, "Cold reinit failed — capture impossible");
+            cam_ret = CAMERA_ERROR_INIT;
+        }
+    }
+
+    /* ── Final failure — never silent ── */
+    if (cam_ret != CAMERA_OK || captured_size == 0)
+    {
+        LOG_ERROR(TAG_CAM, "Capture failed after all attempts (ret=%d, size=%lu)",
                   cam_ret, (unsigned long)captured_size);
+        snprintf(status_msg, sizeof(status_msg),
+                 "{\"status\":\"error\",\"task_id\":%lu,\"reason\":\"capture_failed\"}",
+                 (unsigned long)s_button_task_id);
+        MQTT_PublishStatus(status_msg);
         BSP_LED_Off(LED_GREEN);
         BSP_LED_Off(LED_RED);
         return;
@@ -1054,7 +1068,7 @@ static void _do_button_capture(void)
 
     MQTT_PublishStatus(status_msg);
 
-    /* Turn off RED LED after upload completes */
+    /* Turn off RED LED after capture cycle completes */
     BSP_LED_Off(LED_RED);
 
 #if STACK_WATERMARK_ENABLED
@@ -1077,14 +1091,13 @@ static void _do_capture_now(void)
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)task_id);
     MQTT_PublishStatus(status_msg);
 
-    /* Use warm capture if camera is already initialized (boot-time init),
-     * otherwise fall back to cold init + standard capture. */
     uint32_t captured_size = 0;
-    CameraStatus_t cam_ret;
+    CameraStatus_t cam_ret = CAMERA_ERROR_CAPTURE;
 
     /* Turn on RED LED during image capture */
     BSP_LED_On(LED_RED);
 
+    /* ── Attempt 1: Warm capture (with internal retries) ── */
     if (Camera_IsInitialized())
     {
         snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)task_id);
@@ -1093,30 +1106,47 @@ static void _do_capture_now(void)
         cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
-    else
-    {
-        LOG_WARN(TAG_CAM, "Camera cold — initializing for capture_now");
-        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"camera_init\",\"task_id\":%lu}", (unsigned long)task_id);
-        MQTT_PublishStatus(status_msg);
 
-        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) != CAMERA_OK)
-        {
-            LOG_ERROR(TAG_CAM, "Camera init failed for capture_now");
-            BSP_LED_Off(LED_RED);
-            return;
-        }
-
-        snprintf(status_msg, sizeof(status_msg), "{\"status\":\"capturing\",\"task_id\":%lu}", (unsigned long)task_id);
-        MQTT_PublishStatus(status_msg);
-
-        cam_ret = Camera_CaptureFrame(
-            s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
-    }
-
+    /* ── Attempt 2: Cold-reinit fallback ──
+     * If warm capture failed (or camera was not initialized),
+     * fully deinit + reinit the camera and try a cold capture. */
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
-        LOG_ERROR(TAG_CAM, "Capture failed (ret=%d, size=%lu)",
+        LOG_WARN(TAG_CAM, "Warm capture failed (ret=%d) — cold-reinit fallback", cam_ret);
+        snprintf(status_msg, sizeof(status_msg),
+                 "{\"status\":\"camera_reinit\",\"task_id\":%lu}", (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
+
+        /* Full power-cycle of the camera subsystem */
+        Camera_DeInit();
+        HAL_Delay(100);  /* Let sensor power settle */
+
+        if (Camera_Init(CAMERA_DEFAULT_RESOLUTION) == CAMERA_OK)
+        {
+            snprintf(status_msg, sizeof(status_msg),
+                     "{\"status\":\"capturing\",\"task_id\":%lu,\"fallback\":\"cold\"}", (unsigned long)task_id);
+            MQTT_PublishStatus(status_msg);
+
+            captured_size = 0;
+            cam_ret = Camera_CaptureFrame(
+                s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
+        }
+        else
+        {
+            LOG_ERROR(TAG_CAM, "Cold reinit failed — capture impossible");
+            cam_ret = CAMERA_ERROR_INIT;
+        }
+    }
+
+    /* ── Final failure — never silent ── */
+    if (cam_ret != CAMERA_OK || captured_size == 0)
+    {
+        LOG_ERROR(TAG_CAM, "Capture failed after all attempts (ret=%d, size=%lu)",
                   cam_ret, (unsigned long)captured_size);
+        snprintf(status_msg, sizeof(status_msg),
+                 "{\"status\":\"error\",\"task_id\":%lu,\"reason\":\"capture_failed\"}",
+                 (unsigned long)task_id);
+        MQTT_PublishStatus(status_msg);
         BSP_LED_Off(LED_GREEN);
         BSP_LED_Off(LED_RED);
         return;
@@ -1155,6 +1185,9 @@ static void _do_capture_now(void)
     }
 
     MQTT_PublishStatus(status_msg);
+
+    /* Turn off RED LED after capture cycle completes */
+    BSP_LED_Off(LED_RED);
 
 #if STACK_WATERMARK_ENABLED
     RAM_CheckStackHighWater();

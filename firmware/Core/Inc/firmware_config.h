@@ -72,6 +72,7 @@
 #define CAMERA_AEC_SETTLE_TIMEOUT_MS 800              /* Max wait for AEC register convergence */
 #define CAMERA_VTS_DEFAULT          0x0320            /* VTS=800 lines → ~30fps (33ms/frame) */
 #define CAMERA_INTER_FRAME_DELAY_MS 10                /* Brief ISP settle between snapshots */
+#define CAMERA_WARM_CAPTURE_RETRIES 3                 /* Max snapshot attempts before declaring failure */
 
 /* ── Diagnostics ──────────────────────────────────────── */
 #define CAMERA_DIAG_ENABLED         0                 /* 1 = verbose hex dump + pixel scan */

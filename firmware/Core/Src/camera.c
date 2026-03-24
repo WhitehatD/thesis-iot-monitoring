@@ -421,58 +421,98 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
         return CAMERA_ERROR_CAPTURE;
     }
 
-    /* Reset frame counter — we only need 1 frame */
-    s_frame_count = 0;
-    s_frame_size  = 0;
-    s_active_buffer = buffer;
+    /* ── Enterprise Retry Loop ──────────────────────────────────────
+     * The DCMI/sensor can miss a snapshot trigger after extended idle.
+     * Retry up to CAMERA_WARM_CAPTURE_RETRIES times, stopping and
+     * restarting the DCMI between attempts to re-arm the hardware. */
 
-    /* Turn ON tally light (Red LED) directly before capture */
-    BSP_LED_On(LED_RED);
+    const uint32_t MAX_ATTEMPTS = CAMERA_WARM_CAPTURE_RETRIES;
+    const uint32_t WARM_TIMEOUT_MS = 1000;  /* 1s per attempt */
 
-    /* Start snapshot capture — stop after first frame automatically */
-    int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_SNAPSHOT);
-    if (ret != BSP_ERROR_NONE)
+    for (uint32_t attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)
     {
-        LOG_ERROR(TAG_CAM, "BSP_CAMERA_Start failed (err=%ld)", (long)ret);
-        s_active_buffer = NULL;
-        return CAMERA_ERROR_CAPTURE;
-    }
+        /* Reset frame counter for this attempt */
+        s_frame_count = 0;
+        s_frame_size  = 0;
+        s_active_buffer = buffer;
 
-    /* Wait for exactly 1 frame-complete interrupt */
-    uint32_t start_tick = HAL_GetTick();
-    const uint32_t WARM_TIMEOUT_MS = 1000;  /* 1s generous timeout */
+        /* Turn ON tally light (Red LED) */
+        BSP_LED_On(LED_RED);
 
-    while (s_frame_count < 1)
-    {
-        if ((HAL_GetTick() - start_tick) > WARM_TIMEOUT_MS)
+        /* Start snapshot capture */
+        int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_SNAPSHOT);
+        if (ret != BSP_ERROR_NONE)
         {
-            LOG_ERROR(TAG_CAM, "Warm capture timeout after %lums",
-                      (unsigned long)WARM_TIMEOUT_MS);
-            BSP_CAMERA_Stop(0);
+            LOG_ERROR(TAG_CAM, "BSP_CAMERA_Start failed (err=%ld, attempt %lu/%lu)",
+                      (long)ret, (unsigned long)attempt, (unsigned long)MAX_ATTEMPTS);
             BSP_LED_Off(LED_RED);
             s_active_buffer = NULL;
-            return CAMERA_ERROR_TIMEOUT;
+
+            if (attempt < MAX_ATTEMPTS)
+            {
+                HAL_Delay(50);
+                continue;
+            }
+            return CAMERA_ERROR_CAPTURE;
         }
-        HAL_Delay(1);
+
+        /* Wait for exactly 1 frame-complete interrupt */
+        uint32_t start_tick = HAL_GetTick();
+        uint8_t  got_frame = 0;
+
+        while ((HAL_GetTick() - start_tick) <= WARM_TIMEOUT_MS)
+        {
+            if (s_frame_count >= 1)
+            {
+                got_frame = 1;
+                break;
+            }
+            HAL_Delay(1);
+        }
+
+        /* Always stop DCMI after each attempt */
+        BSP_CAMERA_Stop(0);
+
+        if (got_frame)
+        {
+            /* ── Success ── */
+            BSP_LED_Off(LED_RED);
+            s_active_buffer = NULL;
+
+            uint32_t copy_size = s_frame_size;
+            if (copy_size == 0)
+                copy_size = buffer_size;
+            if (copy_size > buffer_size)
+                copy_size = buffer_size;
+
+            *captured_size = copy_size;
+
+            LOG_INFO(TAG_CAM, "[PERF] Warm capture: %lums, %lu bytes (attempt %lu/%lu)",
+                     (unsigned long)(HAL_GetTick() - perf_start),
+                     (unsigned long)copy_size,
+                     (unsigned long)attempt, (unsigned long)MAX_ATTEMPTS);
+
+            return CAMERA_OK;
+        }
+
+        /* ── Timeout on this attempt ── */
+        BSP_LED_Off(LED_RED);
+        s_active_buffer = NULL;
+
+        if (attempt < MAX_ATTEMPTS)
+        {
+            LOG_WARN(TAG_CAM, "Warm capture timeout (attempt %lu/%lu) — retrying...",
+                     (unsigned long)attempt, (unsigned long)MAX_ATTEMPTS);
+            HAL_Delay(50);  /* Brief settle before DCMI re-arm */
+        }
+        else
+        {
+            LOG_ERROR(TAG_CAM, "Warm capture failed after %lu attempts",
+                      (unsigned long)MAX_ATTEMPTS);
+        }
     }
 
-    BSP_CAMERA_Stop(0);
-    BSP_LED_Off(LED_RED);
-    s_active_buffer = NULL;
-
-    uint32_t copy_size = s_frame_size;
-    if (copy_size == 0)
-        copy_size = buffer_size;
-    if (copy_size > buffer_size)
-        copy_size = buffer_size;
-
-    *captured_size = copy_size;
-
-    LOG_INFO(TAG_CAM, "[PERF] Warm capture: %lums, %lu bytes",
-             (unsigned long)(HAL_GetTick() - perf_start),
-             (unsigned long)copy_size);
-
-    return CAMERA_OK;
+    return CAMERA_ERROR_TIMEOUT;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
