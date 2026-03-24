@@ -1246,6 +1246,82 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 	font-weight: 600;
 }
 
+/* ── OTA Progress Panel ──────────────────────────────────── */
+.ota-progress-panel {
+	margin-top: 20px;
+	padding: 16px 20px;
+	background: rgba(0, 0, 0, 0.25);
+	border: 1px solid rgba(56, 189, 248, 0.15);
+	border-radius: var(--radius-md);
+}
+.ota-progress-bar-track {
+	height: 8px;
+	background: rgba(255, 255, 255, 0.06);
+	border-radius: 4px;
+	overflow: hidden;
+	margin-bottom: 16px;
+}
+.ota-progress-bar-fill {
+	height: 100%;
+	background: var(--gradient-hero);
+	border-radius: 4px;
+	box-shadow: 0 0 12px rgba(56, 189, 248, 0.5);
+	transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.ota-metrics-grid {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 12px;
+}
+.ota-metric {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+}
+.ota-metric-value {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 14px;
+	font-weight: 700;
+	color: var(--accent-blue);
+}
+.ota-metric-label {
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.8px;
+}
+.ota-up-to-date-msg {
+	padding: 14px 20px;
+	background: rgba(16, 185, 129, 0.1);
+	border: 1px solid rgba(16, 185, 129, 0.3);
+	border-radius: var(--radius-sm);
+	color: var(--accent-emerald);
+	font-size: 14px;
+	font-weight: 600;
+}
+
+/* ── Stepper Logs Terminal ──────────────────────────────── */
+.stepper-logs-terminal {
+	margin-top: 16px;
+	padding: 12px 16px;
+	background: rgba(0, 0, 0, 0.3);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	border-radius: var(--radius-sm);
+	max-height: 120px;
+	overflow-y: auto;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 11px;
+}
+.log-line {
+	color: var(--text-muted);
+	line-height: 1.8;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
 /* ═══════════════════════════════════════════════════════════
    Mobile Responsive Rules (Critical for Performance)
    ═══════════════════════════════════════════════════════════ */
@@ -1333,6 +1409,13 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 	.stepper-step-container.completed .active-line::after {
 		height: 100%;
 		width: 100%;
+	}
+
+	.ota-metrics-grid {
+		grid-template-columns: repeat(2, 1fr);
+	}
+	.ota-progress-panel {
+		padding: 12px 16px;
 	}
 
 	.toast-container {

@@ -155,7 +155,32 @@ export function useMqttImages() {
 						);
 					} else {
 						let step = "idle";
+						let otaProgress = null;
+
+						/* ── OTA-specific status mapping ── */
 						if (
+							data.status === "ota_update_queued" ||
+							data.status === "ota_checking"
+						)
+							step = "ota_checking";
+						else if (data.status === "ota_downloading")
+							step = "ota_downloading";
+						else if (data.status === "ota_progress") {
+							step = "ota_downloading";
+							otaProgress = {
+								downloaded: data.downloaded,
+								total: data.total,
+								percent: data.percent,
+								throughputKbps: data.throughput_kbps,
+								elapsedMs: data.elapsed_ms,
+								attempt: data.attempt,
+							};
+						} else if (data.status === "ota_rebooting") step = "ota_rebooting";
+						else if (data.status === "ota_up_to_date") step = "ota_up_to_date";
+						else if (data.status === "ota_error") {
+							step = "error";
+						} else if (
+							/* ── Capture lifecycle status mapping ── */
 							data.status === "schedule_received" ||
 							data.status === "job_received"
 						)
@@ -181,9 +206,11 @@ export function useMqttImages() {
 						else if (data.status === "capture_failed") step = "error";
 
 						if (step !== "idle") {
-							const newLog = `[${new Date().toLocaleTimeString()}] ⚡ Status changed to: ${data.status}`;
+							const isOta = step.startsWith("ota_");
+							const newLog = isOta
+								? `[${new Date().toLocaleTimeString()}] 🔄 OTA: ${data.status}${data.percent != null ? ` (${data.percent}%)` : ""}${data.throughput_kbps != null ? ` @ ${data.throughput_kbps} KB/s` : ""}`
+								: `[${new Date().toLocaleTimeString()}] ⚡ Status changed to: ${data.status}`;
 							setJobState((prev) => {
-								// If transitioning from an inactive or finished state, start fresh or append
 								const prevLogs =
 									(!prev.isActive && step !== "finished") ||
 									prev.step === "error"
@@ -193,15 +220,24 @@ export function useMqttImages() {
 									isActive: true,
 									step,
 									taskId: data.task_id || data.tasks || prev.taskId || null,
-									error: null,
+									error:
+										data.status === "ota_error"
+											? data.reason || "OTA update failed"
+											: null,
 									logs: [...prevLogs, newLog],
+									otaProgress: otaProgress || prev.otaProgress || null,
 								};
 							});
 							if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
 
-							// Auto-clear after 10s of inactivity if not finished
-							// If finished, clear after 4s
-							const timeout = step === "finished" ? 4000 : 10000;
+							const timeout =
+								step === "finished"
+									? 4000
+									: step === "ota_rebooting"
+										? 15000
+										: step === "ota_up_to_date"
+											? 5000
+											: 30000;
 							jobTimeoutRef.current = setTimeout(() => {
 								setJobState((prev) => ({ ...prev, isActive: false }));
 							}, timeout);

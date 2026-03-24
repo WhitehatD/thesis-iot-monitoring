@@ -21,6 +21,7 @@
 #include "firmware_config.h"
 #include "debug_log.h"
 #include "wifi.h"
+#include "mqtt_handler.h"
 #include "main.h"
 
 #include "mx_wifi.h"
@@ -370,7 +371,14 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
              (unsigned long)pages_needed);
 
     /* ═════════════════════════════════════════════════════════════════════
-     * Stage 1: Download entire firmware to RAM (NO flash ops during network I/O)
+     * Stage 1: Download entire firmware to RAM (NO flash ops during I/O)
+     *
+     * Enterprise download pipeline:
+     *   1. HTTP status code validation (reject 4xx/5xx)
+     *   2. Content-Length cross-check against version metadata
+     *   3. MQTT progress streaming for real-time dashboard telemetry
+     *   4. Download throughput metrics ([PERF] logging)
+     *   5. Retry loop with exponential backoff for SPI recovery
      * ═════════════════════════════════════════════════════════════════════ */
 
     LOG_INFO(TAG_OTA, "Downloading firmware to RAM (%lu bytes)...",
@@ -384,128 +392,248 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         "\r\n",
         OTA_DOWNLOAD_PATH, SERVER_HOST, SERVER_PORT);
 
-    int32_t sock = _ota_socket_open();
-    if (sock < 0)
-    {
-        LOG_ERROR(TAG_OTA, "Download: socket connect failed");
-        return OTA_ERROR_NETWORK;
-    }
-
-    if (_ota_send_all(sock, (uint8_t *)header, header_len) != 0)
-    {
-        LOG_ERROR(TAG_OTA, "Download: send request failed");
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        return OTA_ERROR_NETWORK;
-    }
-
-    /* Wait for response headers */
-    MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
-
-    /* Read response — first read gets headers + start of body */
-    uint8_t recv_buf[OTA_DOWNLOAD_CHUNK_SIZE + 512];
-    int32_t recv_len = MX_WIFI_Socket_recv(
-        wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
-
-    if (recv_len <= 0)
-    {
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 3000);
-        recv_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
-    }
-
-    if (recv_len <= 0)
-    {
-        LOG_ERROR(TAG_OTA, "Download: no response");
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        return OTA_ERROR_NETWORK;
-    }
-
-    /* Skip HTTP headers — find \r\n\r\n */
-    uint8_t *body_start = NULL;
-    int32_t body_offset = 0;
-    for (int32_t i = 0; i < recv_len - 3; i++)
-    {
-        if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
-            recv_buf[i+2] == '\r' && recv_buf[i+3] == '\n')
-        {
-            body_start = &recv_buf[i + 4];
-            body_offset = i + 4;
-            break;
-        }
-    }
-
-    if (body_start == NULL)
-    {
-        LOG_ERROR(TAG_OTA, "Download: HTTP headers not found");
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        return OTA_ERROR_NETWORK;
-    }
-
-    /* Copy first chunk's body portion into RAM buffer */
     uint32_t total_downloaded = 0;
-    int32_t first_body_len = recv_len - body_offset;
-    if (first_body_len > 0)
+    int download_ok = 0;
+    uint32_t retry_delay_ms = OTA_DOWNLOAD_RETRY_BASE_MS;
+    uint32_t download_start_tick = 0;
+
+    for (int dl_attempt = 0; dl_attempt < OTA_DOWNLOAD_MAX_RETRIES; dl_attempt++)
     {
-        memcpy(ram_buffer, body_start, first_body_len);
-        total_downloaded = first_body_len;
-    }
+        if (dl_attempt > 0)
+        {
+            LOG_WARN(TAG_OTA, "Download retry %d/%d after %lums cooldown...",
+                     dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES,
+                     (unsigned long)retry_delay_ms);
 
-    /* Continue downloading remainder into RAM buffer */
-    uint8_t toggle_led = 0;
-    while (total_downloaded < info->size)
-    {
-        /* Progress LED blink */
-        BSP_LED_On(LED_RED);
-        if (toggle_led) BSP_LED_On(LED_GREEN);
-        else BSP_LED_Off(LED_GREEN);
-        toggle_led = !toggle_led;
+            /* Yield SPI aggressively so EMW3080 drains any stale MIPC state */
+            MX_WIFI_IO_YIELD(wifi_obj_get(), retry_delay_ms);
+            retry_delay_ms *= 2;
+        }
 
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 100);
+        /* Brief SPI yield before socket open — let any pending MQTT
+         * publish/keepalive traffic drain off the bus first. */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 500);
 
-        uint32_t remaining = info->size - total_downloaded;
-        uint32_t chunk_max = (remaining < OTA_DOWNLOAD_CHUNK_SIZE) ? remaining : OTA_DOWNLOAD_CHUNK_SIZE;
+        total_downloaded = 0;
+        download_start_tick = HAL_GetTick();
 
-        recv_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max,
-            HTTP_RESPONSE_TIMEOUT_MS);
+        int32_t sock = _ota_socket_open();
+        if (sock < 0)
+        {
+            LOG_ERROR(TAG_OTA, "Download: socket connect failed (attempt %d/%d)",
+                      dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+            continue;
+        }
+
+        if (_ota_send_all(sock, (uint8_t *)header, header_len) != 0)
+        {
+            LOG_ERROR(TAG_OTA, "Download: send request failed (attempt %d/%d)",
+                      dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+            MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            continue;
+        }
+
+        /* Wait for response headers */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+
+        /* Read response — first read gets headers + start of body */
+        uint8_t recv_buf[OTA_DOWNLOAD_CHUNK_SIZE + 512];
+        int32_t recv_len = MX_WIFI_Socket_recv(
+            wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
 
         if (recv_len <= 0)
         {
-            /* Retry once */
-            MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 3000);
+            recv_len = MX_WIFI_Socket_recv(
+                wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
+        }
+
+        if (recv_len <= 0)
+        {
+            LOG_ERROR(TAG_OTA, "Download: no response (attempt %d/%d)",
+                      dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+            MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            continue;
+        }
+
+        /* ── HTTP Status Code Validation ────────────────────────────── */
+        recv_buf[recv_len] = '\0';  /* Safe — recv_buf has +512 headroom */
+
+        int http_status = 0;
+        const char *space = strchr((char *)recv_buf, ' ');
+        if (space != NULL)
+            http_status = atoi(space + 1);
+
+        if (http_status < 200 || http_status >= 300)
+        {
+            LOG_ERROR(TAG_OTA, "Download: HTTP %d (expected 200) — attempt %d/%d",
+                      http_status, dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+            MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            if (http_status == 404)
+            {
+                LOG_ERROR(TAG_OTA, "Firmware binary not found on server");
+                return OTA_ERROR_NETWORK;  /* Don't retry 404 */
+            }
+            continue;
+        }
+
+        LOG_INFO(TAG_OTA, "HTTP %d OK — streaming firmware body", http_status);
+
+        /* ── Content-Length Cross-Validation ────────────────────────── */
+        const char *cl_hdr = strstr((char *)recv_buf, "Content-Length: ");
+        if (cl_hdr == NULL)
+            cl_hdr = strstr((char *)recv_buf, "content-length: ");
+
+        if (cl_hdr != NULL)
+        {
+            uint32_t content_length = (uint32_t)atoi(cl_hdr + 16);
+            if (content_length != info->size)
+            {
+                LOG_WARN(TAG_OTA, "Content-Length mismatch: HTTP=%lu expected=%lu",
+                         (unsigned long)content_length, (unsigned long)info->size);
+            }
+            else
+            {
+                LOG_DEBUG(TAG_OTA, "Content-Length verified: %lu bytes",
+                          (unsigned long)content_length);
+            }
+        }
+
+        /* ── Find body start (\r\n\r\n) ──────────────────────────── */
+        uint8_t *body_start = NULL;
+        int32_t body_offset = 0;
+        for (int32_t i = 0; i < recv_len - 3; i++)
+        {
+            if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
+                recv_buf[i+2] == '\r' && recv_buf[i+3] == '\n')
+            {
+                body_start = &recv_buf[i + 4];
+                body_offset = i + 4;
+                break;
+            }
+        }
+
+        if (body_start == NULL)
+        {
+            LOG_ERROR(TAG_OTA, "Download: header boundary not found (attempt %d/%d)",
+                      dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+            MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            continue;
+        }
+
+        /* Copy first chunk's body into RAM buffer */
+        int32_t first_body_len = recv_len - body_offset;
+        if (first_body_len > 0)
+        {
+            memcpy(ram_buffer, body_start, first_body_len);
+            total_downloaded = first_body_len;
+        }
+
+        /* ── Streaming download loop with MQTT progress ──────────── */
+        uint8_t toggle_led = 0;
+        int stall = 0;
+        uint32_t last_progress_bytes = 0;  /* Track MQTT progress interval */
+
+        while (total_downloaded < info->size)
+        {
+            /* Progress LED blink */
+            BSP_LED_On(LED_RED);
+            if (toggle_led) BSP_LED_On(LED_GREEN);
+            else BSP_LED_Off(LED_GREEN);
+            toggle_led = !toggle_led;
+
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 100);
+
+            uint32_t remaining = info->size - total_downloaded;
+            uint32_t chunk_max = (remaining < OTA_DOWNLOAD_CHUNK_SIZE)
+                                 ? remaining : OTA_DOWNLOAD_CHUNK_SIZE;
+
             recv_len = MX_WIFI_Socket_recv(
                 wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max,
                 HTTP_RESPONSE_TIMEOUT_MS);
 
             if (recv_len <= 0)
             {
-                LOG_ERROR(TAG_OTA, "Download stalled at %lu/%lu bytes",
-                          (unsigned long)total_downloaded,
-                          (unsigned long)info->size);
-                MX_WIFI_Socket_close(wifi_obj_get(), sock);
-                BSP_LED_Off(LED_RED);
-                BSP_LED_Off(LED_GREEN);
-                return OTA_ERROR_NETWORK;
+                /* Retry once within this attempt */
+                MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+                recv_len = MX_WIFI_Socket_recv(
+                    wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max,
+                    HTTP_RESPONSE_TIMEOUT_MS);
+
+                if (recv_len <= 0)
+                {
+                    LOG_ERROR(TAG_OTA, "Download stalled at %lu/%lu bytes (attempt %d/%d)",
+                              (unsigned long)total_downloaded,
+                              (unsigned long)info->size,
+                              dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+                    stall = 1;
+                    break;
+                }
+            }
+
+            total_downloaded += recv_len;
+
+            /* ── MQTT + serial progress every OTA_PROGRESS_INTERVAL_BYTES ── */
+            if (total_downloaded - last_progress_bytes >= OTA_PROGRESS_INTERVAL_BYTES
+                || total_downloaded >= info->size)
+            {
+                last_progress_bytes = total_downloaded;
+                uint32_t pct = total_downloaded * 100 / info->size;
+                uint32_t elapsed_ms = HAL_GetTick() - download_start_tick;
+                uint32_t kbps = (elapsed_ms > 0)
+                                ? (total_downloaded / elapsed_ms) : 0;
+
+                LOG_INFO(TAG_OTA, "Download: %lu/%lu bytes (%lu%%) [%lu KB/s]",
+                         (unsigned long)total_downloaded,
+                         (unsigned long)info->size,
+                         (unsigned long)pct,
+                         (unsigned long)kbps);
+
+                /* Publish progress to dashboard via MQTT */
+                char progress_msg[192];
+                snprintf(progress_msg, sizeof(progress_msg),
+                    "{\"status\":\"ota_progress\","
+                    "\"downloaded\":%lu,\"total\":%lu,"
+                    "\"percent\":%lu,\"throughput_kbps\":%lu,"
+                    "\"elapsed_ms\":%lu,\"attempt\":%d}",
+                    (unsigned long)total_downloaded,
+                    (unsigned long)info->size,
+                    (unsigned long)pct,
+                    (unsigned long)kbps,
+                    (unsigned long)elapsed_ms,
+                    dl_attempt + 1);
+                MQTT_PublishStatus(progress_msg);
             }
         }
 
-        total_downloaded += recv_len;
+        MX_WIFI_Socket_close(wifi_obj_get(), sock);
 
-        /* Progress logging every 32 KB */
-        if ((total_downloaded % (32 * 1024)) < (uint32_t)recv_len)
+        if (!stall && total_downloaded >= info->size)
         {
-            LOG_INFO(TAG_OTA, "Download: %lu / %lu bytes (%lu%%)",
-                     (unsigned long)total_downloaded,
-                     (unsigned long)info->size,
-                     (unsigned long)(total_downloaded * 100 / info->size));
+            download_ok = 1;
+            break;
         }
     }
 
-    MX_WIFI_Socket_close(wifi_obj_get(), sock);
     BSP_LED_Off(LED_RED);
     BSP_LED_Off(LED_GREEN);
 
-    LOG_INFO(TAG_OTA, "Download complete: %lu bytes in RAM", (unsigned long)total_downloaded);
+    if (!download_ok)
+    {
+        LOG_ERROR(TAG_OTA, "Download failed after %d attempts", OTA_DOWNLOAD_MAX_RETRIES);
+        return OTA_ERROR_NETWORK;
+    }
+
+    /* ── Download Throughput Telemetry ──────────────────────────────── */
+    uint32_t download_ms = HAL_GetTick() - download_start_tick;
+    uint32_t throughput_kbps = (download_ms > 0)
+                               ? (total_downloaded / download_ms) : 0;
+    LOG_INFO(TAG_OTA, "[PERF] Download: %lu bytes in %lums (%lu KB/s)",
+             (unsigned long)total_downloaded,
+             (unsigned long)download_ms,
+             (unsigned long)throughput_kbps);
+    LOG_INFO(TAG_OTA, "Download complete: %lu bytes in RAM",
+             (unsigned long)total_downloaded);
 
     /* ── CRC32 verification on RAM buffer (before touching flash) ── */
     uint32_t crc = _crc32_update(0xFFFFFFFF, ram_buffer, total_downloaded);

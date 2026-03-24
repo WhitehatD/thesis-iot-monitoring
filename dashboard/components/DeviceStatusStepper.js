@@ -4,7 +4,10 @@ import { useEffect, useState } from "react";
 
 /**
  * Enterprise Job Stepper — visualizes the IoT board's exact progress
- * across the image capture lifecycle.
+ * across image capture and OTA update lifecycles.
+ *
+ * Dynamically switches between capture steps and OTA steps based on
+ * the current jobState.step value.
  */
 export default function DeviceStatusStepper({ jobState }) {
 	const [visible, setVisible] = useState(false);
@@ -14,14 +17,15 @@ export default function DeviceStatusStepper({ jobState }) {
 		if (jobState?.isActive) {
 			t = setTimeout(() => setVisible(true), 0);
 		} else {
-			t = setTimeout(() => setVisible(false), 500); // allow fade out
+			t = setTimeout(() => setVisible(false), 500);
 		}
 		return () => clearTimeout(t);
 	}, [jobState?.isActive]);
 
 	if (!visible) return null;
 
-	const steps = [
+	/* ── Step definitions ────────────────────────────────── */
+	const captureSteps = [
 		{ id: "sending", label: "Sending", icon: "🚀" },
 		{ id: "received", label: "Job Received", icon: "📥" },
 		{ id: "camera_init", label: "Camera Init", icon: "⚙️" },
@@ -30,14 +34,27 @@ export default function DeviceStatusStepper({ jobState }) {
 		{ id: "finished", label: "Finished", icon: "✅" },
 	];
 
+	const otaSteps = [
+		{ id: "ota_checking", label: "Checking", icon: "🔍" },
+		{ id: "ota_downloading", label: "Downloading", icon: "⬇️" },
+		{ id: "ota_rebooting", label: "Rebooting", icon: "🔄" },
+	];
+
+	const isOta =
+		jobState?.step?.startsWith("ota_") ||
+		(jobState?.step === "error" && jobState?.error?.includes?.("OTA"));
+	const steps = isOta ? otaSteps : captureSteps;
 	const currentStepIndex = steps.findIndex((s) => s.id === jobState?.step);
 
 	const getStepClass = (index) => {
 		if (jobState?.step === "error") return "error";
+		if (jobState?.step === "ota_up_to_date") return "completed";
 		if (index < currentStepIndex) return "completed";
 		if (index === currentStepIndex) return "active pulse";
 		return "pending";
 	};
+
+	const ota = jobState?.otaProgress;
 
 	return (
 		<div
@@ -45,7 +62,11 @@ export default function DeviceStatusStepper({ jobState }) {
 		>
 			<div className="stepper-header">
 				<span className="stepper-title">
-					{jobState?.step === "error" ? "🚨 Error" : "⚡ Live Board Progress"}
+					{jobState?.step === "error"
+						? "🚨 Error"
+						: isOta
+							? "🔄 OTA Firmware Update"
+							: "⚡ Live Board Progress"}
 				</span>
 				{jobState?.taskId && (
 					<span className="stepper-task">Task #{jobState.taskId}</span>
@@ -55,6 +76,10 @@ export default function DeviceStatusStepper({ jobState }) {
 			{jobState?.step === "error" ? (
 				<div className="stepper-error-msg">
 					{jobState?.error || "Unknown Error"}
+				</div>
+			) : jobState?.step === "ota_up_to_date" ? (
+				<div className="ota-up-to-date-msg">
+					✅ Firmware is already up-to-date
 				</div>
 			) : (
 				<div className="stepper-track">
@@ -74,6 +99,43 @@ export default function DeviceStatusStepper({ jobState }) {
 							)}
 						</div>
 					))}
+				</div>
+			)}
+
+			{/* ── OTA Real-Time Progress Panel ────────────────────── */}
+			{isOta && ota && (
+				<div className="ota-progress-panel">
+					<div className="ota-progress-bar-track">
+						<div
+							className="ota-progress-bar-fill"
+							style={{ width: `${ota.percent || 0}%` }}
+						/>
+					</div>
+					<div className="ota-metrics-grid">
+						<div className="ota-metric">
+							<span className="ota-metric-value">{ota.percent || 0}%</span>
+							<span className="ota-metric-label">Progress</span>
+						</div>
+						<div className="ota-metric">
+							<span className="ota-metric-value">
+								{ota.downloaded ? `${(ota.downloaded / 1024).toFixed(1)}` : "0"}{" "}
+								/ {ota.total ? `${(ota.total / 1024).toFixed(1)}` : "?"} KB
+							</span>
+							<span className="ota-metric-label">Downloaded</span>
+						</div>
+						<div className="ota-metric">
+							<span className="ota-metric-value">
+								{ota.throughputKbps || 0} KB/s
+							</span>
+							<span className="ota-metric-label">Throughput</span>
+						</div>
+						<div className="ota-metric">
+							<span className="ota-metric-value">
+								{ota.elapsedMs ? `${(ota.elapsedMs / 1000).toFixed(1)}s` : "—"}
+							</span>
+							<span className="ota-metric-label">Elapsed</span>
+						</div>
+					</div>
 				</div>
 			)}
 
