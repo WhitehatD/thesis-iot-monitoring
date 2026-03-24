@@ -540,12 +540,21 @@ int main(void)
             last_ping = HAL_GetTick();
         }
 
-        /* Breathing/slow blink LED while idle (~1Hz) */
+        /* Idle heartbeat: 50ms GREEN blip every 3 seconds to prove we are alive */
         static uint32_t last_idle_blink = 0;
-        if ((HAL_GetTick() - last_idle_blink) >= 500)
+        static uint8_t idle_led_on = 0;
+        
+        if (!idle_led_on && (HAL_GetTick() - last_idle_blink) >= 3000)
         {
-            BSP_LED_Toggle(LED_GREEN);
+            BSP_LED_On(LED_GREEN);
+            idle_led_on = 1;
             last_idle_blink = HAL_GetTick();
+        }
+        else if (idle_led_on && (HAL_GetTick() - last_idle_blink) >= 50)
+        {
+            BSP_LED_Off(LED_GREEN);
+            idle_led_on = 0;
+            /* Keep last_idle_blink anchor for stable 3000ms period */
         }
         HAL_Delay(SCHEDULER_MQTT_POLL_MS);
 

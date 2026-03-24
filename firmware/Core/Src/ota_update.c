@@ -226,7 +226,6 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     if (info == NULL) return OTA_ERROR_PARSE;
 
     LOG_INFO(TAG_OTA, "Checking for firmware update (current: %s)...", FW_VERSION);
-    BSP_LED_On(LED_RED);
 
     /* Build HTTP GET request */
     char header[256];
@@ -242,7 +241,6 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     if (sock < 0)
     {
         LOG_ERROR(TAG_OTA, "Version check: socket connect failed");
-        BSP_LED_Off(LED_RED);
         return OTA_ERROR_NETWORK;
     }
 
@@ -251,7 +249,6 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     {
         LOG_ERROR(TAG_OTA, "Version check: send failed");
         MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        BSP_LED_Off(LED_RED);
         return OTA_ERROR_NETWORK;
     }
 
@@ -270,7 +267,6 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     }
 
     MX_WIFI_Socket_close(wifi_obj_get(), sock);
-    BSP_LED_Off(LED_RED);
 
     if (resp_len <= 0)
     {
@@ -522,12 +518,12 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
         /* Continue reading and flashing */
         while (total_written < info->size)
         {
+            /* Keep RED mostly solid, blink GREEN for data progress */
+            BSP_LED_On(LED_RED);
             if (toggle_led) {
-                BSP_LED_On(LED_RED);
-                BSP_LED_Off(LED_GREEN);
-            } else {
-                BSP_LED_Off(LED_RED);
                 BSP_LED_On(LED_GREEN);
+            } else {
+                BSP_LED_Off(LED_GREEN);
             }
             toggle_led = !toggle_led;
 
