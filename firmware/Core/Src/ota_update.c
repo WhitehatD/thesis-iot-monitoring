@@ -388,6 +388,17 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
     LOG_INFO(TAG_OTA, "Erased %lu pages — downloading firmware...",
              (unsigned long)pages_needed);
 
+    /* ── SPI Recovery — Critical for EMW3080 ──────────────────────
+     * Flash erase blocks the CPU for hundreds of ms, starving the
+     * Wi-Fi module's SPI pipeline. Without this recovery window,
+     * the next socket open will timeout with "command 0x0205 timeout".
+     * Yield aggressively to let the EMW3080 drain its internal queue. */
+    for (int i = 0; i < 5; i++)
+    {
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 500);
+        HAL_Delay(100);
+    }
+
     /* ── Step 2: HTTP GET /api/firmware/download → stream to flash ── */
 
     char header[256];
@@ -398,10 +409,22 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
         "\r\n",
         OTA_DOWNLOAD_PATH, SERVER_HOST, SERVER_PORT);
 
-    int32_t sock = _ota_socket_open();
+    /* Retry socket connection up to 3 times — EMW3080 may need
+     * multiple attempts to recover after flash erase starvation. */
+    int32_t sock = -1;
+    for (int attempt = 0; attempt < 3; attempt++)
+    {
+        sock = _ota_socket_open();
+        if (sock >= 0) break;
+
+        LOG_WARN(TAG_OTA, "Download socket failed (attempt %d/3) — retrying...", attempt + 1);
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+        HAL_Delay(500);
+    }
+
     if (sock < 0)
     {
-        LOG_ERROR(TAG_OTA, "Download: socket connect failed");
+        LOG_ERROR(TAG_OTA, "Download: socket connect failed after 3 attempts");
         HAL_FLASH_Lock();
         return OTA_ERROR_NETWORK;
     }
