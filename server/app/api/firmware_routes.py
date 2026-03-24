@@ -172,7 +172,13 @@ async def upload_firmware(
         "version": version,
         "size": len(content),
     })
-    await mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+    
+    try:
+        await mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+    except Exception as exc:
+        print(f"[Firmware Upload] WARNING: MQTT publish failed: {exc}")
+        # We don't fail the request because the file is safely saved on disk,
+        # and the board will eventually fetch it on its 30-min polling cycle.
 
     return FirmwareUploadResponse(
         version=version,
