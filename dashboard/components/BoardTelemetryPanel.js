@@ -15,6 +15,7 @@ export default function BoardTelemetryPanel({ boardTelemetry, isBoardOnline }) {
 	const [historyLoading, setHistoryLoading] = useState(true);
 
 	// Fetch deploy history from server
+	// biome-ignore lint/correctness/useExhaustiveDependencies: Refetch when board firmware version updates
 	useEffect(() => {
 		let isMounted = true;
 		async function fetchHistory() {
