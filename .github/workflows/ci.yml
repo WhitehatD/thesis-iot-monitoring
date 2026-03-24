@@ -133,8 +133,8 @@ jobs:
             exit 0
           fi
           
-          # Extract version from firmware_config.h
-          FW_VERSION=$(grep 'define FW_VERSION' firmware/Core/Inc/firmware_config.h | awk -F '"' '{print $2}')
+          # Extract version using git describe to match Makefile injected version
+          FW_VERSION=$(git describe --tags --always --dirty)
           echo "📤 Uploading firmware v${FW_VERSION}..."
           
           HTTP_CODE=$(curl -s -o /tmp/upload_resp.json -w "%{http_code}" \

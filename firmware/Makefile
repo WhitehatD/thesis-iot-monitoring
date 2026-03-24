@@ -84,9 +84,12 @@ C_INCLUDES = \
 -IDrivers/CMSIS/Device/ST/STM32U5xx/Include
 
 # ── Defines ───────────────────────────────────────────
+GIT_VERSION := $(shell git describe --tags --always --dirty)
+
 C_DEFS = \
 -DSTM32U585xx \
--DUSE_HAL_DRIVER
+-DUSE_HAL_DRIVER \
+-DFW_VERSION=\"$(GIT_VERSION)\"
 
 # ── Compiler Flags ────────────────────────────────────
 OPT = -O2
