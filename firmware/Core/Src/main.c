@@ -645,7 +645,13 @@ int main(void)
                               + (int32_t)next->minute * 60
                               + (int32_t)next->second;
 
-            if (now_secs >= task_secs)
+            int32_t diff = task_secs - now_secs;
+            if (diff < 0) {
+                diff += 86400;
+            }
+
+            /* Within 5 seconds before or 5 seconds after (86395) the target time */
+            if (diff <= 5 || diff >= 86395)
             {
                 /* ── Time reached — execute this task ── */
                 LOG_INFO(TAG_SCHED, "Executing task %u: %02u:%02u:%02u '%s'",
@@ -753,8 +759,9 @@ int main(void)
 
                 if (s_schedule.current_index >= s_schedule.task_count)
                 {
-                    LOG_INFO(TAG_SCHED, "All %d tasks completed!", s_schedule.task_count);
-                    MQTT_PublishStatus("{\"status\":\"complete\",\"all_tasks_done\":true}");
+                    LOG_INFO(TAG_SCHED, "All %d tasks completed for today! Resetting cycle parameters for tomorrow.", s_schedule.task_count);
+                    s_schedule.current_index = 0;
+                    MQTT_PublishStatus("{\"status\":\"cycle_complete\"}");
                 }
             }
             else if (s_sleep_enabled)

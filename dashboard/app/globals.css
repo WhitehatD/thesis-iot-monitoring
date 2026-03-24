@@ -1108,34 +1108,139 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 	width: 36px;
 	height: 36px;
 	border: 1px solid rgba(255, 255, 255, 0.1);
-	border-radius: 50%;
-	background: rgba(255, 255, 255, 0.05);
+	border-radius: var(--radius-sm);
+	background: rgba(255, 255, 255, 0.03);
 	color: var(--text-secondary);
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	font-size: 14px;
+	cursor: pointer;
 	transition:
-		transform 0.2s,
-		background 0.2s;
+		background 0.2s,
+		color 0.2s,
+		border-color 0.2s,
+		transform 0.2s;
 }
 .schedule-action-btn:hover {
-	background: rgba(255, 255, 255, 0.15);
-	transform: scale(1.05);
-	color: white;
-}
-.schedule-action-btn.activate-btn:hover {
-	background: rgba(16, 185, 129, 0.15);
-	color: var(--accent-emerald);
-	border-color: rgba(16, 185, 129, 0.4);
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
 }
 .schedule-action-btn.delete-btn:hover {
 	background: rgba(244, 63, 94, 0.15);
 	color: var(--accent-rose);
 	border-color: rgba(244, 63, 94, 0.4);
 }
+.schedule-action-btn.activate-btn:hover {
+	background: rgba(56, 189, 248, 0.15);
+	color: var(--accent-blue);
+	border-color: rgba(56, 189, 248, 0.4);
+}
+.schedule-action-btn .chevron {
+	font-size: 18px;
+	font-weight: 300;
+	transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	display: inline-block;
+}
+.schedule-action-btn .chevron.up {
+	transform: rotate(-90deg);
+}
+.schedule-action-btn .chevron.down {
+	transform: rotate(90deg);
+}
+
+/* ── Expanded Task List (YC-Grade Glassmorphism) ────────── */
 .schedule-tasks-table {
-	border-top: 1px solid rgba(255, 255, 255, 0.05);
 	background: rgba(0, 0, 0, 0.3);
+	border-top: 1px solid rgba(255, 255, 255, 0.05);
+	padding: 16px 24px 24px;
+	animation: slide-down 0.3s ease-out;
+}
+.schedule-tasks-header-row {
+	display: grid;
+	grid-template-columns: 40px 90px 140px 1fr;
+	gap: 16px;
+	padding: 0 16px 12px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	margin-bottom: 12px;
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 1px;
+}
+.schedule-task-row {
+	display: grid;
+	grid-template-columns: 40px 90px 140px 1fr;
+	gap: 16px;
+	align-items: center;
+	padding: 12px 16px;
+	background: rgba(255, 255, 255, 0.03);
+	border: 1px solid rgba(255, 255, 255, 0.03);
+	border-radius: var(--radius-md);
+	margin-bottom: 8px;
+	transition:
+		background 0.2s,
+		transform 0.2s;
+}
+.schedule-task-row:hover {
+	background: rgba(255, 255, 255, 0.06);
+	transform: translateX(4px);
+}
+.schedule-task-row:last-child {
+	margin-bottom: 0;
+}
+.task-order {
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	background: rgba(56, 189, 248, 0.1);
+	border: 1px solid rgba(56, 189, 248, 0.2);
+	color: var(--accent-blue);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 12px;
+	font-weight: 700;
+	font-family: "JetBrains Mono", monospace;
+}
+.task-time-value {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 13px;
+	color: #fff;
+	background: rgba(0, 0, 0, 0.4);
+	padding: 4px 8px;
+	border-radius: 4px;
+	border: 1px solid rgba(255, 255, 255, 0.05);
+}
+.task-action-value {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--accent-amber);
+	background: rgba(245, 158, 11, 0.1);
+	padding: 4px 10px;
+	border-radius: 999px;
+	border: 1px solid rgba(245, 158, 11, 0.2);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+.task-objective-value {
+	font-size: 14px;
+	color: var(--text-secondary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+@keyframes slide-down {
+	from {
+		opacity: 0;
+		transform: translateY(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 /* ═══════════════════════════════════════════════════════════

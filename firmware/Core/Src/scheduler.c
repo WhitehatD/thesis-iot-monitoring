@@ -237,11 +237,17 @@ int Scheduler_SetNextAlarm(Schedule_t *schedule)
               now_time.Hours, now_time.Minutes, now_time.Seconds,
               next->hour, next->minute, next->second, (long)diff);
 
-    /* If the task time is in the past or exactly now → execute immediately */
-    if (diff <= 0)
+    /* If the task time is in the past, assume it is for the next day */
+    if (diff < 0)
     {
-        LOG_INFO(TAG_SCHED, "Task %u time %02u:%02u:%02u is NOW or past — executing immediately",
-                 next->task_id, next->hour, next->minute, next->second);
+        diff += 86400; /* Wrap around 24 hours */
+    }
+
+    /* Target is within a 5-second window: execute immediately */
+    if (diff == 0 || diff >= 86395)
+    {
+        LOG_INFO(TAG_SCHED, "Task %u time is NOW — executing immediately",
+                 next->task_id);
         return 2;  /* Execute immediately, don't sleep */
     }
 
