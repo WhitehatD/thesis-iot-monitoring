@@ -178,8 +178,15 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            # Navigate to the repo, pull latest infra changes (like port 80 mapping), and restart docker proxy
-            cd /root/thesis-iot-monitoring || cd /home/*/thesis-iot-monitoring || exit 1
+            # Find the deployment directory containing our docker-compose.prod.yml
+            # We search in /root and /home to handle different deployment users natively
+            DEPLOY_DIR=$(find /root /home -maxdepth 3 -type f -name "docker-compose.prod.yml" 2>/dev/null | head -n 1 | xargs dirname)
+            if [ -z "$DEPLOY_DIR" ]; then
+              echo "Deployment directory not found on VPS!"
+              exit 1
+            fi
+            echo "Found deployment directory at $DEPLOY_DIR"
+            cd "$DEPLOY_DIR"
             git pull origin main
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
 
