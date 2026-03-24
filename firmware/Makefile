@@ -83,13 +83,20 @@ C_INCLUDES = \
 -IDrivers/CMSIS/Include \
 -IDrivers/CMSIS/Device/ST/STM32U5xx/Include
 
+# ── Wi-Fi Credentials (SEC-01: injected at build time) ─
+# Override on command line: make WIFI_SSID='"OtherNet"' WIFI_PASSWORD='"secret"'
+WIFI_SSID     ?= "A I 2.4"
+WIFI_PASSWORD ?= "alex1234"
+
 # ── Defines ───────────────────────────────────────────
 GIT_VERSION := $(shell git describe --tags --always --dirty)
 
 C_DEFS = \
 -DSTM32U585xx \
 -DUSE_HAL_DRIVER \
--DFW_VERSION=\"$(GIT_VERSION)\"
+-DFW_VERSION=\"$(GIT_VERSION)\" \
+-DWIFI_SSID=\"$(WIFI_SSID)\" \
+-DWIFI_PASSWORD=\"$(WIFI_PASSWORD)\"
 
 # ── Compiler Flags ────────────────────────────────────
 OPT = -O2
@@ -119,7 +126,14 @@ OBJECTS += $(addprefix $(BUILD_DIR)/,$(ASM_SOURCES:.s=.o))
 # Dependency files
 DEPS = $(OBJECTS:.o=.d)
 
-all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin size
+all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin size budget
+
+# Release build with strict warnings (BLD-01) and reduced logging (PERF-01)
+release: CFLAGS += -Werror -DSYSTEM_LOG_LEVEL=1
+release: all
+
+budget: $(BUILD_DIR)/$(TARGET).bin
+	@python -c "import os, sys; sz=os.path.getsize('$<'); pct=sz*100.0/1048576.0; print(f'Flash Budget: {sz} bytes ({pct:.1f}%% of 1MB bank)'); sys.exit(1 if pct>85.0 else 0)"
 
 # C sources
 $(BUILD_DIR)/%.o: %.c
@@ -159,4 +173,4 @@ clean:
 # Include auto-generated dependencies
 -include $(DEPS)
 
-.PHONY: all clean flash size
+.PHONY: all clean flash size release budget

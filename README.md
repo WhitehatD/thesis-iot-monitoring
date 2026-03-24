@@ -45,6 +45,17 @@ Built for reliability, the system features a complete CI/CD-driven Over-The-Air 
 
 ---
 
+## 🔒 Enterprise Security & Reliability Hardening
+
+In March 2026, the firmware underwent a comprehensive production-grade audit:
+* **Decoupled OTA Pipeline**: Resolved critical SPI bus contention and IWDG timeouts by separating the rapid semantic version check from the heavy binary download. The download-to-RAM phase is now safely deferred to the cooperative main loop.
+* **Shared Socket Abstraction**: Abstracted and unified all TCP socket lifecycle management (`WiFi_TcpConnect`) across the MQTT and HTTP drivers, eliminating redundant magic numbers and silent network failure loops.
+* **Tactile Hardware Feedback**: Implemented a responsive `"ping"` command bridging the Next.js visual dashboard directly to the edge hardware (3× Red / 3× Green strobe).
+* **Strict Compiler Enforcement**: Upgraded the `Makefile` with a dedicated `-Werror` release target. Eradicated all implicit conversions and unreferenced variables.
+* **Log-Level Compilation**: Introduced `#define SYSTEM_LOG_LEVEL` filtering, stripping out heavy UART format strings locally while retaining critical error traces. This reliably squeezed the firmware footprint down to **8.3%** of the available 1MB flash bank.
+
+---
+
 ## 🏗️ Architecture Blueprint
 
 The system spans from raw C hardware drivers to cloud-native Python services. The architecture is explicitly designed for **high observability** and **resilient edge-to-cloud communication**.

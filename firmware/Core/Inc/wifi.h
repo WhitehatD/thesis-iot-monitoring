@@ -14,6 +14,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include "mx_wifi.h"
+
 /* Wi-Fi status */
 typedef enum {
     WIFI_OK = 0,
@@ -69,5 +71,19 @@ WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
  * @brief  Disconnect and power down the Wi-Fi module.
  */
 void WiFi_DeInit(void);
+
+/**
+ * @brief  Open a TCP socket and connect to a host. (ARCH-02)
+ * @param  host: Hostname or IP string.
+ * @param  port: Target TCP port.
+ * @retval Socket ID (>0) on success, -1 on failure.
+ */
+int32_t WiFi_TcpConnect(const char *host, uint16_t port);
+
+/**
+ * @brief  Get the underlying MXCHIP Wi-Fi object instance.
+ *         Useful for direct MX_WIFI API calls.
+ */
+MX_WIFIObject_t* wifi_obj_get(void);
 
 #endif /* __WIFI_H */

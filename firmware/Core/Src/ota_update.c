@@ -39,8 +39,12 @@
 
 #define FLASH_BANK1_BASE    0x08000000UL
 #define FLASH_BANK2_BASE    0x08100000UL
+#ifndef FLASH_BANK_SIZE
 #define FLASH_BANK_SIZE     (1024 * 1024)    /* 1 MB per bank */
+#endif
+#ifndef FLASH_PAGE_SIZE
 #define FLASH_PAGE_SIZE     (8 * 1024)       /* 8 KB per page */
+#endif
 #define FLASH_PAGES_PER_BANK 128
 
 /* TAMP Backup Register for boot counter (BKP0R..BKP3R may be used by HAL,
@@ -87,6 +91,8 @@ static int _is_version_newer(const char *candidate, const char *current)
 
     int c_parsed = sscanf(current,   "%d.%d", &c_major, &c_minor);
     int n_parsed = sscanf(candidate, "%d.%d", &n_major, &n_minor);
+    (void)c_parsed;
+    (void)n_parsed;
 
     /* If both versions are valid format strings containing '.', perform semantic comparison */
     if (strchr(current, '.') != NULL && strchr(candidate, '.') != NULL)
@@ -151,27 +157,7 @@ static uint32_t _get_inactive_bank_base(void)
 
 static int32_t _ota_socket_open(void)
 {
-    int32_t sock = MX_WIFI_Socket_create(
-        wifi_obj_get(), MX_AF_INET, MX_SOCK_STREAM, MX_IPPROTO_TCP);
-    if (sock < 0) return -1;
-
-    struct mx_sockaddr_in addr = {0};
-    addr.sin_len    = (uint8_t)sizeof(addr);
-    addr.sin_family = MX_AF_INET;
-    addr.sin_port   = (uint16_t)((SERVER_PORT >> 8) | ((SERVER_PORT & 0xFF) << 8));
-    addr.sin_addr.s_addr = (uint32_t)mx_aton_r(SERVER_HOST);
-
-    int32_t ret = MX_WIFI_Socket_connect(
-        wifi_obj_get(), sock,
-        (struct mx_sockaddr *)&addr, (int32_t)sizeof(addr));
-
-    if (ret < 0)
-    {
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        return -1;
-    }
-
-    return sock;
+    return WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
 }
 
 static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
@@ -685,6 +671,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
     uint32_t download_ms = HAL_GetTick() - download_start_tick;
     uint32_t throughput_kbps = (download_ms > 0)
                                ? (total_downloaded / download_ms) : 0;
+    (void)throughput_kbps;
     LOG_INFO(TAG_OTA, "[PERF] Download: %lu bytes in %lums (%lu KB/s)",
              (unsigned long)total_downloaded,
              (unsigned long)download_ms,

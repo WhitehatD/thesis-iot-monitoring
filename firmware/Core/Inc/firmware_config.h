@@ -15,14 +15,15 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Wi-Fi Configuration
  *
- *  WARNING (OWASP IoT I1): Credentials below are compile-time defaults.
- *  For production, inject via build flags: make WIFI_SSID='"MyNet"' ...
+ *  SEC-01 (OWASP IoT I1): Credentials MUST be injected at build time.
+ *  Example:  make WIFI_SSID='"MyNet"' WIFI_PASSWORD='"secret"'
+ *  Never commit plaintext credentials to source control.
  * ═══════════════════════════════════════════════════════════════════════════ */
 #ifndef WIFI_SSID
-#define WIFI_SSID                   "A I 2.4"
+  #error "WIFI_SSID not defined — inject via build flags: make CFLAGS+='-DWIFI_SSID=\"MyNet\"'"
 #endif
 #ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD               "alex1234"
+  #error "WIFI_PASSWORD not defined — inject via build flags"
 #endif
 #define WIFI_CONNECT_RETRIES        3
 #define WIFI_CONNECT_TIMEOUT_MS     10000
@@ -116,6 +117,24 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define LOW_POWER_MODE_ENABLED      1      /* 1 = STOP2 between tasks, 0 = active wait */
 #define DEEP_SLEEP_ON_COMPLETE      1      /* 1 = Standby after all tasks done */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Heartbeat & Observability (PWR-02, OBS-01)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define STATUS_HEARTBEAT_INTERVAL_MS  5000  /* MQTT status publish interval (ms) */
+#define IDLE_BLINK_PERIOD_MS          3000  /* Green LED heartbeat blink period */
+#define IDLE_BLINK_ON_MS              50    /* Green LED on duration within blink */
+#define SCHEDULE_TIME_WINDOW_S        5     /* Seconds of tolerance for task time matching */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  SEC-07: Command Rate-Limiting
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define CMD_RATE_LIMIT_MS             500   /* Min ms between capture_now commands */
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  REL-02: MQTT Auto-Reconnect
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define MQTT_MAX_PUBLISH_FAILURES     3     /* Consecutive failures before reconnect */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Watchdog Configuration (SEC-07 — OWASP I9)

@@ -22,6 +22,7 @@
 #include "firmware_config.h"
 #include "debug_log.h"
 #include "main.h"
+#include "wifi.h"
 
 #include "mx_wifi.h"
 #include "mx_wifi_io.h"
@@ -240,34 +241,12 @@ int MQTT_Init(const MQTTConfig_t *config)
 
     /* ── Open TCP socket ─────────────────────────────── */
 
-    s_socket = MX_WIFI_Socket_create(wifi_obj_get(), MX_AF_INET, MX_SOCK_STREAM, MX_IPPROTO_TCP);
+    s_socket = WiFi_TcpConnect(config->broker_host, config->broker_port);
+
     if (s_socket < 0)
     {
-        LOG_ERROR(TAG_MQTT, "Socket create failed (err=%ld)", (long)s_socket);
-        return -1;
-    }
-
-    /* Resolve broker address */
-    struct mx_sockaddr_in broker_addr = {0};
-    broker_addr.sin_len    = (uint8_t)sizeof(broker_addr);
-    broker_addr.sin_family = MX_AF_INET;
-    broker_addr.sin_port   = (uint16_t)((config->broker_port >> 8) | ((config->broker_port & 0xFF) << 8));
-    broker_addr.sin_addr.s_addr = (uint32_t)mx_aton_r(config->broker_host);
-
-    LOG_DEBUG(TAG_MQTT, "Target: %s:%u (port_raw=0x%04X, addr=0x%08lX)",
-              config->broker_host, config->broker_port,
-              broker_addr.sin_port, (unsigned long)broker_addr.sin_addr.s_addr);
-
-    int32_t ret = MX_WIFI_Socket_connect(
-        wifi_obj_get(), s_socket,
-        (struct mx_sockaddr *)&broker_addr,
-        (int32_t)sizeof(broker_addr));
-
-    if (ret < 0)
-    {
-        LOG_ERROR(TAG_MQTT, "TCP connect failed (err=%ld)", (long)ret);
-        MX_WIFI_Socket_close(wifi_obj_get(), s_socket);
-        s_socket = -1;
+        LOG_ERROR(TAG_MQTT, "TCP connect failed to %s:%u",
+                  config->broker_host, config->broker_port);
         return -1;
     }
 
@@ -478,4 +457,9 @@ void MQTT_Disconnect(void)
     s_connected = 0;
 
     LOG_INFO(TAG_MQTT, "Disconnected");
+}
+
+uint8_t MQTT_IsConnected(void)
+{
+    return s_connected;
 }

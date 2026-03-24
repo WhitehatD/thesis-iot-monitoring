@@ -28,6 +28,7 @@
 #include "mqtt_handler.h"
 #include "scheduler.h"
 #include "ota_update.h"
+#include "mx_wifi.h"
 
 #include "cJSON.h"
 #include <string.h>
@@ -78,11 +79,24 @@ static volatile uint8_t s_sleep_enabled = 0;  /* 0 = awake (default), 1 = low po
 /* ── OTA firmware update (MQTT command) ─────────────────── */
 static volatile uint8_t s_ota_requested = 0;
 
+/* ── Ping (MQTT command) ────────────────────────────────── */
+static volatile uint8_t s_ping_requested = 0;
+
 /* ── Runtime WiFi credential management (MQTT command) ──── */
 static volatile uint8_t s_wifi_reconfig_requested = 0;
 static char s_runtime_ssid[33]     = {0};  /* Max 32-char SSID + null */
 static char s_runtime_password[64] = {0};  /* Max 63-char WPA2 + null */
 static uint8_t s_has_runtime_wifi  = 0;    /* 1 = runtime creds set   */
+
+/* OBS-02: Global Telemetry */
+typedef struct {
+    uint32_t wifi_reconnects;
+    uint32_t mqtt_reconnects;
+    uint32_t capture_failures;
+    uint32_t ota_checks;
+    uint32_t ota_failures;
+} FirmwareTelemetry_t;
+static FirmwareTelemetry_t s_telemetry = {0};
 
 /* Buffer to hold the raw JSON schedule from MQTT callback */
 static char s_schedule_json[SCHEDULE_JSON_MAX];
@@ -101,6 +115,7 @@ static void _do_capture_now(void);
 static void _do_capture_sequence(void);
 static void _do_ota_update(void);
 static void _do_wifi_reconfig(void);
+static void _do_ping_sequence(void);
 
 /* SEC-07: Watchdog initialization */
 #if WATCHDOG_ENABLED
@@ -227,6 +242,9 @@ static uint32_t RAM_CheckStackHighWater(void)
 
 static void on_command_received(const char *json_str, uint32_t length)
 {
+    /* REL-04: Do not allocate 2KB on stack in ISR/MQTT callback context */
+    static char s_cmd_buf[SCHEDULE_JSON_MAX];
+
     if (length >= SCHEDULE_JSON_MAX)
     {
         LOG_ERROR(TAG_MQTT, "Command too large (%lu > %d), dropping",
@@ -235,9 +253,8 @@ static void on_command_received(const char *json_str, uint32_t length)
     }
 
     /* Null-terminate for cJSON */
-    char cmd_buf[SCHEDULE_JSON_MAX];
-    memcpy(cmd_buf, json_str, length);
-    cmd_buf[length] = '\0';
+    memcpy(s_cmd_buf, json_str, length);
+    s_cmd_buf[length] = '\0';
 
     LOG_INFO(TAG_MQTT, "Command received (%lu bytes)", (unsigned long)length);
 
@@ -249,7 +266,7 @@ static void on_command_received(const char *json_str, uint32_t length)
     BSP_LED_Off(LED_RED);
 
     /* Quick-parse type field with cJSON */
-    cJSON *root = cJSON_Parse(cmd_buf);
+    cJSON *root = cJSON_Parse(s_cmd_buf);
     if (root == NULL)
     {
         LOG_ERROR(TAG_MQTT, "Command JSON parse error");
@@ -263,6 +280,17 @@ static void on_command_received(const char *json_str, uint32_t length)
 
     if (type_str != NULL && strcmp(type_str, "capture_now") == 0)
     {
+        /* ── SEC-07: Rate Limiting ── */
+        static uint32_t s_last_capture_now = 0;
+        if ((HAL_GetTick() - s_last_capture_now) < CMD_RATE_LIMIT_MS)
+        {
+            LOG_WARN(TAG_MQTT, ">> CAPTURE_NOW rate limited (cooldown %dms)", CMD_RATE_LIMIT_MS);
+            MQTT_PublishStatus("{\"status\":\"error\",\"error_code\":429,\"reason\":\"rate_limited\"}");
+            cJSON_Delete(root);
+            return;
+        }
+        s_last_capture_now = HAL_GetTick();
+
         /* ── Instant capture ── execute in main loop, no scheduler ── */
         s_capture_now_requested = 1;
         s_capture_now_task_id++;
@@ -331,6 +359,13 @@ static void on_command_received(const char *json_str, uint32_t length)
         LOG_INFO(TAG_MQTT, ">> FIRMWARE_UPDATE command received");
         MQTT_PublishStatus("{\"status\":\"ota_update_queued\"}");
     }
+    else if (type_str != NULL && strcmp(type_str, "ping") == 0)
+    {
+        /* ── Ping LED sequence ── */
+        s_ping_requested = 1;
+        LOG_INFO(TAG_MQTT, ">> PING command received");
+        MQTT_PublishStatus("{\"status\":\"ping_received\"}");
+    }
     else if (type_str != NULL && strcmp(type_str, "set_wifi") == 0)
     {
         /* ── Remote WiFi credential reconfiguration ── */
@@ -364,7 +399,7 @@ static void on_command_received(const char *json_str, uint32_t length)
     else
     {
         /* ── Schedule (default / legacy) ── parse inline, stay in MQTT loop ── */
-        memcpy(s_schedule_json, cmd_buf, length + 1);
+        memcpy(s_schedule_json, s_cmd_buf, length + 1);
         if (Scheduler_ParseJSON(&s_schedule, s_schedule_json) == 0)
         {
             s_schedule_received = 1;
@@ -434,15 +469,24 @@ int main(void)
     /* ── Phase 2: Connectivity ──────────────────────── */
 
     /* Wi-Fi */
-    if (WiFi_Init() != WIFI_OK)
+    /* REL-01: Soft retry loop for Wi-Fi before surrendering to Watchdog/OTA rollback */
+    int wifi_retries = 0;
+    while (wifi_retries < WIFI_CONNECT_RETRIES)
     {
-        LOG_ERROR(TAG_BOOT, "FATAL: Wi-Fi init failed");
-        LED_SignalError();
+        if (WiFi_Init() == WIFI_OK && WiFi_Connect(WIFI_SSID, WIFI_PASSWORD) == WIFI_OK)
+            break;
+        LOG_WARN(TAG_BOOT, "Wi-Fi connect failed, retrying... (%d/%d)", 
+                 wifi_retries + 1, WIFI_CONNECT_RETRIES);
+        HAL_Delay(2000);
+        wifi_retries++;
+#if WATCHDOG_ENABLED
+        HAL_IWDG_Refresh(&hiwdg);
+#endif
     }
-
-    if (WiFi_Connect(WIFI_SSID, WIFI_PASSWORD) != WIFI_OK)
+    
+    if (wifi_retries >= WIFI_CONNECT_RETRIES)
     {
-        LOG_ERROR(TAG_BOOT, "FATAL: Wi-Fi connect failed");
+        LOG_ERROR(TAG_BOOT, "FATAL: Wi-Fi permanent failure");
         LED_SignalError();
     }
 
@@ -500,6 +544,8 @@ int main(void)
             uint8_t rh = BCD2BIN((tr_read >> 16) & 0x3F);
             uint8_t rm = BCD2BIN((tr_read >> 8) & 0x7F);
             uint8_t rs = BCD2BIN(tr_read & 0x7F);
+            
+            (void)rh; (void)rm; (void)rs;
 
             LOG_INFO(TAG_BOOT, "RTC verify (1s later): %02u:%02u:%02u  ICSR=0x%08lX  BDCR=0x%08lX",
                      rh, rm, rs,
@@ -583,6 +629,7 @@ int main(void)
      */
 
     uint32_t poll_start    = HAL_GetTick();
+    (void)poll_start;
     uint32_t last_ping     = HAL_GetTick();
     uint32_t last_ota_check = HAL_GetTick();
 
@@ -595,29 +642,66 @@ int main(void)
         HAL_IWDG_Refresh(&hiwdg);
 #endif
 
-        /* Send MQTT keepalive ping and online status every 5 seconds (instant-feel dashboard) */
-        if ((HAL_GetTick() - last_ping) > 5000)
+        /* Send MQTT keepalive ping and online status every STATUS_HEARTBEAT_INTERVAL_MS (instant-feel dashboard) */
+        if ((HAL_GetTick() - last_ping) > STATUS_HEARTBEAT_INTERVAL_MS)
         {
-            MQTT_SendPing();
-            MQTT_PublishStatus("{\"status\":\"online\",\"firmware\":\"" FW_VERSION "\"}");
+            if (MQTT_IsConnected()) 
+            {
+                MQTT_SendPing();
+                
+                /* OBS-01, OBS-02: Enhanced heartbeat telemetry */
+                char heartbeat[256];
+                snprintf(heartbeat, sizeof(heartbeat), 
+                    "{\"status\":\"online\",\"firmware\":\"" FW_VERSION "\","
+                    "\"uptime_s\":%lu,\"wifi_reconnects\":%lu,"
+                    "\"mqtt_reconnects\":%lu,\"capture_failures\":%lu,"
+                    "\"ota_failures\":%lu}",
+                    (unsigned long)(HAL_GetTick() / 1000),
+                    (unsigned long)s_telemetry.wifi_reconnects,
+                    (unsigned long)s_telemetry.mqtt_reconnects,
+                    (unsigned long)s_telemetry.capture_failures,
+                    (unsigned long)s_telemetry.ota_failures);
+                    
+                static uint8_t s_publish_failures = 0;
+                if (MQTT_PublishStatus(heartbeat) != 0) {
+                    s_publish_failures++;
+                    if (s_publish_failures >= MQTT_MAX_PUBLISH_FAILURES) {
+                        LOG_ERROR(TAG_MQTT, "MQTT connection lost (publish failures)");
+                        s_telemetry.mqtt_reconnects++;
+                        MQTT_Disconnect();
+                        MQTT_Init(&mqtt_cfg);
+                        MQTT_SubscribeCommands(on_command_received);
+                        s_publish_failures = 0;
+                    }
+                } else {
+                    s_publish_failures = 0;
+                }
+            } 
+            else 
+            {
+                LOG_WARN(TAG_MQTT, "MQTT offline, attempting reconnect...");
+                s_telemetry.mqtt_reconnects++;
+                MQTT_Init(&mqtt_cfg);
+                MQTT_SubscribeCommands(on_command_received);
+            }
             last_ping = HAL_GetTick();
         }
 
-        /* Idle heartbeat: 50ms GREEN blip every 3 seconds to prove we are alive */
+        /* Idle heartbeat: IDLE_BLINK_ON_MS GREEN blip every IDLE_BLINK_PERIOD_MS to prove we are alive */
         static uint32_t last_idle_blink = 0;
         static uint8_t idle_led_on = 0;
         
-        if (!idle_led_on && (HAL_GetTick() - last_idle_blink) >= 3000)
+        if (!idle_led_on && (HAL_GetTick() - last_idle_blink) >= IDLE_BLINK_PERIOD_MS)
         {
             BSP_LED_On(LED_GREEN);
             idle_led_on = 1;
             last_idle_blink = HAL_GetTick();
         }
-        else if (idle_led_on && (HAL_GetTick() - last_idle_blink) >= 50)
+        else if (idle_led_on && (HAL_GetTick() - last_idle_blink) >= IDLE_BLINK_ON_MS)
         {
             BSP_LED_Off(LED_GREEN);
             idle_led_on = 0;
-            /* Keep last_idle_blink anchor for stable 3000ms period */
+            /* Keep last_idle_blink anchor for stable IDLE_BLINK_PERIOD_MS period */
         }
         HAL_Delay(SCHEDULER_MQTT_POLL_MS);
 
@@ -664,12 +748,32 @@ int main(void)
             poll_start = HAL_GetTick();
         }
 
+        /* ── Handle: Ping command ── */
+        if (s_ping_requested)
+        {
+            s_ping_requested = 0;
+            _do_ping_sequence();
+            poll_start = HAL_GetTick();
+        }
+
         /* ── Periodic OTA version check (every 30 min) ── */
         if ((HAL_GetTick() - last_ota_check) > OTA_CHECK_INTERVAL_MS)
         {
             last_ota_check = HAL_GetTick();
-            LOG_INFO(TAG_OTA, "Periodic firmware update check...");
-            OTA_CheckAndUpdate(s_image_buffer, sizeof(s_image_buffer));
+            /* REL-06: Guard OTA check. Only check version, defer heavy download to main loop */
+            if (!s_capture_now_requested && !s_sequence_requested && !s_button_capture_requested) {
+                LOG_INFO(TAG_OTA, "Periodic firmware update check...");
+                
+                OTAVersionInfo_t info;
+                OTAStatus_t status = OTA_CheckForUpdate(&info);
+                if (status == OTA_OK)
+                {
+                    LOG_INFO(TAG_OTA, "Update available: v%s", info.version);
+                    s_ota_requested = 1; /* Main loop will safely handle download */
+                }
+            } else {
+                LOG_INFO(TAG_OTA, "Periodic update check deferred (capture active)");
+            }
         }
 
         /* ── Handle: Scheduled Tasks (RTC polling) ── */
@@ -1563,7 +1667,6 @@ static void _do_wifi_reconfig(void)
     MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
 
 #if WATCHDOG_ENABLED
-    extern IWDG_HandleTypeDef hiwdg;
     HAL_IWDG_Refresh(&hiwdg);
 #endif
 
@@ -1624,6 +1727,38 @@ static void _do_wifi_reconfig(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Ping Sequence Handler
+ * 
+ *  Flashes RED 3 times and GREEN 3 times.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void _do_ping_sequence(void)
+{
+    LOG_INFO(TAG_BOOT, "=== PING SEQUENCE ===");
+    
+    BSP_LED_Off(LED_GREEN);
+    BSP_LED_Off(LED_RED);
+    
+    /* 3x RED */
+    for (int i = 0; i < 3; i++) {
+        BSP_LED_On(LED_RED);
+        HAL_Delay(150);
+        BSP_LED_Off(LED_RED);
+        HAL_Delay(100);
+    }
+    
+    HAL_Delay(200);
+    
+    /* 3x GREEN */
+    for (int i = 0; i < 3; i++) {
+        BSP_LED_On(LED_GREEN);
+        HAL_Delay(150);
+        BSP_LED_Off(LED_GREEN);
+        HAL_Delay(100);
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  RTC Alarm Callback (called from ISR via HAL)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -1643,6 +1778,11 @@ void HAL_RTC_AlarmAEventCallback(RTC_HandleTypeDef *hrtc_ptr)
 void assert_failed(uint8_t *file, uint32_t line)
 {
     LOG_ERROR(TAG_BOOT, "ASSERT at %s:%lu", file, (unsigned long)line);
-    while (1) {}
+    while (1) {
+        /* SEC-06: Refresh watchdog to prevent debugger spinning loop from being reset */
+#if WATCHDOG_ENABLED
+        HAL_IWDG_Refresh(&hiwdg);
+#endif
+    }
 }
 #endif

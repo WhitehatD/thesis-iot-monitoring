@@ -65,4 +65,10 @@ void MQTT_Disconnect(void);
  */
 void MQTT_SendPing(void);
 
+/**
+ * @brief  Returns connection status.
+ * @retval 1 if connected, 0 otherwise.
+ */
+uint8_t MQTT_IsConnected(void);
+
 #endif /* __MQTT_HANDLER_H */

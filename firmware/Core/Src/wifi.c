@@ -443,6 +443,7 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
             /* ── PERF: Log upload throughput ── */
             uint32_t upload_ms = HAL_GetTick() - upload_start_tick;
             uint32_t kbps = (upload_ms > 0) ? (data_len / upload_ms) : 0;
+            (void)kbps;
             LOG_INFO(TAG_HTTP, "[PERF] Upload: %lu bytes in %lums (%lu KB/s)",
                      (unsigned long)data_len, (unsigned long)upload_ms,
                      (unsigned long)kbps);
@@ -638,6 +639,37 @@ WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
 
     cJSON_Delete(root);
     return WIFI_OK;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Shared TCP Helper (ARCH-02)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int32_t WiFi_TcpConnect(const char *host, uint16_t port)
+{
+    if (!s_connected) return -1;
+
+    int32_t sock = MX_WIFI_Socket_create(
+        wifi_obj_get(), MX_AF_INET, MX_SOCK_STREAM, MX_IPPROTO_TCP);
+    if (sock < 0) return -1;
+
+    struct mx_sockaddr_in addr = {0};
+    addr.sin_len    = (uint8_t)sizeof(addr);
+    addr.sin_family = MX_AF_INET;
+    addr.sin_port   = (uint16_t)((port >> 8) | ((port & 0xFF) << 8));
+    addr.sin_addr.s_addr = (uint32_t)mx_aton_r(host);
+
+    int32_t ret = MX_WIFI_Socket_connect(
+        wifi_obj_get(), sock,
+        (struct mx_sockaddr *)&addr, (int32_t)sizeof(addr));
+
+    if (ret < 0)
+    {
+        MX_WIFI_Socket_close(wifi_obj_get(), sock);
+        return -1;
+    }
+
+    return sock;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

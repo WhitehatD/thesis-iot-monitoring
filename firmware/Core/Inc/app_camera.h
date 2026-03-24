@@ -67,7 +67,8 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
 
 /**
  * @brief  Deinitialize the camera to save power before entering sleep.
+ * @retval CAMERA_OK on success.
  */
-void Camera_DeInit(void);
+CameraStatus_t Camera_DeInit(void);
 
 #endif /* __APP_CAMERA_H */

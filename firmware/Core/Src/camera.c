@@ -84,7 +84,7 @@ static uint32_t _map_resolution(CameraResolution_t res)
  * Return the expected raw frame size for a given resolution (RGB565).
  * In JPEG mode the actual captured size will be much smaller.
  */
-static uint32_t _raw_frame_size(CameraResolution_t res)
+__attribute__((unused)) static uint32_t _raw_frame_size(CameraResolution_t res)
 {
     switch (res)
     {
@@ -412,6 +412,7 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
                                    uint32_t *captured_size)
 {
     uint32_t perf_start = HAL_GetTick();
+    (void)perf_start;
 
     LOG_INFO(TAG_CAM, "Warm capture (single frame, zero warmup)...");
 
@@ -571,10 +572,20 @@ void BSP_CAMERA_FrameEventCallback(uint32_t Instance)
  *  Shutdown
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-void Camera_DeInit(void)
+CameraStatus_t Camera_DeInit(void)
 {
     LOG_INFO(TAG_CAM, "De-initializing camera");
-    BSP_CAMERA_Stop(0);
-    BSP_CAMERA_DeInit(0);
+    int32_t ret = BSP_CAMERA_Stop(0);
+    if (ret != BSP_ERROR_NONE) {
+        LOG_ERROR(TAG_CAM, "BSP_CAMERA_Stop failed (err=%ld)", (long)ret);
+    }
+    
+    ret = BSP_CAMERA_DeInit(0);
+    if (ret != BSP_ERROR_NONE) {
+        LOG_ERROR(TAG_CAM, "BSP_CAMERA_DeInit failed (err=%ld)", (long)ret);
+        return CAMERA_ERROR_INIT;
+    }
+    
     s_initialized = 0;
+    return CAMERA_OK;
 }
