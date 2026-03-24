@@ -6,7 +6,7 @@ import ScheduleCard from "./ScheduleCard";
 /**
  * Full scheduler panel: create schedules + list existing ones.
  */
-export default function SchedulerPanel() {
+export default function SchedulerPanel({ deviceStatus }) {
     const [schedules, setSchedules] = useState([]);
     const [showForm, setShowForm] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -43,6 +43,14 @@ export default function SchedulerPanel() {
     useEffect(() => {
         fetchSchedules();
     }, [fetchSchedules]);
+
+    // Instant schedule refresh from MQTT commands
+    useEffect(() => {
+        if (deviceStatus && deviceStatus.status === "schedule_received") {
+            console.log("Board received new schedule, refreshing list...");
+            fetchSchedules();
+        }
+    }, [deviceStatus, fetchSchedules]);
 
     const addTaskRow = () => {
         setFormTasks((prev) => [

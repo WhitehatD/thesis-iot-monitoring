@@ -15,8 +15,10 @@ export function useMqttImages() {
     const [images, setImages] = useState([]);
     const [status, setStatus] = useState("disconnected"); // connected | disconnected | connecting
     const [deviceStatus, setDeviceStatus] = useState(null); // live device state from MQTT
+    const [isBoardOnline, setIsBoardOnline] = useState(false);
     const [toasts, setToasts] = useState([]);
     const clientRef = useRef(null);
+    const boardTimeoutRef = useRef(null);
 
     const mqttUrl =
         typeof window !== "undefined"
@@ -81,15 +83,22 @@ export function useMqttImages() {
                 const data = JSON.parse(payload.toString());
 
                 if (topic === MQTT_TOPIC_STATUS) {
-                    // Live device status update (capturing, uploading, online, etc.)
+                    if (data.status === "online") {
+                        setIsBoardOnline(true);
+                        if (boardTimeoutRef.current) clearTimeout(boardTimeoutRef.current);
+                        boardTimeoutRef.current = setTimeout(() => setIsBoardOnline(false), 40000);
+                        return; // don't show online in banner constantly
+                    }
+
+                    // Live device status update (capturing, uploading, schedule_received, etc.)
                     setDeviceStatus({ ...data, receivedAt: Date.now() });
 
-                    // Auto-clear status after 30s of no updates
+                    // Auto-clear status after 15s of no updates
                     setTimeout(() => {
                         setDeviceStatus((prev) =>
-                            prev && Date.now() - prev.receivedAt > 25000 ? null : prev
+                            prev && Date.now() - prev.receivedAt > 14000 ? null : prev
                         );
-                    }, 30000);
+                    }, 15000);
                     return;
                 }
 
@@ -136,5 +145,5 @@ export function useMqttImages() {
         };
     }, [mqttUrl, apiBase, fetchImages, addToast]);
 
-    return { images, status, deviceStatus, toasts };
+    return { images, status, deviceStatus, isBoardOnline, toasts };
 }

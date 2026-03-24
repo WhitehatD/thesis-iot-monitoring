@@ -8,7 +8,7 @@ import SchedulerPanel from "@/components/SchedulerPanel";
 import DeviceStatusBanner from "@/components/DeviceStatusBanner";
 
 export default function DashboardPage() {
-  const { images, status, deviceStatus, toasts } = useMqttImages();
+  const { images, status, deviceStatus, isBoardOnline, toasts } = useMqttImages();
 
   return (
     <div className="dashboard">
@@ -23,6 +23,10 @@ export default function DashboardPage() {
         </div>
 
         <div className="header-right">
+          <div className="board-status-badge">
+            <span className={`status-dot ${isBoardOnline ? 'connected' : 'disconnected'}`} />
+            {isBoardOnline ? "Board Online" : "Board Offline"}
+          </div>
           <ConnectionStatus status={status} />
           <CaptureButton />
         </div>
@@ -70,7 +74,7 @@ export default function DashboardPage() {
             Schedules
           </h2>
         </div>
-        <SchedulerPanel />
+        <SchedulerPanel deviceStatus={deviceStatus} />
       </section>
 
       {/* ── Image Grid ────────────────────────────────────── */}

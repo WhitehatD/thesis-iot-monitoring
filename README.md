@@ -56,9 +56,9 @@ An end-to-end autonomous visual monitoring system designed for industrial and en
 - 🧠 **AI-powered analysis** — multimodal LLM scene interpretation (Gemini 3 Flash / Qwen3-VL)
 - 🌐 **Real-time dashboard** — live image feed, schedule management, and device status
 - 💤 **Configurable sleep mode** — toggle between always-awake polling and low-power STOP2
-- 🔄 **Full-stack Docker** — one-command deployment with health checks
-- 🚀 **OTA firmware updates** — dual-bank flash with CRC32 verification and automatic rollback
-- ⚡ **CI/CD pipeline** — GitHub Actions → GHCR → Watchtower auto-deploy on every push
+- 🔄 **Full-stack Docker VPS Deployment** — one-command deployment with health checks for cloud hosting
+- 🚀 **Active OTA firmware updates** — server-pushed MQTT commands for real-time dual-bank flash updates
+- 🚦 **Visual LED Indicators** — onboard Red & Green LEDs synced to current board state (Booting, Capturing, OTA)
 
 ---
 
@@ -91,9 +91,22 @@ An end-to-end autonomous visual monitoring system designed for industrial and en
 | Board → Server | HTTP GET | OTA | Version check + firmware binary download |
 | Server → Board | MQTT | Command | Schedules, captures, sleep toggle, firmware updates |
 | Board → Server | MQTT | Status | Online/executing/uploaded/OTA status messages |
-| Server → Dashboard | MQTT WS | Real-time | Image notifications, status updates |
+| Server → Dashboard | MQTT WS | Real-time | Image notifications, status, transparent transitioning states |
 | Dashboard → Server | HTTP REST | Control | CRUD schedules, trigger captures, toggle sleep |
-| CI → Server | HTTP POST | Deploy | Upload new firmware binary from GitHub Actions |
+| Developer → Server | HTTP POST | Deploy | Upload new firmware binary via VPS bash script |
+
+### Visual Feedback System (LEDs)
+
+The board provides intuitive visual feedback via onboard LEDs:
+
+| State | LED Pattern | Description |
+|-------|-------------|-------------|
+| **Boot Sequence** | 🟢 (solid) + 🔴 (solid) | Board is initializing components and connecting. |
+| **Boot Success** | 🟢 3× Fast Flashes | Initialization complete, connected to MQTT. |
+| **Idle / Online** | 🟢 Slow Pulse (1Hz) | Awake and waiting for commands or schedules. |
+| **Executing / Capturing** | 🔴 (solid) | Camera active, capturing image. |
+| **Command Ack** | 🟢+🔴 1× Flash | Acknowledged incoming MQTT command. |
+| **Hardware Error** | 🔴 Fast Flashes | Fatal error (Wi-Fi, MQTT initialization failure). |
 
 ---
 
@@ -247,10 +260,10 @@ Edit `firmware/Core/Inc/firmware_config.h`:
 #define WIFI_SSID          "YourNetworkSSID"
 #define WIFI_PASSWORD      "YourNetworkPassword"
 
-/* Server Endpoints (IP of your Docker host) */
-#define SERVER_HOST        "192.168.1.100"
+/* Server Endpoints (IP of your VPS or Docker host) */
+#define SERVER_HOST        "203.0.113.50"
 #define SERVER_PORT        8000
-#define MQTT_BROKER_HOST   "192.168.1.100"
+#define MQTT_BROKER_HOST   "203.0.113.50"
 #define MQTT_BROKER_PORT   1883
 ```
 
@@ -553,42 +566,31 @@ The system supports **over-the-air firmware updates** using the STM32U585's dual
 | **Automatic rollback** | Boot counter in RTC backup register — 3 failures → revert |
 | **Integrity check** | CRC32 verification before bank swap |
 | **Graceful failure** | Download errors leave current firmware running |
-| **Push + Poll** | Server pushes via MQTT, board also polls every 30 min |
+| **Active Push Mechanism**| Server dispatches `firmware_update` over MQTT for instant execution |
+| **Fallback Polling** | Board checks server `/firmware/version` every 30 mins |
 
 ---
 
-## CI/CD Pipeline
+## Deployment (VPS / Direct)
 
-### GitHub Actions Workflow
+The project has transitioned to a direct VPS deployment model for enhanced simplicity and autonomy, bypassing third-party CI/CD runners. 
 
-```
-git push main
-    ├── Stage 1: pytest (27 tests)
-    ├── Stage 1.5: Build STM32 firmware (ARM GCC) + HTTP Upload to Server
-    ├── Stage 2: Docker build + push to GHCR (Server & Dashboard)
-    └── Stage 3: Watchtower auto-pulls on server + MQTT OTA Notify
-```
-
-### Production Deployment
-
+### VPS Orchestration
 ```bash
-# Deploy with production overlay (GHCR images + Watchtower)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# Watchtower polls GHCR every 5 minutes for new images
-# New pushes to main → automatic container restart
+# SSH into your VPS and deploy using Docker Compose
+git pull origin main
+docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-### Automated Firmware Upload (CI)
-
+### Automated Firmware Upload
 ```bash
-# Upload a new firmware binary to the server
-curl -X POST http://server:8000/api/firmware/upload \
+# Upload a new firmware binary directly to the deployment server
+curl -X POST http://your-vps-ip:8000/api/firmware/upload \
   -H "X-Firmware-Token: $FIRMWARE_UPLOAD_TOKEN" \
   -F "version=0.3" \
   -F "file=@build/firmware.bin"
 
-# The server computes CRC32 and notifies the board via MQTT
+# The server computes CRC32 and issues an active MQTT OTA push to the board
 ```
 
 ---

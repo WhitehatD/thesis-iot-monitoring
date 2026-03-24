@@ -322,6 +322,11 @@ static void on_command_received(const char *json_str, uint32_t length)
         {
             s_schedule_received = 1;
             LOG_INFO(TAG_MQTT, ">> SCHEDULE command — %d tasks loaded", s_schedule.task_count);
+            
+            char status_msg[128];
+            snprintf(status_msg, sizeof(status_msg), 
+                     "{\"status\":\"schedule_received\",\"tasks\":%d}", s_schedule.task_count);
+            MQTT_PublishStatus(status_msg);
         }
         else
         {
@@ -527,10 +532,11 @@ int main(void)
     {
         MQTT_ProcessLoop();
 
-        /* Send MQTT keepalive ping every 30 seconds */
+        /* Send MQTT keepalive ping and online status every 30 seconds */
         if ((HAL_GetTick() - last_ping) > 30000)
         {
             MQTT_SendPing();
+            MQTT_PublishStatus("{\"status\":\"online\",\"firmware\":\"" FW_VERSION "\"}");
             last_ping = HAL_GetTick();
         }
 
@@ -652,6 +658,11 @@ int main(void)
 
                     if (cam_ret == CAMERA_OK && captured_size > 0)
                     {
+                        snprintf(status_msg, sizeof(status_msg),
+                                 "{\"status\":\"uploading\",\"task_id\":%u}",
+                                 next->task_id);
+                        MQTT_PublishStatus(status_msg);
+
                         WiFiStatus_t upload_ret = WiFi_HttpPostImage(
                             SERVER_UPLOAD_URL, next->task_id,
                             s_image_buffer, captured_size);

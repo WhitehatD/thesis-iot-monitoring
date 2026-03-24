@@ -12,11 +12,12 @@ export default function DeviceStatusBanner({ deviceStatus }) {
         captured: { icon: "✅", label: "Image captured & uploaded", color: "emerald" },
         executing: { icon: "📸", label: "Capturing image...", color: "blue", pulse: true },
         uploading: { icon: "📡", label: "Uploading to server...", color: "amber", pulse: true },
+        schedule_received: { icon: "📥", label: "Schedule successfully synced to board", color: "emerald", pulse: true },
         online: { icon: "🟢", label: "Board online", color: "emerald" },
         ota_checking: { icon: "🔄", label: "Checking for updates...", color: "amber", pulse: true },
         ota_downloading: { icon: "⬇️", label: "Downloading firmware...", color: "amber", pulse: true },
         ota_rebooting: { icon: "🔁", label: "Rebooting with new firmware...", color: "amber", pulse: true },
-        schedule_cleared: { icon: "🗑️", label: "Schedule cleared", color: "slate" },
+        schedule_cleared: { icon: "🗑️", label: "Schedule cleared from board", color: "slate" },
         error: { icon: "❌", label: `Error: ${deviceStatus?.reason || "unknown"}`, color: "red" },
     };
 
