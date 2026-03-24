@@ -476,16 +476,20 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         /* Wait for response headers */
         MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
 
-        /* Read response — first read gets headers + start of body */
-        uint8_t recv_buf[OTA_DOWNLOAD_CHUNK_SIZE + 512];
+        /* CRITICAL FIX: The stack is only 8KB. Allocating 8.7KB here overflows the stack 
+         * and corrupts the SPI Wi-Fi driver's structural data below it in RAM, causing MIPC timeouts!
+         * We safely repurpose the end of our massive frame buffer for the initial HTTP header receive. */
+        uint32_t recv_buf_size = OTA_DOWNLOAD_CHUNK_SIZE + 512;
+        uint8_t *recv_buf = ram_buffer + (ram_size - recv_buf_size);
+        
         int32_t recv_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
+            wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, HTTP_RESPONSE_TIMEOUT_MS);
 
         if (recv_len <= 0)
         {
             MX_WIFI_IO_YIELD(wifi_obj_get(), 3000);
             recv_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
+                wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, HTTP_RESPONSE_TIMEOUT_MS);
         }
 
         if (recv_len <= 0)
