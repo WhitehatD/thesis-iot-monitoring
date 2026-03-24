@@ -308,6 +308,11 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
         return CAMERA_ERROR_CAPTURE;
     }
 
+    /* ── DCMI diagnostic: check if sensor is outputting VSYNC/HSYNC ── */
+    HAL_Delay(50);  /* Let at least one VSYNC edge pass */
+    LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (after start+50ms)",
+             (unsigned long)DCMI->SR, (unsigned long)DCMI->CR);
+
     /* Wait for TOTAL_FRAMES frame-complete interrupts */
     uint32_t start_tick = HAL_GetTick();
 
@@ -462,6 +467,14 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
                 continue;
             }
             return CAMERA_ERROR_CAPTURE;
+        }
+
+        /* ── DCMI diagnostic: check if sensor is outputting VSYNC/HSYNC ── */
+        if (attempt == 1)
+        {
+            HAL_Delay(50);
+            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (snapshot attempt 1)",
+                     (unsigned long)DCMI->SR, (unsigned long)DCMI->CR);
         }
 
         /* Wait for exactly 1 frame-complete interrupt */
