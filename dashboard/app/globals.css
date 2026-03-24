@@ -353,6 +353,53 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 .device-status-task, .device-status-latency { font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.1); }
 
 /* ═══════════════════════════════════════════════════════════
+   Device Status Stepper
+   ═══════════════════════════════════════════════════════════ */
+.stepper-banner {
+  margin: 0 40px -12px 40px;
+  padding: 20px 32px;
+  background: var(--bg-glass);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(56, 189, 248, 0.1);
+  position: relative;
+  z-index: 50;
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  overflow: hidden;
+}
+.stepper-banner.hidden { opacity: 0; transform: translateY(-20px) scale(0.98); pointer-events: none; margin-top: -80px; }
+.stepper-banner.visible { opacity: 1; transform: translateY(0) scale(1); margin-top: 0; }
+
+.stepper-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+.stepper-title { font-size: 14px; font-weight: 700; color: var(--accent-blue); letter-spacing: 0.5px; text-transform: uppercase; display: flex; align-items: center; gap: 8px;}
+.stepper-task { font-family: 'JetBrains Mono', monospace; font-size: 13px; padding: 4px 12px; border-radius: 999px; background: rgba(56, 189, 248, 0.1); color: var(--accent-blue); border: 1px solid rgba(56, 189, 248, 0.3); }
+
+.stepper-track { display: flex; align-items: center; justify-content: space-between; position: relative; }
+.stepper-step-container { display: flex; align-items: center; flex: 1; }
+.stepper-step-container:last-child { flex: 0; }
+.stepper-step { display: flex; flex-direction: column; align-items: center; gap: 10px; position: relative; z-index: 2; width: 100px; }
+.step-icon { width: 44px; height: 44px; border-radius: 50%; background: rgba(16, 22, 35, 0.9); border: 2px solid rgba(255, 255, 255, 0.1); display: flex; align-items: center; justify-content: center; font-size: 20px; transition: all 0.4s ease; box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5); }
+.step-label { font-size: 13px; font-weight: 600; color: var(--text-muted); transition: color 0.4s ease; white-space: nowrap; }
+
+.step-line { flex: 1; height: 4px; background: rgba(255, 255, 255, 0.05); margin: 0 8px; transform: translateY(-14px); position: relative; border-radius: 2px; overflow: hidden; }
+.step-line::after { content: ""; position: absolute; top: 0; left: 0; height: 100%; width: 0%; background: var(--gradient-hero); box-shadow: 0 0 10px var(--accent-blue); transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+
+/* Stepper States */
+.stepper-step-container.completed .step-icon { background: rgba(16, 185, 129, 0.15); border-color: var(--accent-emerald); color: var(--accent-emerald); box-shadow: 0 0 15px rgba(16, 185, 129, 0.3); }
+.stepper-step-container.completed .step-label { color: var(--text-primary); }
+.stepper-step-container.completed .step-line::after, .stepper-step-container.completed .active-line::after { width: 100%; }
+
+.stepper-step-container.active .step-icon { background: rgba(56, 189, 248, 0.2); border-color: var(--accent-blue); color: var(--accent-blue); transform: scale(1.15); box-shadow: 0 0 20px rgba(56, 189, 248, 0.5); }
+.stepper-step-container.active.pulse .step-icon { animation: step-pulse 2s infinite; }
+.stepper-step-container.active .step-label { color: var(--accent-blue); font-weight: 700; text-shadow: 0 0 10px rgba(56, 189, 248, 0.3); }
+@keyframes step-pulse { 0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.5); } 70% { box-shadow: 0 0 0 15px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }
+
+.stepper-step-container.error .step-icon { background: rgba(244, 63, 94, 0.2); border-color: var(--accent-rose); box-shadow: 0 0 15px rgba(244, 63, 94, 0.4); }
+.stepper-error-msg { padding: 14px 20px; background: rgba(244, 63, 94, 0.1); border: 1px solid rgba(244, 63, 94, 0.3); border-radius: var(--radius-sm); color: var(--accent-rose); font-size: 14px; font-weight: 600; }
+
+/* ═══════════════════════════════════════════════════════════
    Mobile Responsive Rules (Critical for Performance)
    ═══════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
@@ -386,6 +433,13 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
   
   .header-subtitle { display: none; }
   .device-status-banner { margin: 0 16px -10px 16px; padding: 12px 16px; font-size: 13px; }
+  .stepper-banner { margin: 0 16px -10px 16px; padding: 16px; }
+  .stepper-track { flex-direction: column; align-items: flex-start; gap: 16px; }
+  .stepper-step-container { width: 100%; flex-direction: column; align-items: flex-start; }
+  .stepper-step { flex-direction: row; width: 100%; margin-bottom: 8px; }
+  .step-line { width: 4px; height: 24px; margin: 0 0 0 20px; transform: none; }
+  .step-line::after { width: 100%; height: 0%; transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+  .stepper-step-container.completed .step-line::after, .stepper-step-container.completed .active-line::after { height: 100%; width: 100%; }
   
   .toast-container { bottom: 16px; right: 16px; left: 16px; }
   .toast { padding: 14px 20px; font-size: 13px; }

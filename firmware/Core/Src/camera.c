@@ -134,7 +134,7 @@ static void _wait_aec_converge(void)
             return;
         }
 
-        HAL_Delay(100);  /* Poll every 100ms */
+        HAL_Delay(20);  /* Fast poll every 20ms for extreme responsiveness */
     }
 
     /* Read final value for diagnostics */
@@ -429,8 +429,8 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
     /* Turn ON tally light (Red LED) directly before capture */
     BSP_LED_On(LED_RED);
 
-    /* Start continuous capture — stop after first frame */
-    int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_CONTINUOUS);
+    /* Start snapshot capture — stop after first frame automatically */
+    int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_SNAPSHOT);
     if (ret != BSP_ERROR_NONE)
     {
         LOG_ERROR(TAG_CAM, "BSP_CAMERA_Start failed (err=%ld)", (long)ret);
@@ -490,6 +490,17 @@ void BSP_CAMERA_FrameEventCallback(uint32_t Instance)
 {
     (void)Instance;
     s_frame_count++;
+
+    /* YC-Grade Extreme Optimization & Bugfix:
+     * When using continuous capture for warmup, we must ask the DCMI hardware
+     * to suspend exactly when the warmup frames are complete.
+     * HAL_DCMI_Suspend stops capture perfectly at the EOF of the *next* frame.
+     * This eliminates the "weird line at the top" caused by DMA overrunning
+     * into the next frame before the CPU can stop it manually. */
+    if (s_frame_count == CAMERA_WARMUP_FRAMES)
+    {
+        BSP_CAMERA_Suspend(0);
+    }
 
     /* Raw RGB565 frame — always use full buffer */
     s_frame_size = CAMERA_FRAME_BUFFER_SIZE;

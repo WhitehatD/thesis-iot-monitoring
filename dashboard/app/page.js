@@ -5,10 +5,10 @@ import CaptureButton from "@/components/CaptureButton";
 import ConnectionStatus from "@/components/ConnectionStatus";
 import ImageGrid from "@/components/ImageGrid";
 import SchedulerPanel from "@/components/SchedulerPanel";
-import DeviceStatusBanner from "@/components/DeviceStatusBanner";
+import DeviceStatusStepper from "@/components/DeviceStatusStepper";
 
 export default function DashboardPage() {
-  const { images, status, deviceStatus, isBoardOnline, toasts } = useMqttImages();
+  const { images, status, jobState, deviceStatus, isBoardOnline, toasts } = useMqttImages();
 
   return (
     <div className="dashboard">
@@ -64,7 +64,7 @@ export default function DashboardPage() {
       </div>
 
       {/* ── Live Device Status ─────────────────────────────── */}
-      <DeviceStatusBanner deviceStatus={deviceStatus} />
+      <DeviceStatusStepper jobState={jobState} />
 
       {/* ── Scheduler ─────────────────────────────────────── */}
       <section className="main-content scheduler-section">

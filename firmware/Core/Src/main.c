@@ -665,9 +665,6 @@ int main(void)
                         }
                     }
 
-                    /* Turn off RED LED when capture completes */
-                    BSP_LED_Off(LED_RED);
-
                     if (cam_ret == CAMERA_OK && captured_size > 0)
                     {
                         snprintf(status_msg, sizeof(status_msg),
@@ -695,6 +692,9 @@ int main(void)
                                      next->task_id);
                         }
 
+                        /* Turn off RED LED when upload completes */
+                        BSP_LED_Off(LED_RED);
+
                         /* Re-establish MQTT if connection was lost */
                         if (MQTT_Init(&mqtt_cfg) == 0)
                         {
@@ -705,6 +705,7 @@ int main(void)
                     else
                     {
                         LOG_ERROR(TAG_CAM, "Capture failed for task %u", next->task_id);
+                        BSP_LED_Off(LED_RED);
                     }
 
 #if STACK_WATERMARK_ENABLED
@@ -987,14 +988,12 @@ static void _do_button_capture(void)
         cam_ret = Camera_CaptureFrame(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
-
-    BSP_LED_Off(LED_RED);
-
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
         LOG_ERROR(TAG_CAM, "Capture failed (ret=%d, size=%lu)",
                   cam_ret, (unsigned long)captured_size);
         BSP_LED_Off(LED_GREEN);
+        BSP_LED_Off(LED_RED);
         return;
     }
 
@@ -1028,6 +1027,9 @@ static void _do_button_capture(void)
     }
 
     MQTT_PublishStatus(status_msg);
+
+    /* Turn off RED LED after upload completes */
+    BSP_LED_Off(LED_RED);
 
 #if STACK_WATERMARK_ENABLED
     RAM_CheckStackHighWater();
@@ -1071,13 +1073,12 @@ static void _do_capture_now(void)
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
     }
 
-    BSP_LED_Off(LED_RED);
-
     if (cam_ret != CAMERA_OK || captured_size == 0)
     {
         LOG_ERROR(TAG_CAM, "Capture failed (ret=%d, size=%lu)",
                   cam_ret, (unsigned long)captured_size);
         BSP_LED_Off(LED_GREEN);
+        BSP_LED_Off(LED_RED);
         return;
     }
 
@@ -1177,14 +1178,13 @@ static void _do_capture_sequence(void)
         uint32_t captured_size = 0;
         CameraStatus_t cam_ret = Camera_WarmCapture(
             s_image_buffer, CAMERA_FRAME_BUFFER_SIZE, &captured_size);
-        BSP_LED_Off(LED_RED);
-
         uint32_t capture_tick = HAL_GetTick() - sequence_start;
 
         if (cam_ret != CAMERA_OK || captured_size == 0)
         {
             LOG_ERROR(TAG_CAM, "Seq[%lu]: capture failed (ret=%d)",
                       (unsigned long)i, cam_ret);
+            BSP_LED_Off(LED_RED);
             continue;  /* Skip to next capture in sequence */
         }
 
@@ -1217,6 +1217,9 @@ static void _do_capture_sequence(void)
         {
             LOG_WARN(TAG_BOOT, "Seq[%lu]: upload failed — continuing sequence", (unsigned long)i);
         }
+
+        /* Turn off RED LED after upload completes */
+        BSP_LED_Off(LED_RED);
     }
 
     /* Do NOT deinit camera — keep warm for next capture */

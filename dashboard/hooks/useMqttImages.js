@@ -14,7 +14,9 @@ const MQTT_TOPIC_STATUS = "device/stm32/status";
 export function useMqttImages() {
     const [images, setImages] = useState([]);
     const [status, setStatus] = useState("disconnected"); // connected | disconnected | connecting
-    const [deviceStatus, setDeviceStatus] = useState(null); // live device state from MQTT
+    const [jobState, setJobState] = useState({ isActive: false, step: "idle", taskId: null, error: null }); // stepper state
+    const [deviceStatus, setDeviceStatus] = useState(null); // legacy/fallback
+    const jobTimeoutRef = useRef(null);
     const [isBoardOnline, setIsBoardOnline] = useState(false);
     const [toasts, setToasts] = useState([]);
     const clientRef = useRef(null);
@@ -83,17 +85,45 @@ export function useMqttImages() {
                 const data = JSON.parse(payload.toString());
 
                 if (topic === MQTT_TOPIC_STATUS) {
+                    // ANY message from the board proves it is online
+                    setIsBoardOnline(true);
+                    if (boardTimeoutRef.current) clearTimeout(boardTimeoutRef.current);
+                    // Board pings every 30s, timeout after 40s
+                    boardTimeoutRef.current = setTimeout(() => setIsBoardOnline(false), 40000);
+
                     if (data.status === "online") {
-                        setIsBoardOnline(true);
-                        if (boardTimeoutRef.current) clearTimeout(boardTimeoutRef.current);
-                        boardTimeoutRef.current = setTimeout(() => setIsBoardOnline(false), 40000);
-                        return; // don't show online in banner constantly
+                        return; // don't show generic online pings in the banner/stepper
                     }
 
-                    // Live device status update (capturing, uploading, schedule_received, etc.)
-                    setDeviceStatus({ ...data, receivedAt: Date.now() });
+                    // Determine job stepper state
+                    if (data.status === "schedule_cleared") {
+                        setJobState({ isActive: false, step: "idle", taskId: null, error: null });
+                    } else if (data.status === "error") {
+                        setJobState(prev => ({ ...prev, isActive: true, step: "error", error: data.reason }));
+                        if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
+                        jobTimeoutRef.current = setTimeout(() => setJobState(prev => ({ ...prev, isActive: false })), 8000);
+                    } else {
+                        let step = "idle";
+                        if (data.status === "schedule_received") step = "received";
+                        else if (data.status === "executing") step = "capturing";
+                        else if (data.status === "uploading") step = "uploading";
+                        else if (data.status === "uploaded" || data.status === "complete") step = "finished";
+                        
+                        if (step !== "idle") {
+                            setJobState({ isActive: true, step, taskId: data.task_id || data.tasks || null, error: null });
+                            if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
+                            
+                            // Auto-clear after 10s of inactivity if not finished
+                            // If finished, clear after 4s
+                            const timeout = step === "finished" ? 4000 : 10000;
+                            jobTimeoutRef.current = setTimeout(() => {
+                                setJobState(prev => ({ ...prev, isActive: false }));
+                            }, timeout);
+                        }
+                    }
 
-                    // Auto-clear status after 15s of no updates
+                    // Legacy status auto-clear (keep for backward compatibility if needed)
+                    setDeviceStatus({ ...data, receivedAt: Date.now() });
                     setTimeout(() => {
                         setDeviceStatus((prev) =>
                             prev && Date.now() - prev.receivedAt > 14000 ? null : prev
@@ -111,8 +141,9 @@ export function useMqttImages() {
                 setImages((prev) => [newImage, ...prev]);
                 addToast(`📸 New capture: Task #${data.task_id}`);
 
-                // Clear device status — capture cycle complete
-                setDeviceStatus(null);
+                // We don't forcefully clear jobState here, it will auto-clear via timeout 
+                // because the board also sends 'uploaded' or 'complete' which sets step='finished'.
+                // If it was stuck, the new image at least shows up.
 
                 // Remove "new" flag after animation completes
                 setTimeout(() => {
@@ -145,5 +176,5 @@ export function useMqttImages() {
         };
     }, [mqttUrl, apiBase, fetchImages, addToast]);
 
-    return { images, status, deviceStatus, isBoardOnline, toasts };
+    return { images, status, jobState, deviceStatus, isBoardOnline, toasts };
 }

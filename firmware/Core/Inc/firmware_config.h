@@ -70,7 +70,7 @@
 /* ── Fast-Capture Tuning ──────────────────────────────── */
 #define CAMERA_WARMUP_FRAMES        1                 /* Frames to discard for AEC convergence (cold start only) */
 #define CAMERA_AEC_SETTLE_TIMEOUT_MS 800              /* Max wait for AEC register convergence */
-#define CAMERA_VTS_DEFAULT          0x07D0            /* VTS=2000 lines → ~12fps (83ms/frame) */
+#define CAMERA_VTS_DEFAULT          0x0320            /* VTS=800 lines → ~30fps (33ms/frame) */
 #define CAMERA_INTER_FRAME_DELAY_MS 10                /* Brief ISP settle between snapshots */
 
 /* ── Diagnostics ──────────────────────────────────────── */
