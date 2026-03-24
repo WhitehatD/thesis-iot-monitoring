@@ -140,13 +140,14 @@ WiFiStatus_t WiFi_Connect(const char *ssid, const char *password)
             s_connected = 1;
             LOG_INFO(TAG_WIFI, "Connected to '%s' (attempt %d)", ssid, attempt);
 
-            /* Wait for DHCP to assign an IP address */
-            /* Give DHCP time to complete before first query */
+            /* Wait for DHCP to assign an IP address.
+             * iPhone hotspots can be very slow (10-30s) to respond to
+             * embedded DHCP clients — be patient and yield aggressively. */
             MX_WIFI_IO_YIELD(wifi_obj_get(), 5000);
 
             uint8_t ip[4] = {0};
             bool got_ip = false;
-            for (int dhcp_wait = 0; dhcp_wait < 5; dhcp_wait++)
+            for (int dhcp_wait = 0; dhcp_wait < 15; dhcp_wait++)
             {
                 if (MX_WIFI_GetIPAddress(wifi_obj_get(), ip, MC_STATION) == MX_WIFI_STATUS_OK
                     && (ip[0] | ip[1] | ip[2] | ip[3]) != 0)
@@ -154,7 +155,7 @@ WiFiStatus_t WiFi_Connect(const char *ssid, const char *password)
                     got_ip = true;
                     break;
                 }
-                /* Wait 2s between retries, yielding to process SPI */
+                /* Yield 2s between retries to process SPI + DHCP exchanges */
                 MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
             }
 
@@ -164,7 +165,9 @@ WiFiStatus_t WiFi_Connect(const char *ssid, const char *password)
             }
             else
             {
-                LOG_WARN(TAG_WIFI, "No IP after DHCP wait — proceeding anyway");
+                LOG_ERROR(TAG_WIFI, "DHCP failed — no IP assigned after 35s");
+                s_connected = 0;
+                continue;  /* Retry full connection */
             }
 
             return WIFI_OK;
