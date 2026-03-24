@@ -526,26 +526,26 @@ WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
         return WIFI_ERROR_SEND;
     }
 
-    /* ── 4. Read response (yield SPI so EMW3080 processes the reply) ── */
+    /* ── 4. Read response (poll with small yields) ── */
 
     /* The EMW3080 processes HTTP responses asynchronously through SPI.
-     * Without yielding, recv returns empty because the co-processor
-     * hasn't forwarded the server's reply to the host-side buffer yet. */
-    MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
-
+     * Poll continuously with small yields until the response arrives,
+     * drastically reducing boot time compared to the legacy 2000ms hard delay. */
     uint8_t resp_buf[512] = {0};
-    int32_t resp_len = MX_WIFI_Socket_recv(
-        wifi_obj_get(), sock, resp_buf, sizeof(resp_buf) - 1,
-        HTTP_RESPONSE_TIMEOUT_MS);
+    int32_t resp_len = 0;
+    uint32_t start_tick = HAL_GetTick();
 
-    /* Retry once with longer yield if first attempt got nothing */
-    if (resp_len <= 0)
+    while ((HAL_GetTick() - start_tick) < HTTP_RESPONSE_TIMEOUT_MS)
     {
-        LOG_DEBUG(TAG_HTTP, "Time sync: first recv empty, retrying after yield...");
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 3000);
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 50);
         resp_len = MX_WIFI_Socket_recv(
             wifi_obj_get(), sock, resp_buf, sizeof(resp_buf) - 1,
-            HTTP_RESPONSE_TIMEOUT_MS);
+            50);
+
+        if (resp_len > 0)
+        {
+            break;
+        }
     }
 
     MX_WIFI_Socket_close(wifi_obj_get(), sock);
