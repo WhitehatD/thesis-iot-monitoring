@@ -127,7 +127,7 @@ The board acts dynamically based on JSON payloads sent to `device/stm32/commands
 
 ## Hardware Triggers
 
-- **B3 USER Button (Blue)**: Pressing this hardware interrupt instantly triggers a warm image capture and HTTP upload bypass.
+- **B3 USER Button (Blue)**: Pressing this hardware interrupt instantly triggers a warm image capture and HTTP upload.
 
 ## LED Status Indicators
 
