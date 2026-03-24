@@ -1,9 +1,7 @@
----
-description: Run local compile, lint, and test checks before committing/pushing to avoid failing CI
----
 # Pre-Push Checks
 
-Run these checks **before** `git add / commit / push` to avoid wasting CI minutes. These checks mirror the GitHub Actions strategy precisely, adapting for the STM32 Firmware, FastAPI Server, and Next.js Dashboard.
+Run these checks **before** `git add / commit / push` to avoid wasting CI minutes and breaking the main branch.
+The checks mirror the automated jobs in `.github/workflows/ci-cd.yml`. **ALL applications MUST always go through the CI/CD pipeline for final deployment. Local deployments are for testing only.**
 
 ---
 
@@ -11,70 +9,79 @@ Run these checks **before** `git add / commit / push` to avoid wasting CI minute
 
 Before running anything, figure out what was touched:
 
+- **Frontend changed?** — any file under `frontend/`
+- **Backend changed?** — any file under `backend/`
 - **Firmware changed?** — any file under `firmware/`
-- **Dashboard changed?** — any file under `dashboard/`
-- **Server changed?** — any file under `server/`
 
-Only run the checks for the modules that actually changed. If multiple changed, run all respective blocks.
+Only run the checks for the modules that actually changed. If multiple changed, run all applicable sections.
 
 ---
 
-## 2. Firmware checks (if `firmware/` changed)
+## 2. Frontend checks (if `frontend/` changed)
 
-Run GNU Make to verify the bare-metal C codebase compiles natively without triggering ARM GCC errors or warnings.
+Run these three commands **in order** from the `frontend/` directory. Stop at the first failure and fix before continuing.
+
+### 2a. Biome lint + format
 
 // turbo
+```bash
+cd frontend && npx biome check --write --no-errors-on-unmatched --diagnostic-level=error
 ```
+
+> **`--write`** auto-fixes formatting and safe lint issues. CI runs **without** `--write` so it will reject anything Biome would have changed. Running with `--write` locally means CI will always pass.
+
+### 2b. TypeScript type-check
+
+// turbo
+```bash
+cd frontend && npx tsc --noEmit
+```
+
+> This catches type errors that Biome does not check. Fix all errors before proceeding.
+
+### 2c. Next.js production build
+
+// turbo
+```bash
+cd frontend && npm run build
+```
+
+> **Only run this if the other two passed.** The build catches runtime-level issues (missing exports, bad imports, SSR errors). This is the slowest check (~30-60 s) so it is last.
+
+---
+
+## 3. Backend checks (if `backend/` changed)
+
+### 3a. Run tests
+
+// turbo
+```bash
+cd backend && gradle test --no-daemon
+```
+
+> Mirrors CI exactly. All tests must pass.
+
+---
+
+## 4. Firmware checks (if `firmware/` changed)
+
+### 4a. Compile Firmware
+
+// turbo
+```bash
 cd firmware && make -j8
 ```
 
-> **Warning:** Ensure that you don't overlook any missing header path adjustments in the `Makefile` if you added new nested directories inside `Core/Src` or `Core/Inc`.
+> This ensures the firmware compiles without syntax errors or missing dependencies before pushing to CI.
 
----
-
-## 3. Dashboard checks (if `dashboard/` changed)
-
-Run these commands **in order** from the `dashboard/` directory. Stop at the first failure and fix before continuing.
-
-### 3a. Biome Lint + Format
+### 4b. Flash Firmware (Optional local check)
 
 // turbo
-```
-cd dashboard && npx biome check --write --no-errors-on-unmatched --diagnostic-level=error
-```
-
-> **`--write`** auto-fixes formatting and safe lint issues. Running this locally ensures the strict CI gate will pass natively.
-
-### 3b. TypeScript Type-Check
-
-// turbo
-```
-cd dashboard && npx tsc --noEmit
+```powershell
+.\scripts\flash.ps1 -FirmwarePath .\firmware\build\thesis-iot-firmware.bin
 ```
 
-> Catch deep typing issues with the MQTT payload hooks (`useMqttImages`) or generic React state logic.
-
-### 3c. Next.js Production Build
-
-// turbo
-```
-cd dashboard && npm run build
-```
-
-> **Only run if the two fast checks passed.** This catches deep SSR mismatches. 
-
----
-
-## 4. Server checks (if `server/` changed)
-
-Verify the FastAPI application logic via Python's `pytest` utility.
-
-// turbo
-```
-cd server && python -m pytest
-```
-
-> Ensure your virtual environment is activated before running this command, otherwise dependency import errors (e.g., `fastapi`, `paho-mqtt`) will fail the suite immediately.
+> Flashes the compiled firmware to the connected STM32 board to verify runtime behavior before committing.
 
 ---
 
@@ -82,22 +89,18 @@ cd server && python -m pytest
 
 Only after **all applicable checks pass**:
 
-```
+// turbo
+```bash
 git add -A
 git commit -m "<conventional commit message>"
 git push origin main
 ```
 
-> **Hanging commits:** `git commit` may appear to hang indefinitely on Windows with GPG signing or credential wrappers. If the command lacks error output after ~10 seconds, it likely succeeded. Do **not** wait for it endlessly — verify via `git status` and proceed with `git push`.
+> **Hanging commits:** `git commit` may appear to hang indefinitely (especially on Windows with GPG signing or credential helpers). If the command has been running for more than ~10 seconds and produced no error output, it is safe to assume it succeeded and continue with `git push`. Do **not** wait for it — just proceed.
 
 ---
 
-## Quick-Reference: One-Liners
+## When to skip
 
-**Full Monorepo Validation:**
-// turbo-all
-```
-cd firmware && make -j8
-cd ../dashboard && npx biome check --write --no-errors-on-unmatched --diagnostic-level=error && npx tsc --noEmit && npm run build
-cd ../server && python -m pytest
-```
+- **Docs-only changes** (README, .md files outside project folders): safe to skip all checks.
+- **Infra-only changes** (docker-compose, nginx, deploy scripts, .github/workflows): no local checks needed — CI will do a full rebuild anyway.

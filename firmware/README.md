@@ -185,6 +185,7 @@ Enterprise-grade security audit conducted against **OWASP IoT Top 10 2025**, **C
 | SEC-06 | OTA firmware downgrade attack vector | High | OWASP I4 | `ota_update.c`, `ota_update.h` |
 | SEC-07 | No hardware watchdog (IWDG) for autonomous recovery | High | OWASP I9 | `main.c`, `firmware_config.h` |
 | SEC-08 | Unsafe `atoi()` usage (undefined on overflow) | Medium | CERT C MSC24-C | `wifi.c`, `ota_update.c` |
+| SEC-09 | Watchdog starvation during slow network OTA downloads | High | OWASP I9 | `ota_update.c` |
 
 ### Key Remediations
 
@@ -194,4 +195,4 @@ Enterprise-grade security audit conducted against **OWASP IoT Top 10 2025**, **C
 - **IWDG watchdog** with 16s timeout provides autonomous hardware reset on main-loop stalls
 - **`atoi()` → `strtol()`** with error checking prevents undefined behavior from malformed HTTP responses
 - **Time/date fields** are range-validated before writing to RTC registers
-
+- **Network yield watchdog wrapper** explicitly feeds `IWDG` during all blocking HTTP sockets to prevent OTA download resets.
