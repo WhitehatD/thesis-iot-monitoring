@@ -598,7 +598,7 @@ int main(void)
         {
             last_ota_check = HAL_GetTick();
             LOG_INFO(TAG_OTA, "Periodic firmware update check...");
-            OTA_CheckAndUpdate();  /* Only downloads if version differs */
+            OTA_CheckAndUpdate(s_image_buffer, sizeof(s_image_buffer));
         }
 
         /* ── Handle: Scheduled Tasks (RTC polling) ── */
@@ -1365,7 +1365,7 @@ static void _do_ota_update(void)
         HAL_Delay(80);
     }
 
-    status = OTA_DownloadAndFlash(&info);
+    status = OTA_DownloadAndFlash(&info, s_image_buffer, sizeof(s_image_buffer));
     if (status != OTA_OK)
     {
         LOG_ERROR(TAG_OTA, "Download/flash failed (err=%d)", status);

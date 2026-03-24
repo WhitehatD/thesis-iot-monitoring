@@ -344,10 +344,18 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
  *  Download & Flash (HTTP GET → inactive bank write)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
+OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
+                                 uint8_t *ram_buffer, uint32_t ram_size)
 {
-    if (info == NULL || info->size == 0)
+    if (info == NULL || info->size == 0 || ram_buffer == NULL)
         return OTA_ERROR_PARSE;
+
+    if (info->size > ram_size)
+    {
+        LOG_ERROR(TAG_OTA, "Firmware (%lu bytes) exceeds RAM buffer (%lu bytes)",
+                  (unsigned long)info->size, (unsigned long)ram_size);
+        return OTA_ERROR_TOO_LARGE;
+    }
 
     uint32_t inactive_bank = _get_inactive_bank();
     uint32_t bank_base     = _get_inactive_bank_base();
@@ -358,7 +366,162 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
              (unsigned long)(inactive_bank == FLASH_BANK_1 ? 1 : 2),
              (unsigned long)pages_needed);
 
-    /* ── Step 1: Erase required pages in inactive bank ────────── */
+    /* ═════════════════════════════════════════════════════════════════════
+     * Stage 1: Download entire firmware to RAM (NO flash ops during network I/O)
+     * ═════════════════════════════════════════════════════════════════════ */
+
+    LOG_INFO(TAG_OTA, "Downloading firmware to RAM (%lu bytes)...",
+             (unsigned long)info->size);
+
+    char header[256];
+    int header_len = snprintf(header, sizeof(header),
+        "GET %s HTTP/1.1\r\n"
+        "Host: %s:%d\r\n"
+        "Connection: close\r\n"
+        "\r\n",
+        OTA_DOWNLOAD_PATH, SERVER_HOST, SERVER_PORT);
+
+    int32_t sock = _ota_socket_open();
+    if (sock < 0)
+    {
+        LOG_ERROR(TAG_OTA, "Download: socket connect failed");
+        return OTA_ERROR_NETWORK;
+    }
+
+    if (_ota_send_all(sock, (uint8_t *)header, header_len) != 0)
+    {
+        LOG_ERROR(TAG_OTA, "Download: send request failed");
+        MX_WIFI_Socket_close(wifi_obj_get(), sock);
+        return OTA_ERROR_NETWORK;
+    }
+
+    /* Wait for response headers */
+    MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+
+    /* Read response — first read gets headers + start of body */
+    uint8_t recv_buf[OTA_DOWNLOAD_CHUNK_SIZE + 512];
+    int32_t recv_len = MX_WIFI_Socket_recv(
+        wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
+
+    if (recv_len <= 0)
+    {
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 3000);
+        recv_len = MX_WIFI_Socket_recv(
+            wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
+    }
+
+    if (recv_len <= 0)
+    {
+        LOG_ERROR(TAG_OTA, "Download: no response");
+        MX_WIFI_Socket_close(wifi_obj_get(), sock);
+        return OTA_ERROR_NETWORK;
+    }
+
+    /* Skip HTTP headers — find \r\n\r\n */
+    uint8_t *body_start = NULL;
+    int32_t body_offset = 0;
+    for (int32_t i = 0; i < recv_len - 3; i++)
+    {
+        if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
+            recv_buf[i+2] == '\r' && recv_buf[i+3] == '\n')
+        {
+            body_start = &recv_buf[i + 4];
+            body_offset = i + 4;
+            break;
+        }
+    }
+
+    if (body_start == NULL)
+    {
+        LOG_ERROR(TAG_OTA, "Download: HTTP headers not found");
+        MX_WIFI_Socket_close(wifi_obj_get(), sock);
+        return OTA_ERROR_NETWORK;
+    }
+
+    /* Copy first chunk's body portion into RAM buffer */
+    uint32_t total_downloaded = 0;
+    int32_t first_body_len = recv_len - body_offset;
+    if (first_body_len > 0)
+    {
+        memcpy(ram_buffer, body_start, first_body_len);
+        total_downloaded = first_body_len;
+    }
+
+    /* Continue downloading remainder into RAM buffer */
+    uint8_t toggle_led = 0;
+    while (total_downloaded < info->size)
+    {
+        /* Progress LED blink */
+        BSP_LED_On(LED_RED);
+        if (toggle_led) BSP_LED_On(LED_GREEN);
+        else BSP_LED_Off(LED_GREEN);
+        toggle_led = !toggle_led;
+
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 100);
+
+        uint32_t remaining = info->size - total_downloaded;
+        uint32_t chunk_max = (remaining < OTA_DOWNLOAD_CHUNK_SIZE) ? remaining : OTA_DOWNLOAD_CHUNK_SIZE;
+
+        recv_len = MX_WIFI_Socket_recv(
+            wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max,
+            HTTP_RESPONSE_TIMEOUT_MS);
+
+        if (recv_len <= 0)
+        {
+            /* Retry once */
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+            recv_len = MX_WIFI_Socket_recv(
+                wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max,
+                HTTP_RESPONSE_TIMEOUT_MS);
+
+            if (recv_len <= 0)
+            {
+                LOG_ERROR(TAG_OTA, "Download stalled at %lu/%lu bytes",
+                          (unsigned long)total_downloaded,
+                          (unsigned long)info->size);
+                MX_WIFI_Socket_close(wifi_obj_get(), sock);
+                BSP_LED_Off(LED_RED);
+                BSP_LED_Off(LED_GREEN);
+                return OTA_ERROR_NETWORK;
+            }
+        }
+
+        total_downloaded += recv_len;
+
+        /* Progress logging every 32 KB */
+        if ((total_downloaded % (32 * 1024)) < (uint32_t)recv_len)
+        {
+            LOG_INFO(TAG_OTA, "Download: %lu / %lu bytes (%lu%%)",
+                     (unsigned long)total_downloaded,
+                     (unsigned long)info->size,
+                     (unsigned long)(total_downloaded * 100 / info->size));
+        }
+    }
+
+    MX_WIFI_Socket_close(wifi_obj_get(), sock);
+    BSP_LED_Off(LED_RED);
+    BSP_LED_Off(LED_GREEN);
+
+    LOG_INFO(TAG_OTA, "Download complete: %lu bytes in RAM", (unsigned long)total_downloaded);
+
+    /* ── CRC32 verification on RAM buffer (before touching flash) ── */
+    uint32_t crc = _crc32_update(0xFFFFFFFF, ram_buffer, total_downloaded);
+
+    if (info->crc32 != 0)
+    {
+        if (crc != info->crc32)
+        {
+            LOG_ERROR(TAG_OTA, "CRC32 mismatch: computed=0x%08lX expected=0x%08lX",
+                      (unsigned long)crc, (unsigned long)info->crc32);
+            return OTA_ERROR_VERIFY;
+        }
+        LOG_INFO(TAG_OTA, "CRC32 verified OK (0x%08lX)", (unsigned long)crc);
+    }
+
+    /* ═════════════════════════════════════════════════════════════════════
+     * Stage 2: Erase flash + write from RAM (no network I/O needed)
+     * ═════════════════════════════════════════════════════════════════════ */
+
     BSP_LED_On(LED_RED);
     BSP_LED_On(LED_GREEN);
 
@@ -383,308 +546,65 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info)
         return OTA_ERROR_FLASH_ERASE;
     }
 
-    BSP_LED_Off(LED_RED);
-    BSP_LED_Off(LED_GREEN);
-    LOG_INFO(TAG_OTA, "Erased %lu pages — downloading firmware...",
-             (unsigned long)pages_needed);
+    LOG_INFO(TAG_OTA, "Erased %lu pages — writing %lu bytes from RAM to flash...",
+             (unsigned long)pages_needed, (unsigned long)total_downloaded);
 
-    /* ── SPI Recovery — Critical for EMW3080 ──────────────────────
-     * Flash erase blocks the CPU for hundreds of ms, starving the
-     * Wi-Fi module's SPI pipeline. Without this recovery window,
-     * the next socket open will timeout with "command 0x0205 timeout".
-     * Yield aggressively to let the EMW3080 drain its internal queue. */
-    for (int i = 0; i < 5; i++)
+    /* Write from RAM to flash — quadword aligned (16 bytes) */
+    uint32_t flash_addr = bank_base;
+    uint32_t written = 0;
+
+    /* Write aligned portion */
+    uint32_t aligned_len = total_downloaded & ~0x0FUL;
+    for (uint32_t i = 0; i < aligned_len; i += 16)
     {
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 500);
-        HAL_Delay(100);
-    }
+        hal_ret = HAL_FLASH_Program(
+            FLASH_TYPEPROGRAM_QUADWORD,
+            flash_addr,
+            (uint32_t)(uintptr_t)(ram_buffer + i));
 
-    /* ── Step 2: HTTP GET /api/firmware/download → stream to flash ── */
-
-    char header[256];
-    int header_len = snprintf(header, sizeof(header),
-        "GET %s HTTP/1.1\r\n"
-        "Host: %s:%d\r\n"
-        "Connection: close\r\n"
-        "\r\n",
-        OTA_DOWNLOAD_PATH, SERVER_HOST, SERVER_PORT);
-
-    /* Retry socket connection up to 3 times — EMW3080 may need
-     * multiple attempts to recover after flash erase starvation. */
-    int32_t sock = -1;
-    for (int attempt = 0; attempt < 3; attempt++)
-    {
-        sock = _ota_socket_open();
-        if (sock >= 0) break;
-
-        LOG_WARN(TAG_OTA, "Download socket failed (attempt %d/3) — retrying...", attempt + 1);
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
-        HAL_Delay(500);
-    }
-
-    if (sock < 0)
-    {
-        LOG_ERROR(TAG_OTA, "Download: socket connect failed after 3 attempts");
-        HAL_FLASH_Lock();
-        return OTA_ERROR_NETWORK;
-    }
-
-    if (_ota_send_all(sock, (uint8_t *)header, header_len) != 0)
-    {
-        LOG_ERROR(TAG_OTA, "Download: send request failed");
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        HAL_FLASH_Lock();
-        return OTA_ERROR_NETWORK;
-    }
-
-    /* Wait for response headers */
-    MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
-
-    /* Read response — first read gets headers + start of body */
-    uint8_t recv_buf[OTA_DOWNLOAD_CHUNK_SIZE + 512];
-    int32_t recv_len = MX_WIFI_Socket_recv(
-        wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
-
-    if (recv_len <= 0)
-    {
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 3000);
-        recv_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, recv_buf, sizeof(recv_buf), HTTP_RESPONSE_TIMEOUT_MS);
-    }
-
-    if (recv_len <= 0)
-    {
-        LOG_ERROR(TAG_OTA, "Download: no response");
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        HAL_FLASH_Lock();
-        return OTA_ERROR_NETWORK;
-    }
-
-    /* Skip HTTP headers — find \r\n\r\n */
-    uint8_t *body_start = NULL;
-    int32_t body_offset = 0;
-    for (int32_t i = 0; i < recv_len - 3; i++)
-    {
-        if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
-            recv_buf[i+2] == '\r' && recv_buf[i+3] == '\n')
+        if (hal_ret != HAL_OK)
         {
-            body_start = &recv_buf[i + 4];
-            body_offset = i + 4;
-            break;
+            LOG_ERROR(TAG_OTA, "Flash write failed at 0x%08lX",
+                      (unsigned long)flash_addr);
+            HAL_FLASH_Lock();
+            BSP_LED_Off(LED_RED);
+            BSP_LED_Off(LED_GREEN);
+            return OTA_ERROR_FLASH_WRITE;
         }
+        flash_addr += 16;
+        written += 16;
     }
 
-    if (body_start == NULL)
+    /* Write final partial quadword (pad with 0xFF) */
+    uint32_t remainder = total_downloaded - aligned_len;
+    if (remainder > 0)
     {
-        LOG_ERROR(TAG_OTA, "Download: HTTP headers not found");
-        MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        HAL_FLASH_Lock();
-        return OTA_ERROR_NETWORK;
+        uint8_t pad_buf[16];
+        memset(pad_buf, 0xFF, 16);
+        memcpy(pad_buf, ram_buffer + aligned_len, remainder);
+
+        hal_ret = HAL_FLASH_Program(
+            FLASH_TYPEPROGRAM_QUADWORD,
+            flash_addr,
+            (uint32_t)(uintptr_t)pad_buf);
+
+        if (hal_ret != HAL_OK)
+        {
+            LOG_ERROR(TAG_OTA, "Flash write (final pad) failed");
+            HAL_FLASH_Lock();
+            BSP_LED_Off(LED_RED);
+            BSP_LED_Off(LED_GREEN);
+            return OTA_ERROR_FLASH_WRITE;
+        }
+        written += remainder;
     }
 
-    /* ── Step 3: Write downloaded chunks to flash ────────────── */
-
-    uint32_t flash_addr  = bank_base;
-    uint32_t total_written = 0;
-    uint32_t crc = 0xFFFFFFFF;
-
-    /* Process the body portion of the first recv */
-    int32_t first_body_len = recv_len - body_offset;
-
-    /* Write first chunk — must be quadword-aligned (16 bytes for STM32U5) */
-    if (first_body_len > 0)
-    {
-        /* Align to 16 bytes for flash write */
-        int32_t aligned_len = first_body_len & ~0x0F;
-        int32_t remainder   = first_body_len - aligned_len;
-
-        if (aligned_len > 0)
-        {
-            for (int32_t i = 0; i < aligned_len; i += 16)
-            {
-                hal_ret = HAL_FLASH_Program(
-                    FLASH_TYPEPROGRAM_QUADWORD,
-                    flash_addr,
-                    (uint32_t)(uintptr_t)(body_start + i));
-
-                if (hal_ret != HAL_OK)
-                {
-                    LOG_ERROR(TAG_OTA, "Flash write failed at 0x%08lX",
-                              (unsigned long)flash_addr);
-                    MX_WIFI_Socket_close(wifi_obj_get(), sock);
-                    HAL_FLASH_Lock();
-                    BSP_LED_Off(LED_RED);
-                    BSP_LED_Off(LED_GREEN);
-                    return OTA_ERROR_FLASH_WRITE;
-                }
-                flash_addr += 16;
-            }
-
-            crc = _crc32_update(crc, body_start, aligned_len);
-            total_written += aligned_len;
-        }
-
-        /* Buffer the remainder for the next chunk */
-        uint8_t carry_buf[16] = {0xFF};
-        int32_t carry_len = 0;
-
-        if (remainder > 0)
-        {
-            memset(carry_buf, 0xFF, sizeof(carry_buf));
-            memcpy(carry_buf, body_start + aligned_len, remainder);
-            carry_len = remainder;
-        }
-
-        /* Toggle LED flag for alternating blink */
-        uint8_t toggle_led = 0;
-
-        /* Continue reading and flashing */
-        while (total_written < info->size)
-        {
-            /* Keep RED mostly solid, blink GREEN for data progress */
-            BSP_LED_On(LED_RED);
-            if (toggle_led) {
-                BSP_LED_On(LED_GREEN);
-            } else {
-                BSP_LED_Off(LED_GREEN);
-            }
-            toggle_led = !toggle_led;
-
-            MX_WIFI_IO_YIELD(wifi_obj_get(), 100);
-
-            recv_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, recv_buf, OTA_DOWNLOAD_CHUNK_SIZE,
-                HTTP_RESPONSE_TIMEOUT_MS);
-
-            if (recv_len <= 0)
-            {
-                /* Retry once */
-                MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
-                recv_len = MX_WIFI_Socket_recv(
-                    wifi_obj_get(), sock, recv_buf, OTA_DOWNLOAD_CHUNK_SIZE,
-                    HTTP_RESPONSE_TIMEOUT_MS);
-
-                if (recv_len <= 0)
-                {
-                    LOG_ERROR(TAG_OTA, "Download stalled at %lu/%lu bytes",
-                              (unsigned long)total_written,
-                              (unsigned long)info->size);
-                    break;  /* Write what we have */
-                }
-            }
-
-            /* Prepend any carry bytes from previous chunk */
-            uint8_t write_buf[OTA_DOWNLOAD_CHUNK_SIZE + 16];
-            int32_t write_len = 0;
-
-            if (carry_len > 0)
-            {
-                memcpy(write_buf, carry_buf, carry_len);
-                memcpy(write_buf + carry_len, recv_buf, recv_len);
-                write_len = carry_len + recv_len;
-                carry_len = 0;
-            }
-            else
-            {
-                memcpy(write_buf, recv_buf, recv_len);
-                write_len = recv_len;
-            }
-
-            /* Align and write */
-            aligned_len = write_len & ~0x0F;
-            remainder   = write_len - aligned_len;
-
-            for (int32_t i = 0; i < aligned_len; i += 16)
-            {
-                hal_ret = HAL_FLASH_Program(
-                    FLASH_TYPEPROGRAM_QUADWORD,
-                    flash_addr,
-                    (uint32_t)(uintptr_t)(write_buf + i));
-
-                if (hal_ret != HAL_OK)
-                {
-                    LOG_ERROR(TAG_OTA, "Flash write failed at 0x%08lX",
-                              (unsigned long)flash_addr);
-                    MX_WIFI_Socket_close(wifi_obj_get(), sock);
-                    HAL_FLASH_Lock();
-                    BSP_LED_Off(LED_RED);
-                    BSP_LED_Off(LED_GREEN);
-                    return OTA_ERROR_FLASH_WRITE;
-                }
-                flash_addr += 16;
-            }
-
-            crc = _crc32_update(crc, write_buf, aligned_len);
-            total_written += aligned_len;
-
-            /* Carry remainder */
-            if (remainder > 0)
-            {
-                memset(carry_buf, 0xFF, sizeof(carry_buf));
-                memcpy(carry_buf, write_buf + aligned_len, remainder);
-                carry_len = remainder;
-            }
-
-            /* Progress logging every 64 KB */
-            if ((total_written % (64 * 1024)) < OTA_DOWNLOAD_CHUNK_SIZE)
-            {
-                LOG_INFO(TAG_OTA, "Progress: %lu / %lu bytes (%lu%%)",
-                         (unsigned long)total_written,
-                         (unsigned long)info->size,
-                         (unsigned long)(total_written * 100 / info->size));
-            }
-        }
-
-        /* Flush any remaining carry bytes (pad with 0xFF) */
-        if (carry_len > 0)
-        {
-            memset(carry_buf + carry_len, 0xFF, 16 - carry_len);
-
-            hal_ret = HAL_FLASH_Program(
-                FLASH_TYPEPROGRAM_QUADWORD,
-                flash_addr,
-                (uint32_t)(uintptr_t)carry_buf);
-
-            if (hal_ret != HAL_OK)
-            {
-                LOG_ERROR(TAG_OTA, "Flash write (final pad) failed");
-                MX_WIFI_Socket_close(wifi_obj_get(), sock);
-                HAL_FLASH_Lock();
-                BSP_LED_Off(LED_RED);
-                BSP_LED_Off(LED_GREEN);
-                return OTA_ERROR_FLASH_WRITE;
-            }
-
-            crc = _crc32_update(crc, carry_buf, carry_len);
-            total_written += carry_len;
-        }
-    }
-
-    MX_WIFI_Socket_close(wifi_obj_get(), sock);
     HAL_FLASH_Lock();
     BSP_LED_Off(LED_RED);
     BSP_LED_Off(LED_GREEN);
 
-    LOG_INFO(TAG_OTA, "Download complete: %lu bytes written to flash",
-             (unsigned long)total_written);
-
-    /* ── Step 4: CRC32 verification ──────────────────────────── */
-
-    if (info->crc32 != 0)
-    {
-        if (crc != info->crc32)
-        {
-            LOG_ERROR(TAG_OTA, "CRC32 mismatch: computed=0x%08lX expected=0x%08lX",
-                      (unsigned long)crc, (unsigned long)info->crc32);
-            return OTA_ERROR_VERIFY;
-        }
-
-        LOG_INFO(TAG_OTA, "CRC32 verified OK (0x%08lX)", (unsigned long)crc);
-    }
-    else
-    {
-        LOG_WARN(TAG_OTA, "No CRC32 from server — skipping verification");
-    }
+    LOG_INFO(TAG_OTA, "Flash write complete: %lu bytes written",
+             (unsigned long)written);
 
     return OTA_OK;
 }
@@ -748,7 +668,7 @@ OTAStatus_t OTA_SwapBankAndReset(void)
  *  Full OTA Flow (convenience)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-OTAStatus_t OTA_CheckAndUpdate(void)
+OTAStatus_t OTA_CheckAndUpdate(uint8_t *ram_buffer, uint32_t ram_size)
 {
     OTAVersionInfo_t info;
     OTAStatus_t status;
@@ -763,7 +683,7 @@ OTAStatus_t OTA_CheckAndUpdate(void)
     LOG_INFO(TAG_OTA, "  OTA UPDATE: v%s → v%s", FW_VERSION, info.version);
     LOG_INFO(TAG_OTA, "═══════════════════════════════════════");
 
-    status = OTA_DownloadAndFlash(&info);
+    status = OTA_DownloadAndFlash(&info, ram_buffer, ram_size);
     if (status != OTA_OK)
     {
         LOG_ERROR(TAG_OTA, "Download/flash failed (err=%d) — aborting update", status);

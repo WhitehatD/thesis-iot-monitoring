@@ -89,14 +89,18 @@ void OTA_MarkBootSuccessful(void);
 OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info);
 
 /**
- * @brief  Download firmware binary and flash to inactive bank.
- *         Performs: erase → stream download → write → CRC verify.
+ * @brief  Download firmware binary to RAM, then erase + flash inactive bank.
+ *         Strategy: download → RAM buffer → erase → write → CRC verify.
+ *         This avoids flash erase starving the Wi-Fi SPI pipeline.
  *
- * @param  info: Version info from OTA_CheckForUpdate (provides size/CRC).
+ * @param  info:        Version info from OTA_CheckForUpdate (provides size/CRC).
+ * @param  ram_buffer:  Pointer to a RAM buffer for firmware download staging.
+ * @param  ram_size:    Size of the RAM buffer (must be >= info->size).
  * @retval OTA_OK on success (ready for bank swap).
  *         OTA_ERROR_* on failure.
  */
-OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info);
+OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
+                                 uint8_t *ram_buffer, uint32_t ram_size);
 
 /**
  * @brief  Swap active flash bank and trigger system reset.
@@ -109,14 +113,16 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info);
 OTAStatus_t OTA_SwapBankAndReset(void);
 
 /**
- * @brief  Full OTA flow: check → download → verify → swap.
+ * @brief  Full OTA flow: check → download to RAM → erase+flash → verify → swap.
  *         Convenience function that chains all steps.
  *         Only executes if the server has a newer version.
  *
+ * @param  ram_buffer:  Pointer to a RAM buffer for firmware download staging.
+ * @param  ram_size:    Size of the RAM buffer.
  * @retval OTA_NO_UPDATE if already up-to-date.
  *         OTA_OK + system reset if update applied.
  *         OTA_ERROR_* on failure.
  */
-OTAStatus_t OTA_CheckAndUpdate(void);
+OTAStatus_t OTA_CheckAndUpdate(uint8_t *ram_buffer, uint32_t ram_size);
 
 #endif /* __OTA_UPDATE_H */
