@@ -12,7 +12,7 @@ export default function SchedulerPanel({ deviceStatus }) {
 	const [loading, setLoading] = useState(true);
 	const [submitting, setSubmitting] = useState(false);
 	const [sleepEnabled, setSleepEnabled] = useState(false);
-	const [togglingleep, setTogglingSleep] = useState(false);
+	const [togglingSleep, setTogglingSleep] = useState(false);
 
 	// Form state
 	const [formName, setFormName] = useState("");
@@ -143,12 +143,12 @@ export default function SchedulerPanel({ deviceStatus }) {
 				<button
 					className={`create-schedule-btn ${sleepEnabled ? "cancel" : ""}`}
 					onClick={toggleSleep}
-					disabled={togglingleep}
+					disabled={togglingSleep}
 					title={
 						sleepEnabled ? "Board sleeps between tasks" : "Board stays awake"
 					}
 				>
-					{togglingleep ? (
+					{togglingSleep ? (
 						<span className="spinner" />
 					) : sleepEnabled ? (
 						<>🌙 Sleep On</>

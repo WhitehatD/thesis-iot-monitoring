@@ -18,6 +18,7 @@ export default function DashboardPage() {
 		toasts,
 		startManualCapture,
 		boardTelemetry,
+		deleteImage,
 	} = useMqttImages();
 
 	return (
@@ -106,7 +107,7 @@ export default function DashboardPage() {
 						Camera Captures
 					</h1>
 				</div>
-				<ImageGrid images={images} />
+				<ImageGrid images={images} onDelete={deleteImage} />
 			</main>
 
 			{/* ── Toast Notifications ───────────────────────────── */}

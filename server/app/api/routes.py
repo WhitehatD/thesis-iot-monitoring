@@ -204,6 +204,23 @@ async def serve_image(date: str, filename: str):
     return FileResponse(filepath, media_type="image/jpeg")
 
 
+@router.delete("/images/{date}/{filename}")
+async def delete_image(date: str, filename: str):
+    """
+    Delete an uploaded image file from the server.
+    """
+    filepath = Path(settings.upload_dir) / date / filename
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    
+    try:
+        os.remove(filepath)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
+    
+    return {"status": "success", "message": "Image deleted"}
+
+
 # ── Plans & Results ──────────────────────────────────────
 
 @router.get("/results/{plan_id}")

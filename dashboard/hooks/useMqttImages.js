@@ -82,6 +82,32 @@ export function useMqttImages() {
 		}, 4000);
 	}, []);
 
+	// Delete an image via REST API
+	const deleteImage = useCallback(
+		async (date, filename) => {
+			try {
+				const res = await fetch(`${apiBase}/api/images/${date}/${filename}`, {
+					method: "DELETE",
+				});
+				if (res.ok) {
+					setImages((prev) =>
+						prev.filter(
+							(img) => img.date !== date || img.filename !== filename,
+						),
+					);
+					addToast("🗑 Image deleted");
+					return true;
+				}
+				throw new Error(`HTTP ${res.status}`);
+			} catch (err) {
+				console.error("Failed to delete image:", err);
+				addToast("❌ Failed to delete image");
+				return false;
+			}
+		},
+		[apiBase, addToast],
+	);
+
 	// Force jobState to "sending" immediately
 	const startManualCapture = useCallback(() => {
 		setJobState({
@@ -358,5 +384,6 @@ export function useMqttImages() {
 		toasts,
 		startManualCapture,
 		boardTelemetry,
+		deleteImage,
 	};
 }
