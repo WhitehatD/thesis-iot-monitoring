@@ -5,7 +5,7 @@ import { useState } from "react";
 /**
  * Trigger an immediate camera capture via the FastAPI server.
  */
-export default function CaptureButton() {
+export default function CaptureButton({ onCaptureStart }) {
 	const [loading, setLoading] = useState(false);
 
 	const apiBase =
@@ -15,6 +15,7 @@ export default function CaptureButton() {
 			: "http://localhost:8000";
 
 	const handleCapture = async () => {
+		if (onCaptureStart) onCaptureStart();
 		setLoading(true);
 		try {
 			const res = await fetch(`${apiBase}/api/capture`, {

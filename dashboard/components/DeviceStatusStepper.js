@@ -22,6 +22,7 @@ export default function DeviceStatusStepper({ jobState }) {
 	if (!visible) return null;
 
 	const steps = [
+		{ id: "sending", label: "Sending", icon: "🚀" },
 		{ id: "received", label: "Job Received", icon: "📥" },
 		{ id: "capturing", label: "Capturing Image", icon: "📸" },
 		{ id: "uploading", label: "Uploading", icon: "📡" },
@@ -70,6 +71,17 @@ export default function DeviceStatusStepper({ jobState }) {
 									className={`step-line ${idx < currentStepIndex ? "active-line" : ""}`}
 								/>
 							)}
+						</div>
+					))}
+				</div>
+			)}
+
+			{/* ── Live Log Stream ───────────────────────────────── */}
+			{jobState?.logs && jobState.logs.length > 0 && (
+				<div className="stepper-logs-terminal">
+					{jobState.logs.map((log, idx) => (
+						<div key={idx} className="log-line">
+							{log}
 						</div>
 					))}
 				</div>

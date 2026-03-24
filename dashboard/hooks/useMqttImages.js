@@ -19,6 +19,7 @@ export function useMqttImages() {
 		step: "idle",
 		taskId: null,
 		error: null,
+		logs: [],
 	}); // stepper state
 	const [deviceStatus, setDeviceStatus] = useState(null); // legacy/fallback
 	const jobTimeoutRef = useRef(null);
@@ -65,6 +66,25 @@ export function useMqttImages() {
 		setTimeout(() => {
 			setToasts((prev) => prev.filter((t) => t.id !== id));
 		}, 4000);
+	}, []);
+
+	// Force jobState to "sending" immediately
+	const startManualCapture = useCallback(() => {
+		setJobState({
+			isActive: true,
+			step: "sending",
+			taskId: null,
+			error: null,
+			logs: [
+				`[${new Date().toLocaleTimeString()}] 🚀 Sending manual capture command...`,
+			],
+		});
+		if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
+		jobTimeoutRef.current = setTimeout(() => {
+			setJobState((prev) =>
+				prev.step === "sending" ? { ...prev, isActive: false } : prev,
+			);
+		}, 15000); // 15s timeout if board doesn't respond
 	}, []);
 
 	useEffect(() => {
@@ -117,13 +137,16 @@ export function useMqttImages() {
 							step: "idle",
 							taskId: null,
 							error: null,
+							logs: [],
 						});
 					} else if (data.status === "error") {
+						const errorMsg = `[${new Date().toLocaleTimeString()}] 🚨 Error: ${data.reason}`;
 						setJobState((prev) => ({
 							...prev,
 							isActive: true,
 							step: "error",
 							error: data.reason,
+							logs: [...(prev.logs || []), errorMsg],
 						}));
 						if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
 						jobTimeoutRef.current = setTimeout(
@@ -144,11 +167,21 @@ export function useMqttImages() {
 							step = "finished";
 
 						if (step !== "idle") {
-							setJobState({
-								isActive: true,
-								step,
-								taskId: data.task_id || data.tasks || null,
-								error: null,
+							const newLog = `[${new Date().toLocaleTimeString()}] ⚡ Status changed to: ${data.status}`;
+							setJobState((prev) => {
+								// If transitioning from an inactive or finished state, start fresh or append
+								const prevLogs =
+									(!prev.isActive && step !== "finished") ||
+									prev.step === "error"
+										? []
+										: prev.logs || [];
+								return {
+									isActive: true,
+									step,
+									taskId: data.task_id || data.tasks || prev.taskId || null,
+									error: null,
+									logs: [...prevLogs, newLog],
+								};
 							});
 							if (jobTimeoutRef.current) clearTimeout(jobTimeoutRef.current);
 
@@ -215,5 +248,13 @@ export function useMqttImages() {
 		};
 	}, [mqttUrl, apiBase, fetchImages, addToast]);
 
-	return { images, status, jobState, deviceStatus, isBoardOnline, toasts };
+	return {
+		images,
+		status,
+		jobState,
+		deviceStatus,
+		isBoardOnline,
+		toasts,
+		startManualCapture,
+	};
 }

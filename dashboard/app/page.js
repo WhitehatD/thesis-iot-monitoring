@@ -8,8 +8,15 @@ import SchedulerPanel from "@/components/SchedulerPanel";
 import { useMqttImages } from "@/hooks/useMqttImages";
 
 export default function DashboardPage() {
-	const { images, status, jobState, deviceStatus, isBoardOnline, toasts } =
-		useMqttImages();
+	const {
+		images,
+		status,
+		jobState,
+		deviceStatus,
+		isBoardOnline,
+		toasts,
+		startManualCapture,
+	} = useMqttImages();
 
 	return (
 		<div className="dashboard">
@@ -31,7 +38,7 @@ export default function DashboardPage() {
 						{isBoardOnline ? "Board Online" : "Board Offline"}
 					</div>
 					<ConnectionStatus status={status} />
-					<CaptureButton />
+					<CaptureButton onCaptureStart={startManualCapture} />
 				</div>
 			</header>
 
