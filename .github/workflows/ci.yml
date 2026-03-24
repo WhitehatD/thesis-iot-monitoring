@@ -194,5 +194,9 @@ jobs:
               git pull origin main
             fi
             
+            # Ensure Docker config exists so Watchtower volume mount doesn't create a directory
+            mkdir -p ~/.docker
+            touch ~/.docker/config.json
+            
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
 
