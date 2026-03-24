@@ -15,8 +15,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Wi-Fi Configuration
  * ═══════════════════════════════════════════════════════════════════════════ */
-#define WIFI_SSID                   "Iph 17 alex"
-#define WIFI_PASSWORD               "parola123"
+#define WIFI_SSID                   "A I 2.4"
+#define WIFI_PASSWORD               "alex1234"
 #define WIFI_CONNECT_RETRIES        3
 #define WIFI_CONNECT_TIMEOUT_MS     10000
 
