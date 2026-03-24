@@ -140,7 +140,7 @@
  *  Board polls the server for new versions and auto-flashes if available.
  * ═══════════════════════════════════════════════════════════════════════════ */
 #ifndef FW_VERSION
-#define FW_VERSION                  "0.2"          /* Current firmware version string */
+#define FW_VERSION                  "0.3"          /* Current firmware version string */
 #endif
 #define OTA_CHECK_INTERVAL_MS       (1 * 60 * 1000)   /* Check every 1 minute */
 #define OTA_DOWNLOAD_CHUNK_SIZE     8192           /* 8KB download chunks */
