@@ -18,6 +18,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "mx_wifi_conf.h"
+#include "main.h" /* For IWDG watchdog refresh */
 
 
 #if (MX_WIFI_USE_CMSIS_OS == 1)
@@ -113,6 +114,9 @@ int32_t noos_sem_wait(__IO uint32_t *sem, uint32_t timeout, void (*idle_func)(ui
 
   while ((*sem < 1U))
   {
+#if defined(WATCHDOG_ENABLED) && WATCHDOG_ENABLED
+    IWDG->KR = 0x0000AAAAu;
+#endif
     if ((HAL_GetTick() - tickstart) > timeout)
     {
       rc = -1;
@@ -180,6 +184,9 @@ int32_t noos_fifo_push(noos_queue_t *queue, void *p, uint32_t timeout, void (*id
 
   while (queue->in == queue->len)
   {
+#if defined(WATCHDOG_ENABLED) && WATCHDOG_ENABLED
+    IWDG->KR = 0x0000AAAAu;
+#endif
     if ((HAL_GetTick() - tickstart) > timeout)
     {
       rc = -1;
@@ -208,6 +215,9 @@ void *noos_fifo_pop(noos_queue_t *queue, uint32_t timeout, void (*idle_func)(uin
 
   while (0U == queue->in)
   {
+#if defined(WATCHDOG_ENABLED) && WATCHDOG_ENABLED
+    IWDG->KR = 0x0000AAAAu;
+#endif
     if ((HAL_GetTick() - tickstart) > timeout)
     {
       rc = -1;
