@@ -15,6 +15,7 @@ import app.main  # noqa: F401
 import app.api.routes  # noqa: F401
 import app.api.scheduler_routes  # noqa: F401
 import app.api.firmware_routes  # noqa: F401
+import app.api.wifi_routes  # noqa: F401
 import app.mqtt.client  # noqa: F401
 import app.db.database  # noqa: F401
 
@@ -43,9 +44,18 @@ def client():
          patch.object(app.api.routes, "mqtt_client", mock_mqtt), \
          patch.object(app.api.scheduler_routes, "mqtt_client", mock_mqtt), \
          patch.object(app.api.firmware_routes, "mqtt_client", mock_mqtt), \
+         patch.object(app.api.wifi_routes, "mqtt_client", mock_mqtt), \
          patch.object(app.db.database, "engine", test_engine), \
          patch.object(app.db.database, "async_session", test_session):
+        # Ensure settings has a valid Fernet key for WiFi config tests
+        from cryptography.fernet import Fernet
+        from app.config import settings
+        original_key = settings.wifi_config_encryption_key
+        settings.wifi_config_encryption_key = Fernet.generate_key().decode()
+
         from app.main import app as fastapi_app
         with TestClient(fastapi_app) as c:
             c._mock_mqtt = mock_mqtt
             yield c
+
+        settings.wifi_config_encryption_key = original_key

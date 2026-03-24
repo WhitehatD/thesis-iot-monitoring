@@ -1766,6 +1766,352 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 }
 
 /* ═══════════════════════════════════════════════════════════
+   WiFi Config & Board Control Panel
+   ═══════════════════════════════════════════════════════════ */
+.wifi-config-section {
+	padding-top: 8px;
+	padding-bottom: 8px;
+}
+.wifi-config-panel {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 20px;
+}
+
+/* ── Board Polling Status ──────────────────────────── */
+.wifi-board-status {
+	background: var(--bg-glass);
+	backdrop-filter: blur(20px) saturate(160%);
+	-webkit-backdrop-filter: blur(20px) saturate(160%);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	border-radius: var(--radius-lg);
+	padding: 20px 24px;
+	position: relative;
+	overflow: hidden;
+}
+.wifi-board-status::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgba(16, 185, 129, 0.5) 50%,
+		transparent 100%
+	);
+}
+.wifi-board-status-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+.wifi-board-identity {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+.wifi-board-dot {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	flex-shrink: 0;
+}
+.wifi-board-dot.online {
+	background: var(--accent-emerald);
+	box-shadow: 0 0 12px var(--accent-emerald-glow);
+	animation: pulse-dot 2s infinite;
+}
+.wifi-board-dot.offline {
+	background: var(--text-muted);
+}
+.wifi-board-name {
+	font-size: 14px;
+	font-weight: 700;
+	color: var(--text-primary);
+	letter-spacing: 0.3px;
+}
+.wifi-board-id {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 11px;
+	color: var(--text-muted);
+}
+.wifi-board-actions {
+	display: flex;
+	gap: 8px;
+}
+.wifi-ping-btn {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 8px 14px;
+	background: rgba(56, 189, 248, 0.08);
+	border: 1px solid rgba(56, 189, 248, 0.25);
+	border-radius: var(--radius-md);
+	color: var(--accent-blue);
+	font-size: 12px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: all 0.2s ease;
+}
+.wifi-ping-btn:hover:not(:disabled) {
+	background: rgba(56, 189, 248, 0.15);
+	border-color: rgba(56, 189, 248, 0.4);
+	box-shadow: 0 0 16px rgba(56, 189, 248, 0.15);
+	transform: translateY(-1px);
+}
+.wifi-ping-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+.wifi-ping-btn.pinging {
+	animation: wifi-ping-pulse 1s infinite;
+}
+@keyframes wifi-ping-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.6;
+	}
+}
+.wifi-ping-spinner {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border: 2px solid rgba(56, 189, 248, 0.2);
+	border-top-color: var(--accent-blue);
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+}
+
+.wifi-board-meta {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 12px;
+}
+.wifi-meta-item {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	padding: 8px 10px;
+	background: rgba(0, 0, 0, 0.2);
+	border: 1px solid rgba(255, 255, 255, 0.03);
+	border-radius: var(--radius-sm);
+}
+.wifi-meta-label {
+	font-size: 10px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.8px;
+}
+.wifi-meta-value {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+.wifi-meta-value.value-online {
+	color: var(--accent-emerald);
+}
+.wifi-meta-value.value-offline {
+	color: var(--accent-rose);
+}
+.wifi-ssid-badge {
+	color: var(--accent-amber) !important;
+}
+
+/* ── WiFi Configuration Form ──────────────────────── */
+.wifi-form-container {
+	background: var(--bg-glass);
+	backdrop-filter: blur(20px) saturate(160%);
+	-webkit-backdrop-filter: blur(20px) saturate(160%);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	border-radius: var(--radius-lg);
+	padding: 20px 24px;
+	position: relative;
+	overflow: hidden;
+}
+.wifi-form-container::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgba(129, 140, 248, 0.5) 50%,
+		transparent 100%
+	);
+}
+.wifi-form-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 16px;
+	font-size: 11px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: 1.2px;
+	color: var(--text-muted);
+}
+.wifi-form-icon {
+	font-size: 16px;
+}
+.wifi-form {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+}
+.wifi-input-group {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+.wifi-label {
+	font-size: 11px;
+	font-weight: 600;
+	color: var(--text-muted);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+.wifi-input {
+	width: 100%;
+	padding: 10px 14px;
+	background: rgba(0, 0, 0, 0.3);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	border-radius: var(--radius-md);
+	color: var(--text-primary);
+	font-family: "JetBrains Mono", monospace;
+	font-size: 14px;
+	outline: none;
+	transition: all 0.2s ease;
+	box-sizing: border-box;
+}
+.wifi-input:focus {
+	border-color: rgba(56, 189, 248, 0.4);
+	box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.08);
+}
+.wifi-input::placeholder {
+	color: var(--text-muted);
+	opacity: 0.5;
+}
+.wifi-input:disabled {
+	opacity: 0.5;
+}
+.wifi-password-wrapper {
+	position: relative;
+}
+.wifi-password-wrapper .wifi-input {
+	padding-right: 44px;
+}
+.wifi-eye-btn {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	background: none;
+	border: none;
+	font-size: 16px;
+	cursor: pointer;
+	padding: 4px;
+	opacity: 0.5;
+	transition: opacity 0.2s;
+}
+.wifi-eye-btn:hover {
+	opacity: 1;
+}
+.wifi-submit-btn {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 12px 20px;
+	background: linear-gradient(
+		135deg,
+		rgba(56, 189, 248, 0.15) 0%,
+		rgba(129, 140, 248, 0.15) 100%
+	);
+	border: 1px solid rgba(56, 189, 248, 0.3);
+	border-radius: var(--radius-md);
+	color: var(--accent-blue);
+	font-size: 14px;
+	font-weight: 700;
+	cursor: pointer;
+	transition: all 0.3s ease;
+	margin-top: 4px;
+}
+.wifi-submit-btn:hover:not(:disabled) {
+	background: linear-gradient(
+		135deg,
+		rgba(56, 189, 248, 0.25) 0%,
+		rgba(129, 140, 248, 0.25) 100%
+	);
+	border-color: rgba(56, 189, 248, 0.5);
+	box-shadow: 0 4px 20px rgba(56, 189, 248, 0.15);
+	transform: translateY(-1px);
+}
+.wifi-submit-btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+.wifi-submit-btn.submitting {
+	animation: wifi-ping-pulse 1.5s infinite;
+}
+.wifi-submit-spinner {
+	display: inline-block;
+	width: 14px;
+	height: 14px;
+	border: 2px solid rgba(56, 189, 248, 0.2);
+	border-top-color: var(--accent-blue);
+	border-radius: 50%;
+	animation: spin 0.8s linear infinite;
+}
+
+/* ── Result Messages ──────────────────────────────── */
+.wifi-result {
+	margin-top: 12px;
+	padding: 10px 14px;
+	border-radius: var(--radius-sm);
+	font-size: 13px;
+	font-weight: 500;
+	animation: slide-down 0.3s ease-out;
+}
+.wifi-result-success {
+	background: rgba(16, 185, 129, 0.1);
+	border: 1px solid rgba(16, 185, 129, 0.3);
+	color: var(--accent-emerald);
+}
+.wifi-result-error {
+	background: rgba(244, 63, 94, 0.1);
+	border: 1px solid rgba(244, 63, 94, 0.3);
+	color: var(--accent-rose);
+}
+.wifi-result-info {
+	background: rgba(56, 189, 248, 0.1);
+	border: 1px solid rgba(56, 189, 248, 0.3);
+	color: var(--accent-blue);
+}
+.wifi-result-warning {
+	background: rgba(245, 158, 11, 0.1);
+	border: 1px solid rgba(245, 158, 11, 0.3);
+	color: var(--accent-amber);
+}
+
+/* ── Cyan dot for section header ──────────────────── */
+.dot.cyan {
+	background: #22d3ee;
+	box-shadow: 0 0 10px rgba(34, 211, 238, 0.4);
+}
+
+/* ═══════════════════════════════════════════════════════════
    Mobile Responsive Rules (Critical for Performance)
    ═══════════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
@@ -1908,5 +2254,18 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 		justify-content: flex-end;
 		padding-top: 8px;
 		border-top: 1px solid rgba(255, 255, 255, 0.05);
+	}
+
+	.wifi-config-panel {
+		grid-template-columns: 1fr;
+	}
+	.wifi-board-status,
+	.wifi-form-container {
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
+		background: #101623 !important;
+	}
+	.wifi-board-meta {
+		grid-template-columns: 1fr;
 	}
 }

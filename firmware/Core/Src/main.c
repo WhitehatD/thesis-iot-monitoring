@@ -78,6 +78,12 @@ static volatile uint8_t s_sleep_enabled = 0;  /* 0 = awake (default), 1 = low po
 /* ── OTA firmware update (MQTT command) ─────────────────── */
 static volatile uint8_t s_ota_requested = 0;
 
+/* ── Runtime WiFi credential management (MQTT command) ──── */
+static volatile uint8_t s_wifi_reconfig_requested = 0;
+static char s_runtime_ssid[33]     = {0};  /* Max 32-char SSID + null */
+static char s_runtime_password[64] = {0};  /* Max 63-char WPA2 + null */
+static uint8_t s_has_runtime_wifi  = 0;    /* 1 = runtime creds set   */
+
 /* Buffer to hold the raw JSON schedule from MQTT callback */
 static char s_schedule_json[SCHEDULE_JSON_MAX];
 
@@ -94,6 +100,7 @@ static void _do_button_capture(void);
 static void _do_capture_now(void);
 static void _do_capture_sequence(void);
 static void _do_ota_update(void);
+static void _do_wifi_reconfig(void);
 
 /* SEC-07: Watchdog initialization */
 #if WATCHDOG_ENABLED
@@ -323,6 +330,36 @@ static void on_command_received(const char *json_str, uint32_t length)
         s_ota_requested = 1;
         LOG_INFO(TAG_MQTT, ">> FIRMWARE_UPDATE command received");
         MQTT_PublishStatus("{\"status\":\"ota_update_queued\"}");
+    }
+    else if (type_str != NULL && strcmp(type_str, "set_wifi") == 0)
+    {
+        /* ── Remote WiFi credential reconfiguration ── */
+        cJSON *ssid_obj = cJSON_GetObjectItem(root, "ssid");
+        cJSON *pass_obj = cJSON_GetObjectItem(root, "password");
+
+        if (ssid_obj && cJSON_IsString(ssid_obj) &&
+            pass_obj && cJSON_IsString(pass_obj) &&
+            strlen(ssid_obj->valuestring) > 0 &&
+            strlen(ssid_obj->valuestring) <= 32 &&
+            strlen(pass_obj->valuestring) >= 8 &&
+            strlen(pass_obj->valuestring) <= 63)
+        {
+            strncpy(s_runtime_ssid, ssid_obj->valuestring, sizeof(s_runtime_ssid) - 1);
+            s_runtime_ssid[sizeof(s_runtime_ssid) - 1] = '\0';
+            strncpy(s_runtime_password, pass_obj->valuestring, sizeof(s_runtime_password) - 1);
+            s_runtime_password[sizeof(s_runtime_password) - 1] = '\0';
+
+            s_has_runtime_wifi = 1;
+            s_wifi_reconfig_requested = 1;
+            LOG_INFO(TAG_MQTT, ">> SET_WIFI command — SSID='%s' (queued for reconnect)",
+                     s_runtime_ssid);
+            MQTT_PublishStatus("{\"status\":\"wifi_reconfig_queued\"}");
+        }
+        else
+        {
+            LOG_ERROR(TAG_MQTT, ">> SET_WIFI — invalid SSID/password fields");
+            MQTT_PublishStatus("{\"status\":\"error\",\"reason\":\"invalid_wifi_credentials\"}");
+        }
     }
     else
     {
@@ -619,6 +656,14 @@ int main(void)
             poll_start = HAL_GetTick();
         }
 
+        /* ── Handle: WiFi credential reconfiguration (MQTT command) ── */
+        if (s_wifi_reconfig_requested)
+        {
+            s_wifi_reconfig_requested = 0;
+            _do_wifi_reconfig();
+            poll_start = HAL_GetTick();
+        }
+
         /* ── Periodic OTA version check (every 30 min) ── */
         if ((HAL_GetTick() - last_ota_check) > OTA_CHECK_INTERVAL_MS)
         {
@@ -778,9 +823,11 @@ int main(void)
                     Camera_DeInit();  /* Power down camera for sleep */
                     Scheduler_EnterLowPower();
 
-                    /* Woke up — reconnect everything */
+                    /* Woke up — reconnect everything (use runtime creds if set) */
                     WiFi_Init();
-                    WiFi_Connect(WIFI_SSID, WIFI_PASSWORD);
+                    WiFi_Connect(
+                        s_has_runtime_wifi ? s_runtime_ssid : WIFI_SSID,
+                        s_has_runtime_wifi ? s_runtime_password : WIFI_PASSWORD);
                     MQTT_Init(&mqtt_cfg);
                     MQTT_SubscribeCommands(on_command_received);
                     last_ping = HAL_GetTick();
@@ -1447,6 +1494,87 @@ static void _do_ota_update(void)
 
     /* If we get here, swap failed */
     MQTT_PublishStatus("{\"status\":\"ota_error\",\"reason\":\"bank_swap_failed\"}");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  WiFi Runtime Reconfiguration
+ *
+ *  Tears down MQTT → WiFi → reconnects with new credentials → re-establishes
+ *  MQTT subscription. The board publishes wifi_reconfigured/wifi_reconfig_failed
+ *  as ACK to the dashboard.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void _do_wifi_reconfig(void)
+{
+    LOG_INFO(TAG_WIFI, "=== WIFI RECONFIGURATION ===");
+    LOG_INFO(TAG_WIFI, "New SSID: '%s'", s_runtime_ssid);
+
+    /* ── Step 1: Tear down MQTT and WiFi ──────────────── */
+    MQTT_Disconnect();
+    MX_WIFI_Disconnect(wifi_obj_get());
+
+    /* SPI pipeline flush */
+    MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+
+#if WATCHDOG_ENABLED
+    extern IWDG_HandleTypeDef hiwdg;
+    HAL_IWDG_Refresh(&hiwdg);
+#endif
+
+    /* ── Step 2: Reconnect with new credentials ──────── */
+    WiFiStatus_t ret = WiFi_Connect(s_runtime_ssid, s_runtime_password);
+
+    if (ret != WIFI_OK)
+    {
+        LOG_ERROR(TAG_WIFI, "WiFi reconnect FAILED with new creds, reverting to compile-time defaults");
+
+        /* Fallback: try original compile-time credentials */
+        ret = WiFi_Connect(WIFI_SSID, WIFI_PASSWORD);
+        if (ret != WIFI_OK)
+        {
+            LOG_ERROR(TAG_WIFI, "FATAL: Cannot connect to any WiFi network");
+            LED_SignalError();
+            return;
+        }
+        s_has_runtime_wifi = 0;  /* Clear runtime creds on failure */
+    }
+
+#if WATCHDOG_ENABLED
+    HAL_IWDG_Refresh(&hiwdg);
+#endif
+
+    /* ── Step 3: Re-establish MQTT ────────────────────── */
+    MQTTConfig_t mqtt_cfg = {
+        .broker_host = MQTT_BROKER_HOST,
+        .broker_port = MQTT_BROKER_PORT,
+        .client_id   = MQTT_CLIENT_ID,
+    };
+
+    MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+
+    if (MQTT_Init(&mqtt_cfg) != 0)
+    {
+        LOG_ERROR(TAG_MQTT, "MQTT reconnect failed after WiFi reconfig");
+        return;
+    }
+
+    MQTT_SubscribeCommands(on_command_received);
+
+    /* ── Step 4: ACK to dashboard ────────────────────── */
+    if (s_has_runtime_wifi)
+    {
+        char ack[128];
+        snprintf(ack, sizeof(ack),
+                 "{\"status\":\"wifi_reconfigured\",\"ssid\":\"%s\",\"firmware\":\"" FW_VERSION "\"}",
+                 s_runtime_ssid);
+        MQTT_PublishStatus(ack);
+        LOG_INFO(TAG_WIFI, "WiFi reconfigured OK — connected to '%s'", s_runtime_ssid);
+    }
+    else
+    {
+        MQTT_PublishStatus("{\"status\":\"wifi_reconfig_failed\",\"reason\":\"reverted_to_default\"}");
+        LOG_WARN(TAG_WIFI, "WiFi reconfig failed — reverted to compile-time defaults");
+    }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

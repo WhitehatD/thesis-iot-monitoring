@@ -6,6 +6,7 @@ import ConnectionStatus from "@/components/ConnectionStatus";
 import DeviceStatusStepper from "@/components/DeviceStatusStepper";
 import ImageGrid from "@/components/ImageGrid";
 import SchedulerPanel from "@/components/SchedulerPanel";
+import WifiConfigPanel from "@/components/WifiConfigPanel";
 import { useMqttImages } from "@/hooks/useMqttImages";
 
 export default function DashboardPage() {
@@ -19,6 +20,8 @@ export default function DashboardPage() {
 		startManualCapture,
 		boardTelemetry,
 		deleteImage,
+		wifiStatus,
+		apiBase,
 	} = useMqttImages();
 
 	return (
@@ -83,6 +86,14 @@ export default function DashboardPage() {
 			<BoardTelemetryPanel
 				boardTelemetry={boardTelemetry}
 				isBoardOnline={isBoardOnline}
+			/>
+
+			{/* ── Board Control & WiFi ──────────────────────────── */}
+			<WifiConfigPanel
+				isBoardOnline={isBoardOnline}
+				boardTelemetry={boardTelemetry}
+				wifiStatus={wifiStatus}
+				apiBase={apiBase}
 			/>
 
 			{/* ── Live Device Status ─────────────────────────────── */}

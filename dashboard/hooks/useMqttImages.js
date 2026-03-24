@@ -42,6 +42,9 @@ export function useMqttImages() {
 	});
 	const boardTimeoutRef = useRef(null);
 
+	// ── WiFi reconfiguration status ─────────────────────
+	const [wifiStatus, setWifiStatus] = useState(null);
+
 	const mqttUrl =
 		typeof window !== "undefined"
 			? process.env.NEXT_PUBLIC_MQTT_WS_URL ||
@@ -194,6 +197,17 @@ export function useMqttImages() {
 
 						return update;
 					});
+
+					// Track WiFi reconfig statuses for WifiConfigPanel
+					if (
+						data.status === "wifi_reconfigured" ||
+						data.status === "wifi_reconfig_failed" ||
+						data.status === "wifi_reconfig_queued"
+					) {
+						setWifiStatus(data.status);
+						// Clear after 10s
+						setTimeout(() => setWifiStatus(null), 10000);
+					}
 
 					if (data.status === "online") {
 						return; // don't show generic online pings in the banner/stepper
@@ -385,5 +399,7 @@ export function useMqttImages() {
 		startManualCapture,
 		boardTelemetry,
 		deleteImage,
+		wifiStatus,
+		apiBase,
 	};
 }

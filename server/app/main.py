@@ -12,6 +12,7 @@ from app.config import settings
 from app.api.routes import router as api_router
 from app.api.scheduler_routes import router as scheduler_router
 from app.api.firmware_routes import router as firmware_router
+from app.api.wifi_routes import router as wifi_router
 from app.mqtt.client import mqtt_client, mqtt_config
 from app.db.database import create_tables
 
@@ -25,17 +26,17 @@ async def lifespan(app: FastAPI):
 
     # Create DB tables
     await create_tables()
-    print("✓ Database tables ready")
+    print("[OK] Database tables ready")
 
     # Connect MQTT
     await mqtt_client.connection()
-    print(f"✓ MQTT connected to {settings.mqtt_broker_host}:{settings.mqtt_broker_port}")
+    print(f"[OK] MQTT connected to {settings.mqtt_broker_host}:{settings.mqtt_broker_port}")
 
     yield
 
     # Disconnect MQTT
     await mqtt_client.client.disconnect()
-    print("✗ MQTT disconnected")
+    print("[WARN] MQTT disconnected")
 
 
 app = FastAPI(
@@ -61,6 +62,7 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 app.include_router(scheduler_router, prefix="/api")
 app.include_router(firmware_router, prefix="/api")
+app.include_router(wifi_router, prefix="/api")
 
 
 @app.get("/health")

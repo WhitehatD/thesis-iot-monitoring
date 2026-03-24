@@ -137,7 +137,7 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
             with open(filepath, "wb") as f:
                 f.write(content)
     except Exception as e:
-        print(f"✗ Upload processing failed for task {task_id}: {e} (content_len={len(content)})")
+        print(f"[ERR] Upload processing failed for task {task_id}: {e} (content_len={len(content)})")
         raise HTTPException(
             status_code=422,
             detail=f"Image processing failed: {str(e)} (received {len(content)} bytes)"

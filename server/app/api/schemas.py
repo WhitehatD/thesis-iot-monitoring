@@ -146,3 +146,32 @@ class FirmwareUploadResponse(BaseModel):
     size: int
     crc32: int
     status: str = "uploaded"
+
+
+# ── WiFi Configuration ──────────────────────────────────────
+
+class WifiConfigRequest(BaseModel):
+    """Request to update the board's WiFi credentials."""
+    ssid: str = Field(
+        ...,
+        min_length=1,
+        max_length=32,
+        description="WiFi network name (SSID), max 32 chars per IEEE 802.11",
+        examples=["MyNetwork"],
+    )
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=63,
+        description="WPA2 passphrase (8-63 characters)",
+        examples=["securepassword123"],
+    )
+
+
+class WifiConfigResponse(BaseModel):
+    """Response with current WiFi config (password is NEVER returned)."""
+    ssid: str
+    status: str = Field(
+        ..., description="'sent', 'active', or 'no_config'"
+    )
+    updated_at: str | None = None

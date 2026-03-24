@@ -24,7 +24,7 @@ def on_connect(client, flags, rc, properties):
     """Called when MQTT connection is established."""
     # Subscribe to status updates from the STM32 board
     mqtt_client.client.subscribe(settings.mqtt_topic_status)
-    print(f"✓ Subscribed to: {settings.mqtt_topic_status}")
+    print(f"[OK] Subscribed to: {settings.mqtt_topic_status}")
 
 
 @mqtt_client.on_message()
@@ -39,4 +39,4 @@ async def on_message(client, topic, payload, qos, properties):
 @mqtt_client.on_disconnect()
 def on_disconnect(client, packet, exc=None):
     """Called when MQTT connection is lost."""
-    print("✗ MQTT disconnected — will auto-reconnect")
+    print("[WARN] MQTT disconnected -- will auto-reconnect")

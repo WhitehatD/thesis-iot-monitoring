@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # ── Firmware OTA ───────────────────────────────────
     firmware_upload_token: str = ""  # API key for CI firmware uploads (empty = no auth)
 
+    # ── WiFi Config Encryption ────────────────────────
+    # Fernet key for encrypting WiFi passwords at rest.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    wifi_config_encryption_key: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

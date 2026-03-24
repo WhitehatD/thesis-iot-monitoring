@@ -25,6 +25,7 @@ class Base(DeclarativeBase):
 
 async def create_tables():
     """Create all tables that don't exist yet."""
+    import app.db.wifi_models  # noqa: F401 — register WiFi config model
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
