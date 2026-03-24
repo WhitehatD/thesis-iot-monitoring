@@ -49,7 +49,7 @@ jobs:
   build-firmware:
     name: Build & Upload Firmware
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - uses: actions/checkout@v4
@@ -101,7 +101,7 @@ jobs:
     name: Build Server Image
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -133,7 +133,7 @@ jobs:
     name: Build Dashboard Image
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
@@ -168,7 +168,7 @@ jobs:
     name: Deploy to VPS
     runs-on: ubuntu-latest
     needs: [build-server, build-dashboard]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main'
     
     steps:
       - name: Execute Remote SSH Deployment
