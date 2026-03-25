@@ -212,6 +212,53 @@ static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Watchdog-Safe Non-Blocking Socket Receive
+ *
+ *  Solves two critical enterprise-grade reliability issues:
+ *  1. Watchdog timeouts: MX_WIFI_Socket_recv is completely blocking. We apply
+ *     a short 250ms SO_RCVTIMEO to the socket, allowing us to kick the watchdog
+ *     frequently without resetting the MCU during slow server responses.
+ *  2. MIPC Buffer Corruption: Requesting > 2000 bytes in a single receive
+ *     call can crash the EMW3080 SPI firmware. We strictly clamp all reading
+ *     to 1024 bytes per transaction.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint32_t total_timeout_ms)
+{
+    /* Set short receive timeout to prevent infinite blocking */
+    int32_t rcvtimeo = 250;
+    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
+
+    uint32_t start = HAL_GetTick();
+    int32_t ret = 0;
+
+    while ((HAL_GetTick() - start) < total_timeout_ms)
+    {
+#if WATCHDOG_ENABLED
+        IWDG->KR = 0x0000AAAAu; /* Pet dog continuously */
+#endif
+        /* Strict 1024 boundary to prevent SPI payload crashes */
+        int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
+        
+        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
+
+        if (ret > 0)
+        {
+            /* Restore original 4000ms timeout for other logic */
+            rcvtimeo = 4000;
+            MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
+            return ret;
+        }
+
+        /* Wait before next poll to let EMW3080 OS tasks process */
+        _ota_yield_with_watchdog(20);
+    }
+
+    rcvtimeo = 4000;
+    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
+    return ret;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  Boot Validation (RTC Backup Register Counter)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -290,28 +337,9 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
         return OTA_ERROR_NETWORK;
     }
 
-    /* Receive response */
-    _ota_yield_with_watchdog(2000);
-
+    /* Receive response (poll up to 8000ms) */
     uint8_t resp[512] = {0};
-#if WATCHDOG_ENABLED
-    IWDG->KR = 0x0000AAAAu;
-#endif
-    int32_t resp_len = MX_WIFI_Socket_recv(
-        wifi_obj_get(), sock, resp, sizeof(resp) - 1, 0);
-
-    if (resp_len <= 0)
-    {
-        _ota_yield_with_watchdog(3000);
-#if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu;
-#endif
-        resp_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, resp, sizeof(resp) - 1, 0);
-    }
-#if WATCHDOG_ENABLED
-    IWDG->KR = 0x0000AAAAu;
-#endif
+    int32_t resp_len = _ota_safe_recv(sock, resp, sizeof(resp) - 1, 8000);
 
     MX_WIFI_Socket_close(wifi_obj_get(), sock);
 
@@ -367,9 +395,9 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     cJSON_Delete(root);
 
     /* Compare versions — SEC-06: reject downgrades */
-    if (strcmp(info->version, FW_VERSION) == 0)
+    if (!_is_version_newer(info->version, FW_VERSION))
     {
-        LOG_INFO(TAG_OTA, "Firmware is up-to-date (v%s)", FW_VERSION);
+        LOG_INFO(TAG_OTA, "Firmware is up-to-date or candidate is older (current v%s, candidate v%s)", FW_VERSION, info->version);
         return OTA_NO_UPDATE;
     }
 
@@ -484,41 +512,19 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
 
         /* Wait for response headers */
-        LOG_INFO(TAG_OTA, "TEST: Yielding SPI for 2000ms for response...");
-        _ota_yield_with_watchdog(2000);
+        LOG_INFO(TAG_OTA, "TEST: Yielding SPI for 100ms for response...");
+        _ota_yield_with_watchdog(100);
 
-#if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu; /* Pet the dog before blocking recv */
-#endif
-
-        /* CRITICAL FIX: The stack is only 8KB. Allocating 8.7KB here overflows the stack 
-         * and corrupts the SPI Wi-Fi driver's structural data below it in RAM, causing MIPC timeouts!
-         * We safely repurpose the end of our massive frame buffer for the initial HTTP header receive. */
-        uint32_t recv_buf_size = OTA_DOWNLOAD_CHUNK_SIZE + 512;
+        uint32_t recv_buf_size = 1024 + 512;
         uint8_t *recv_buf = ram_buffer + (ram_size - recv_buf_size);
         
-#if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu;
-#endif
         uint32_t current_sp = __get_MSP();
         LOG_INFO(TAG_OTA, "TEST: Receiving first chunk (SP=0x%08lX) into %p...", current_sp, recv_buf);
-        int32_t recv_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, 0);
+        
+        /* Non-blocking safe wrapper with 8000ms total timeout */
+        int32_t recv_len = _ota_safe_recv(sock, recv_buf, recv_buf_size - 1, 8000);
 
         LOG_INFO(TAG_OTA, "TEST: First chunk recv_len=%ld", (long)recv_len);
-
-        if (recv_len <= 0)
-        {
-            _ota_yield_with_watchdog(3000);
-#if WATCHDOG_ENABLED
-            IWDG->KR = 0x0000AAAAu;
-#endif
-            recv_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, 0);
-        }
-#if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu;
-#endif
 
         if (recv_len <= 0)
         {
@@ -634,31 +640,16 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             uint32_t chunk_max = (remaining < OTA_DOWNLOAD_CHUNK_SIZE)
                                  ? remaining : OTA_DOWNLOAD_CHUNK_SIZE;
 
-#if WATCHDOG_ENABLED
-            IWDG->KR = 0x0000AAAAu;
-#endif
-            recv_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max, 0);
+            recv_len = _ota_safe_recv(sock, ram_buffer + total_downloaded, chunk_max, 5000);
 
             if (recv_len <= 0)
             {
-                /* Retry once within this attempt */
-                _ota_yield_with_watchdog(2000);
-#if WATCHDOG_ENABLED
-                IWDG->KR = 0x0000AAAAu;
-#endif
-                recv_len = MX_WIFI_Socket_recv(
-                    wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max, 0);
-
-                if (recv_len <= 0)
-                {
-                    LOG_ERROR(TAG_OTA, "Download stalled at %lu/%lu bytes (attempt %d/%d)",
+                LOG_ERROR(TAG_OTA, "Download stalled at %lu/%lu bytes (attempt %d/%d)",
                               (unsigned long)total_downloaded,
                               (unsigned long)info->size,
                               dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
-                    stall = 1;
-                    break;
-                }
+                stall = 1;
+                break;
             }
 
             total_downloaded += recv_len;
