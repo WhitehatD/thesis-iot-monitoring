@@ -226,9 +226,19 @@ static int32_t _tcp_send(const uint8_t *data, int len)
 
 static int32_t _tcp_recv(uint8_t *buf, int max_len, int timeout_ms)
 {
-    (void)timeout_ms;  /* MIPC driver inherently enforces MX_WIFI_CMD_TIMEOUT, but blocks without WDG if socket timeout is 0 */
     if (s_socket < 0) return -1;
-    return MX_WIFI_Socket_recv(wifi_obj_get(), s_socket, buf, max_len, timeout_ms);
+    uint32_t start_tick = HAL_GetTick();
+    int32_t ret = 0;
+    do {
+        /* Use 0x08 (MSG_DONTWAIT in lwIP) to return immediately if no data */
+        ret = MX_WIFI_Socket_recv(wifi_obj_get(), s_socket, buf, max_len, 0x08);
+        if (ret > 0) return ret;
+        
+        if (timeout_ms > 0) {
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 5);
+        }
+    } while ((HAL_GetTick() - start_tick) < (uint32_t)timeout_ms);
+    return ret;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

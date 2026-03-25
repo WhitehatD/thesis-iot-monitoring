@@ -298,7 +298,7 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
     IWDG->KR = 0x0000AAAAu;
 #endif
     int32_t resp_len = MX_WIFI_Socket_recv(
-        wifi_obj_get(), sock, resp, sizeof(resp) - 1, HTTP_RESPONSE_TIMEOUT_MS);
+        wifi_obj_get(), sock, resp, sizeof(resp) - 1, 0);
 
     if (resp_len <= 0)
     {
@@ -307,7 +307,7 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
         IWDG->KR = 0x0000AAAAu;
 #endif
         resp_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, resp, sizeof(resp) - 1, HTTP_RESPONSE_TIMEOUT_MS);
+            wifi_obj_get(), sock, resp, sizeof(resp) - 1, 0);
     }
 #if WATCHDOG_ENABLED
     IWDG->KR = 0x0000AAAAu;
@@ -502,7 +502,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         uint32_t current_sp = __get_MSP();
         LOG_INFO(TAG_OTA, "TEST: Receiving first chunk (SP=0x%08lX) into %p...", current_sp, recv_buf);
         int32_t recv_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, HTTP_RESPONSE_TIMEOUT_MS);
+            wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, 0);
 
         LOG_INFO(TAG_OTA, "TEST: First chunk recv_len=%ld", (long)recv_len);
 
@@ -513,7 +513,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             IWDG->KR = 0x0000AAAAu;
 #endif
             recv_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, HTTP_RESPONSE_TIMEOUT_MS);
+                wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, 0);
         }
 #if WATCHDOG_ENABLED
         IWDG->KR = 0x0000AAAAu;
@@ -637,7 +637,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             IWDG->KR = 0x0000AAAAu;
 #endif
             recv_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max, HTTP_RESPONSE_TIMEOUT_MS);
+                wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max, 0);
 
             if (recv_len <= 0)
             {
@@ -647,8 +647,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
                 IWDG->KR = 0x0000AAAAu;
 #endif
                 recv_len = MX_WIFI_Socket_recv(
-                    wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max,
-                    HTTP_RESPONSE_TIMEOUT_MS);
+                    wifi_obj_get(), sock, ram_buffer + total_downloaded, chunk_max, 0);
 
                 if (recv_len <= 0)
                 {

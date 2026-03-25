@@ -404,8 +404,7 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
         {
             uint8_t resp_buf[256] = {0};
             int32_t resp_len = MX_WIFI_Socket_recv(
-                wifi_obj_get(), sock, resp_buf, sizeof(resp_buf) - 1,
-                HTTP_RESPONSE_TIMEOUT_MS);
+                wifi_obj_get(), sock, resp_buf, sizeof(resp_buf) - 1, 0);
 
             if (resp_len > 0)
             {
@@ -540,8 +539,7 @@ WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
     {
         MX_WIFI_IO_YIELD(wifi_obj_get(), 50);
         resp_len = MX_WIFI_Socket_recv(
-            wifi_obj_get(), sock, resp_buf, sizeof(resp_buf) - 1,
-            50);
+            wifi_obj_get(), sock, resp_buf, sizeof(resp_buf) - 1, 0);
 
         if (resp_len > 0)
         {
@@ -668,6 +666,11 @@ int32_t WiFi_TcpConnect(const char *host, uint16_t port)
         MX_WIFI_Socket_close(wifi_obj_get(), sock);
         return -1;
     }
+
+    /* CRITICAL: Set a sane hardware receive timeout (4s) so the EMW3080
+     * doesn't block the MIPC layer up to 30s (MX_WIFI_CMD_TIMEOUT) and trip the 16s watchdog! */
+    int32_t timeout_ms = 4000;
+    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
 
     return sock;
 }
