@@ -5,6 +5,7 @@
  * @date    2026
  *
  * Enterprise OTA implementation for the STM32U585AI (2MB dual-bank flash).
+ * (Note: Comment added to trigger CI firmware build job)
  *
  * Flash Layout (STM32U585AI):
  *   Bank 1: 0x0800_0000 – 0x080F_FFFF  (1 MB, 128 pages × 8 KB)
