@@ -1,6 +1,7 @@
 "use client";
 
 import mqtt from "mqtt";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 interface BoardTelemetry {
@@ -13,24 +14,12 @@ interface BoardTelemetry {
 	lastImageSize: number | null;
 	lastLatencyMs: number | null;
 	isOnline: boolean;
-	logs: { time: string; level: string; text: string }[];
-}
-
-interface ImageCapture {
-	taskId: number;
-	filename: string;
-	url: string;
-	timestamp: number;
-	isNew: boolean;
 }
 
 export default function DashboardPage() {
 	const [boards, setBoards] = useState<Record<string, BoardTelemetry>>({});
-	const [images, setImages] = useState<ImageCapture[]>([]);
 	const [globalStatus, setGlobalStatus] = useState("connecting");
 	const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
-
-	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
 
 	const mqttUrl =
 		typeof window !== "undefined"
@@ -39,24 +28,6 @@ export default function DashboardPage() {
 			: "ws://localhost:9001";
 
 	useEffect(() => {
-		// Fetch initial images
-		fetch(`${apiBase}/api/images`)
-			.then((res) => res.json())
-			.then((data) => {
-				if (data.images) {
-					setImages(
-						data.images.map((img: any) => ({
-							taskId: img.task_id,
-							filename: img.filename,
-							url: `${apiBase}${img.url}`,
-							timestamp: img.timestamp,
-							isNew: false,
-						})),
-					);
-				}
-			})
-			.catch(console.error);
-
 		// Setup MQTT
 		const client = mqtt.connect(mqttUrl, { reconnectPeriod: 3000 });
 		mqttClientRef.current = client;
@@ -65,60 +36,13 @@ export default function DashboardPage() {
 			setGlobalStatus("connected");
 			client.subscribe("device/+/status", { qos: 0 }); // Subscribe to any device
 			client.subscribe("device/stm32/status", { qos: 0 }); // Fallback for legacy topic
-			client.subscribe("dashboard/images/new", { qos: 0 });
-			client.subscribe("dashboard/logs", { qos: 0 });
 		});
 
 		client.on("message", (topic, payload) => {
 			try {
 				const data = JSON.parse(payload.toString());
 
-				if (topic === "dashboard/logs") {
-					const boardId = data.board_id || "stm32-iot-cam-01";
-					setBoards((prev) => {
-						if (!prev[boardId]) return prev;
-						const logTime = data.timestamp
-							? new Date(data.timestamp * 1000).toLocaleTimeString()
-							: new Date().toLocaleTimeString();
-						const logEntry = {
-							time: logTime,
-							level: data.level || "log",
-							text: data.text,
-						};
-						return {
-							...prev,
-							[boardId]: {
-								...prev[boardId],
-								logs: [logEntry, ...prev[boardId].logs].slice(0, 500),
-							},
-						};
-					});
-					return;
-				}
-
-				if (topic === "dashboard/images/new") {
-					const newImg: ImageCapture = {
-						taskId: data.task_id,
-						filename: data.filename,
-						url: `${apiBase}${data.url}`,
-						timestamp: data.timestamp || Date.now() / 1000,
-						isNew: true,
-					};
-					setImages((prev) => [newImg, ...prev]);
-
-					// Remove popup animation class after 3s
-					setTimeout(() => {
-						setImages((prev) =>
-							prev.map((i) =>
-								i.taskId === newImg.taskId ? { ...i, isNew: false } : i,
-							),
-						);
-					}, 3000);
-					return;
-				}
-
 				// Handle board status
-				// Extract board id from topic or payload, fallback to default
 				let boardId = "stm32-iot-cam-01";
 				if (topic.startsWith("device/")) {
 					const parts = topic.split("/");
@@ -141,7 +65,6 @@ export default function DashboardPage() {
 						lastImageSize: null,
 						lastLatencyMs: null,
 						isOnline: true,
-						logs: [],
 					};
 
 					const update = { ...curr, isOnline: true, lastSeen: Date.now() };
@@ -149,12 +72,6 @@ export default function DashboardPage() {
 					if (data.firmware) update.firmware = data.firmware;
 					if (data.status) {
 						update.status = data.status;
-						const logEntry = {
-							time: new Date().toLocaleTimeString(),
-							level: "info",
-							text: `Status transition: ${data.status}`,
-						};
-						update.logs = [logEntry, ...update.logs].slice(0, 500);
 					}
 					if (data.status === "captured" || data.status === "uploaded") {
 						update.captures += 1;
@@ -197,45 +114,7 @@ export default function DashboardPage() {
 			client.end();
 			clearInterval(interval);
 		};
-	}, [apiBase, mqttUrl]);
-
-	const pingBoard = async (boardId: string) => {
-		try {
-			// Send ping using standard fetch
-			await fetch(`${apiBase}/api/ping`, { method: "POST" });
-
-			setBoards((prev) => {
-				if (!prev[boardId]) return prev;
-				const logEntry = {
-					time: new Date().toLocaleTimeString(),
-					level: "info",
-					text: `📡 Ping command sent to fleet`,
-				};
-				return {
-					...prev,
-					[boardId]: {
-						...prev[boardId],
-						logs: [logEntry, ...prev[boardId].logs].slice(0, 500),
-					},
-				};
-			});
-		} catch (err) {
-			console.error("Ping failed:", err);
-		}
-	};
-
-	const clearLogs = (boardId: string) => {
-		setBoards((prev) => {
-			if (!prev[boardId]) return prev;
-			return {
-				...prev,
-				[boardId]: {
-					...prev[boardId],
-					logs: [],
-				},
-			};
-		});
-	};
+	}, [mqttUrl]);
 
 	const getStatusClass = (status: string) => {
 		if (status.includes("error") || status.includes("failed"))
@@ -272,7 +151,7 @@ export default function DashboardPage() {
 				<div className="boards-grid">
 					{Object.values(boards).length === 0 ? (
 						<div
-							className="glass-panel"
+							className="glass-panel hoverable-card"
 							style={{
 								gridColumn: "1 / -1",
 								textAlign: "center",
@@ -283,7 +162,10 @@ export default function DashboardPage() {
 						</div>
 					) : (
 						Object.values(boards).map((board) => (
-							<div key={board.id} className="board-card glass-panel">
+							<div
+								key={board.id}
+								className="board-card glass-panel hoverable-card"
+							>
 								<div className="board-header">
 									<div className="board-name-group">
 										<div className="board-icon">⚡</div>
@@ -349,67 +231,12 @@ export default function DashboardPage() {
 								</div>
 
 								<div className="board-actions">
-									<button
-										className="btn btn-primary"
-										onClick={() => pingBoard(board.id)}
-										disabled={!board.isOnline}
+									<Link
+										href={`/board/${board.id}`}
+										className="btn btn-primary btn-explore"
 									>
-										📡 Ping Node
-									</button>
-								</div>
-
-								<div className="terminal-window">
-									<div className="terminal-header">
-										<span>Board Console</span>
-										<button
-											className="btn-text"
-											onClick={() => clearLogs(board.id)}
-										>
-											Clear
-										</button>
-									</div>
-									{board.logs.length === 0 ? (
-										<div className="terminal-empty">
-											No telemetry received yet...
-										</div>
-									) : (
-										board.logs.map((log, idx) => (
-											<div key={idx} className={`log-line log-${log.level}`}>
-												<span className="log-time">[{log.time}]</span>
-												{log.text}
-											</div>
-										))
-									)}
-								</div>
-							</div>
-						))
-					)}
-				</div>
-			</section>
-
-			<section className="images-section">
-				<h2>Latest Global Captures</h2>
-				<div className="gallery-grid">
-					{images.length === 0 ? (
-						<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
-							No captures received yet.
-						</div>
-					) : (
-						images.map((img) => (
-							<div key={img.taskId} className="image-card">
-								{img.isNew && <div className="badge-new">NEW</div>}
-								<div className="image-wrapper">
-									<img
-										src={img.url}
-										alt={`Capture ${img.taskId}`}
-										loading="lazy"
-									/>
-								</div>
-								<div className="image-meta">
-									<span>Task #{img.taskId}</span>
-									<span className="image-time">
-										{new Date(img.timestamp * 1000).toLocaleTimeString()}
-									</span>
+										Manage Board Node <span className="arrow">→</span>
+									</Link>
 								</div>
 							</div>
 						))
