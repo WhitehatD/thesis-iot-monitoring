@@ -105,26 +105,28 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
     import numpy as np
     from PIL import Image
 
-    content = await file.read()
+    try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Failed to read upload payload")
 
     if len(content) == 0:
         raise HTTPException(status_code=422, detail="Empty upload — no image data received")
 
-    # Save image to disk
     date_dir = datetime.now().strftime("%Y-%m-%d")
     save_dir = os.path.join(settings.upload_dir, date_dir)
-    os.makedirs(save_dir, exist_ok=True)
-
     filename = f"task_{task_id}_{int(time.time())}.jpg"
     filepath = os.path.join(save_dir, filename)
 
-    # Detect raw RGB565 by expected frame sizes
     RGB565_SIZES = {
         640 * 480 * 2: (640, 480),   # VGA
         320 * 240 * 2: (320, 240),   # QVGA
     }
 
     try:
+        # Save image to disk
+        os.makedirs(save_dir, exist_ok=True)
+
         if len(content) in RGB565_SIZES:
             width, height = RGB565_SIZES[len(content)]
 
@@ -166,9 +168,12 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
         "url": f"/api/images/{date_dir}/{filename}",
         "timestamp": int(time.time()),
     }
-    await mqtt_client.publish(
-        settings.mqtt_topic_dashboard_images, json.dumps(image_meta)
-    )
+    try:
+        await mqtt_client.publish(
+            settings.mqtt_topic_dashboard_images, json.dumps(image_meta)
+        )
+    except Exception as e:
+        print(f"[WARN] Failed to publish MQTT message for dashboard: {e}")
 
     return UploadResponse(
         task_id=task_id,
