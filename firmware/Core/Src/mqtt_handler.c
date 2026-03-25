@@ -327,6 +327,23 @@ int MQTT_PublishStatus(const char *status_json)
     return 0;
 }
 
+int MQTT_PublishLog(const char *log_text)
+{
+    if (!s_connected) return -1;
+
+    int pkt_len = _build_publish_packet(
+        s_tx_buf, MQTT_TX_BUFFER_SIZE,
+        MQTT_TOPIC_LOGS, log_text);
+
+    if (pkt_len < 0 || _tcp_send(s_tx_buf, pkt_len) < pkt_len)
+    {
+        /* DO NOT call LOG_ERROR here to prevent recursive logging loops */
+        return -1;
+    }
+
+    return 0;
+}
+
 void MQTT_ProcessLoop(void)
 {
     if (!s_connected) return;

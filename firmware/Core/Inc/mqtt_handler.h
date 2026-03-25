@@ -17,6 +17,7 @@
 /* MQTT Topics */
 #define MQTT_TOPIC_COMMANDS     "device/stm32/commands"
 #define MQTT_TOPIC_STATUS       "device/stm32/status"
+#define MQTT_TOPIC_LOGS         "device/stm32/logs"
 
 /* MQTT connection config */
 typedef struct {
@@ -48,6 +49,13 @@ int MQTT_SubscribeCommands(MQTTScheduleCallback_t callback);
  * @retval 0 on success.
  */
 int MQTT_PublishStatus(const char *status_json);
+
+/**
+ * @brief  Publish a raw formatted log message over MQTT.
+ * @param  log_text: Raw log message.
+ * @retval 0 on success.
+ */
+int MQTT_PublishLog(const char *log_text);
 
 /**
  * @brief  Process pending MQTT messages (call from FreeRTOS task loop).

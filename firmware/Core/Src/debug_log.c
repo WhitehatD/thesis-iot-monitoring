@@ -16,6 +16,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include "mqtt_handler.h"
 
 /* ── UART Handle ──────────────────────────────────────── */
 
@@ -87,9 +88,19 @@ void Debug_Print(const char *level, const char *tag, const char *fmt, ...)
         s_log_buffer[offset++] = '\r';
         s_log_buffer[offset++] = '\n';
     }
+    s_log_buffer[offset] = '\0';
 
     /* Blocking transmit — acceptable for debug logging */
     HAL_UART_Transmit(&huart_debug, (uint8_t *)s_log_buffer, offset, 100);
+
+    /* Tunnel to VPS via MQTT (Enterprise feature) */
+    static volatile uint8_t s_in_log = 0;
+    if (!s_in_log && MQTT_IsConnected())
+    {
+        s_in_log = 1;
+        MQTT_PublishLog(s_log_buffer);
+        s_in_log = 0;
+    }
 }
 
 /* ── printf/puts redirect (optional, for HAL error paths) ─ */

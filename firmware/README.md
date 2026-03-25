@@ -114,20 +114,22 @@ Edit `Core/Inc/firmware_config.h` before building:
 | HTTP    | `POST /api/upload`           | Board → Server | High-bandwidth image/binary payload upload   |
 | HTTP    | `GET /api/firmware/version`  | Board → Server | OTA firmware version check                   |
 | HTTP    | `GET /api/firmware/download` | Board → Server | OTA `.bin` stream download                   |
+| MQTT    | `device/stm32/logs`          | Board → Server | Live UART log tunneling for dash/observability|
 
 ## Supported MQTT Commands
 
 The board acts dynamically based on JSON payloads sent to `device/stm32/commands`:
 
 - **Schedule (`"type":"schedule"` or legacy array)**: Parses a list of tasks and sleeps/wakes to execute them autonomously.
-- **Capture Now (`"type":"capture_now"`)**: Instantly captures an image.
-- **Capture Sequence (`"type":"capture_sequence"`, `"delays_ms":[...]`)**: Captures multiple images at exact sub-second millisecond offsets.
+- **Capture Now (`"type":"capture_now"`, optional `"task_id"`)**: Instantly captures an image and tracks it via the server-provided ID.
+- **Capture Sequence (`"type":"capture_sequence"`, `"delays_ms":[...]`, optional `"task_id"`)**: Captures multiple images at exact sub-second millisecond offsets.
 - **Sleep Toggle (`"type":"sleep_mode"`, `"enabled":true`)**: Modifies behavioral routing to STOP2 low-power mode between tasks.
 - **Firmware Update (`"type":"firmware_update"`)**: Initiates the Dual-Bank OTA sequence.
 
-## Status Telemetry (MQTT)
+## Status Telemetry & Log Tunneling (MQTT)
 
-During any image capture cycle (manual or scheduled), the board broadcasts its exact hardware state to `device/stm32/status` to feed the dashboard's real-time stepper:
+During any image capture cycle (manual or scheduled), the board broadcasts its exact hardware state to `device/stm32/status` to feed the dashboard's real-time stepper.
+Additionally, UART debug logs are natively tunneled to `device/stm32/logs` in real-time, removing the dependency on physical serial monitors.
 
 1. `{"status":"job_received"}` — Command intercepted / Alarm triggered.
 2. `{"status":"camera_init"}` — Sensor power-up and warm-up sequence (emitted if cold).

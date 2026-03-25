@@ -275,6 +275,15 @@ static void on_command_received(const char *json_str, uint32_t length)
 
     cJSON *type_obj = cJSON_GetObjectItem(root, "type");
     const char *type_str = (type_obj && cJSON_IsString(type_obj)) ? type_obj->valuestring : NULL;
+    
+    /* ── Fetch explicit task_id from server ── */
+    cJSON *task_id_obj = cJSON_GetObjectItem(root, "task_id");
+    uint32_t server_task_id = 0;
+    int has_server_task_id = 0;
+    if (task_id_obj && cJSON_IsNumber(task_id_obj)) {
+        server_task_id = (uint32_t)task_id_obj->valuedouble;
+        has_server_task_id = 1;
+    }
 
     /* ── Dispatch by command type ───────────────────── */
 
@@ -293,7 +302,11 @@ static void on_command_received(const char *json_str, uint32_t length)
 
         /* ── Instant capture ── execute in main loop, no scheduler ── */
         s_capture_now_requested = 1;
-        s_capture_now_task_id++;
+        if (has_server_task_id) {
+            s_capture_now_task_id = server_task_id;
+        } else {
+            s_capture_now_task_id++;
+        }
         LOG_INFO(TAG_MQTT, ">> CAPTURE_NOW command (task_id=%lu)",
                  (unsigned long)s_capture_now_task_id);
     }
@@ -324,7 +337,11 @@ static void on_command_received(const char *json_str, uint32_t length)
         }
 
         s_sequence_count = (uint32_t)count;
-        s_sequence_base_task_id += (uint32_t)count;
+        if (has_server_task_id) {
+            s_sequence_base_task_id = server_task_id;
+        } else {
+            s_sequence_base_task_id += (uint32_t)count;
+        }
         s_sequence_requested = 1;
 
         LOG_INFO(TAG_MQTT, ">> CAPTURE_SEQUENCE command (%d captures)", count);
