@@ -48,11 +48,11 @@ Built for reliability, the system features a complete CI/CD-driven Over-The-Air 
 ## 🔒 Enterprise Security & Reliability Hardening
 
 In March 2026, the firmware underwent a comprehensive production-grade audit:
-* **Decoupled OTA Pipeline**: Resolved critical SPI bus contention and IWDG timeouts by separating the rapid semantic version check from the heavy binary download. The download-to-RAM phase is now safely deferred to the cooperative main loop.
+* **Decoupled & Hardened OTA Pipeline**: Resolved critical SPI bus contention and IWDG timeouts by separating version checks from binary downloads. Finalized in March 2026 with **32KB stack expansion**, systematic per-chunk watchdog refreshing, and robust buffer validation to eliminate memory corruption during long transfers.
 * **Shared Socket Abstraction**: Abstracted and unified all TCP socket lifecycle management (`WiFi_TcpConnect`) across the MQTT and HTTP drivers, eliminating redundant magic numbers and silent network failure loops.
 * **Tactile Hardware Feedback**: Implemented a responsive `"ping"` command bridging the Next.js visual dashboard directly to the edge hardware (3× Red / 3× Green strobe).
 * **Strict Compiler Enforcement**: Upgraded the `Makefile` with a dedicated `-Werror` release target. Eradicated all implicit conversions and unreferenced variables.
-* **Log-Level Compilation**: Introduced `#define SYSTEM_LOG_LEVEL` filtering, stripping out heavy UART format strings locally while retaining critical error traces. This reliably squeezed the firmware footprint down to **8.3%** of the available 1MB flash bank.
+* **Log-Level Compilation & Telemetry**: Introduced `#define SYSTEM_LOG_LEVEL` filtering and **Stack High-Water Mark auditing**, stripping out heavy UART format strings locally while retaining critical error traces and memory safety observability. This reliably squeezed the firmware footprint down to **9.2%** of the available 1MB flash bank.
 * **Distributed Enterprise Dashboard (Next.js + TS)**: Re-architected the monolithic JavaScript UI into a robust TypeScript Next.js 16 application. Features a "Mechanical Luxury" YC-grade aesthetic with independent, real-time telemetry panels for tracking fleet-wide distributed STM32 nodes concurrently.
 * **Closed-Loop Hardware Feedback**: Hardened the visual "ping" sequence. The firmware now emits a conclusive `{"status":"ping_complete"}` MQTT acknowledgment back to the fleet dashboard after executing its hardware strobe sequence.
 * **Zero-Trust CORS Policies**: Audited the FastAPI cloud backend. Eliminated insecure wildcard origins combined with credential inclusions to strictly authenticate local UI traffic and eliminate implicit frontend `fetch` failures.
@@ -186,8 +186,8 @@ The monorepo contains four primary components, strictly separated by concern:
 Bare-metal C code compiled via `arm-none-eabi-gcc`.
 
 * **`main.c`**: The unified non-blocking event loop. Handles RTC wakeups, MQTT command dispatch, hardware watchdog refreshing, and graceful standby.
-* **`ota_update.c`**: Dual-bank firmware flashing mechanism. Implements secure chunk downloading into RAM, CRC32 verification, git-hash parsing, and atomic memory swapping.
-* **`camera.c`**: Interacts with the OV5640 sensor. Initializes persistent configurations to enable warm sub-second capturing.
+* **`ota_update.c`**: Dual-bank firmware flashing mechanism. Implements secure chunk downloading into RAM, CRC32 verification, git-hash parsing, and atomic memory swapping. Hardened with 32KB stack safety and per-chunk watchdog pet sequences.
+* **`camera.c`**: Interacts with the OV5640 sensor. Initializes persistent configurations to enable warm sub-second capturing. Now with explicit shutdown verification before OTA staging.
 * **`wifi.c` / `mqtt_handler.c`**: High-durability networking stack. NTP time fetching is aggressively optimized via 50ms SPI polling loops (shaving 1.9s off boot time), while MQTT handles automatic silent reconnection sequences.
 
 ### 2. `server/` (The Cloud Engine)
