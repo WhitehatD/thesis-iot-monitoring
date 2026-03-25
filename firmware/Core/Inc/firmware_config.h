@@ -169,6 +169,7 @@
 #define OTA_MAX_FW_SIZE             (896 * 1024)   /* 896KB max — leave room for vector table */
 #define OTA_DOWNLOAD_MAX_RETRIES    5              /* Full download attempts before giving up */
 #define OTA_DOWNLOAD_RETRY_BASE_MS  3000           /* Exponential backoff base: 3s → 6s → 12s → 24s */
+#define OTA_DOWNLOAD_RETRY_MAX_MS   60000          /* Maximum backoff delay: 60s */
 #define OTA_PROGRESS_INTERVAL_BYTES (32 * 1024)    /* MQTT progress update every 32KB */
 #define OTA_VERSION_PATH            "/api/firmware/version"
 #define OTA_DOWNLOAD_PATH           "/api/firmware/download"
