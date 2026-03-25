@@ -5,36 +5,134 @@ Embedded firmware for the **B-U585I-IOT02A Discovery Kit** that implements the e
 ## Architecture
 
 ```text
-┌───────────────────────────────────────────────────┐
-│                  main.c (Orchestrator)              │
-│                                                     │
-│  BOOT → Wi-Fi → MQTT → Poll Schedule → Execute     │
-│                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │ wifi.c   │  │ camera.c │  │ mqtt_handler.c   │  │
-│  │ EMW3080  │  │ OV5640   │  │ MQTT 3.1.1       │  │
-│  │ SPI/TCP  │  │ DCMI/DMA │  │ over TCP socket  │  │
-│  └──────────┘  └──────────┘  └──────────────────┘  │
-│                                                     │
-│  ┌────────────────────┐  ┌───────────────────────┐  │
-│  │ scheduler.c        │  │ debug_log.c           │  │
-│  │ cJSON + RTC Alarm  │  │ USART1 (ST-Link VCP)  │  │
-│  │ STOP2 low-power    │  │ Timestamped logging   │  │
-│  └────────────────────┘  └───────────────────────┘  │
-└───────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                      main.c (Orchestrator)                    │
+│                                                                │
+│  BOOT → Wi-Fi → MQTT → Poll Schedule → Execute                │
+│                                                                │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌──────────┐  │
+│  │ wifi.c   │  │ camera.c │  │ mqtt_handler  │  │ ota_     │  │
+│  │ EMW3080  │  │ OV5640   │  │ MQTT 3.1.1   │  │ update.c │  │
+│  │ SPI/TCP  │  │ DCMI/DMA │  │ over TCP     │  │ Dual-Bank│  │
+│  └──────────┘  └──────────┘  └──────────────┘  └──────────┘  │
+│                                                                │
+│  ┌────────────────┐  ┌──────────────┐  ┌──────────────────┐   │
+│  │ scheduler.c    │  │ captive_     │  │ wifi_            │   │
+│  │ cJSON + RTC    │  │ portal.c     │  │ credentials.c    │   │
+│  │ STOP2 sleep    │  │ SoftAP HTTP  │  │ Flash storage    │   │
+│  └────────────────┘  └──────────────┘  └──────────────────┘   │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-## Firmware Lifecycle
+---
 
-1. **Boot** — HAL init, 160 MHz clock, ICACHE, UART debug logging
-2. **Connect** — Wi-Fi (WPA2) → MQTT broker (subscribe to `device/stm32/commands`)
-3. **Wait** — Poll MQTT for AI-generated schedule (with keepalive pings)
-4. **Execute** — For each scheduled task:
-   - Set RTC Alarm → Enter STOP2 (ultra-low power, ~2 μA)
-   - Wake → Init camera → Capture JPEG frame
-   - Reconnect Wi-Fi → HTTP POST image to server
-   - Publish status via MQTT → Next task
-5. **Complete** — Enter Standby mode until next power cycle
+## Connecting to Wi-Fi
+
+The firmware uses a **3-tier credential chain** to establish Wi-Fi connectivity on every boot. Each tier is attempted in order — the first successful connection wins.
+
+### Tier 1: Flash-Stored Credentials (Persistent)
+
+If Wi-Fi credentials have been saved to internal flash (via captive portal or MQTT `set_wifi` command), they are loaded first. These survive power cycles, OTA updates, and hard resets.
+
+```text
+[  255ms] [INFO] [BOOT] Found stored WiFi credentials: SSID='MyNetwork'
+[  270ms] [INFO] [WIFI] Connecting to 'MyNetwork'...
+[  5410ms] [INFO] [WIFI] Connected (IP: 192.168.1.42)
+```
+
+### Tier 2: Compile-Time Credentials (Fallback)
+
+If no flash credentials exist or Tier 1 fails, the firmware falls back to credentials injected at build time via `-D` flags in the Makefile:
+
+```bash
+make -j8 CFLAGS+='-DWIFI_SSID="\"MyNetwork\"" -DWIFI_PASSWORD="\"MyPassword\""'
+```
+
+Or edit `Core/Inc/firmware_config.h` directly (not recommended for production):
+
+```c
+#define WIFI_SSID       "YourNetwork"
+#define WIFI_PASSWORD   "YourPassword"
+```
+
+### Tier 3: Captive Portal (Rescue Mode)
+
+If all connection attempts fail, the board **automatically launches a Captive Portal** — a local Wi-Fi hotspot with an embedded configuration page.
+
+#### How to Connect via Captive Portal
+
+1. **The board creates a WiFi hotspot** named `IoT-Monitor-Setup`
+2. **Connect your phone/laptop** to the `IoT-Monitor-Setup` network
+3. **A configuration page opens automatically** (captive portal redirect)
+   - If it doesn't auto-open, navigate to `http://192.168.10.1` manually
+4. **Enter your WiFi SSID and password** on the configuration page
+5. **The board saves credentials to flash**, reboots, and connects to your network
+
+```text
+[BOOT] All WiFi connection attempts failed — starting captive portal
+[PORT] SoftAP started: SSID='IoT-Monitor-Setup', IP=192.168.10.1
+[PORT] HTTP server listening on port 80
+[PORT] Waiting for WiFi configuration...
+```
+
+> **Note:** Credentials persist across reboots and OTA updates. To reconfigure WiFi remotely, use the `set_wifi` or `erase_wifi` MQTT commands (see below).
+
+### Runtime WiFi Reconfiguration (MQTT)
+
+Once the board is online, WiFi credentials can be changed remotely without physical access:
+
+```json
+// Save new credentials + reconnect
+{"type": "set_wifi", "ssid": "NewNetwork", "password": "NewPassword"}
+
+// Erase stored credentials + reboot into captive portal
+{"type": "erase_wifi"}
+
+// Force-start captive portal (doesn't erase stored creds)
+{"type": "start_portal"}
+```
+
+---
+
+## Build & Flash
+
+### Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| `arm-none-eabi-gcc` | 10.3+ | ARM Cortex-M33 cross-compiler |
+| STM32CubeProgrammer | 2.14+ | Flash programming via ST-Link |
+| B-U585I-IOT02A BSP | Latest | Board support package (HAL + BSP drivers) |
+| MB1379 Camera Module | — | OV5640 sensor (plugs into DCMI connector) |
+
+### Build
+
+```bash
+cd firmware
+make -j8
+```
+
+Output: `build/thesis-iot-firmware.bin` (~110 KB, <11% of 1MB bank)
+
+### Flash (First Time)
+
+```bash
+# Via STM32CubeProgrammer CLI (ST-Link SWD)
+STM32_Programmer_CLI -c port=SWD -w build/thesis-iot-firmware.bin 0x08000000 -v -rst
+```
+
+After the first flash, all subsequent updates are delivered **over-the-air** via the CI/CD pipeline — no physical connection needed.
+
+### Monitor Serial Output
+
+```bash
+# Via the included monitor script (forwards UART logs to MQTT dashboard)
+python monitor.py COM7
+
+# Or any serial terminal at 115200 baud on the ST-Link VCP port
+```
+
+---
 
 ## File Structure
 
@@ -42,168 +140,121 @@ Embedded firmware for the **B-U585I-IOT02A Discovery Kit** that implements the e
 firmware/
 ├── Core/
 │   ├── Inc/
-│   │   ├── firmware_config.h    ← Central configuration (Wi-Fi, server, etc.)
-│   │   ├── debug_log.h          ← UART logging macros
-│   │   ├── wifi.h               ← Wi-Fi connection + HTTP client API
-│   │   ├── camera.h             ← Camera capture API
-│   │   ├── mqtt_handler.h       ← MQTT client API
-│   │   ├── scheduler.h          ← Schedule parser + RTC alarm API
-│   │   ├── cJSON.h              ← JSON parser (MIT, Dave Gamble)
-│   │   ├── main.h               ← HAL/BSP includes + shared handles
-│   │   └── stm32u5xx_hal_conf.h ← HAL module selection
+│   │   ├── firmware_config.h      ← Central configuration (Wi-Fi, server, OTA, watchdog)
+│   │   ├── ota_update.h           ← OTA dual-bank flash update API
+│   │   ├── wifi.h                 ← Wi-Fi connection + HTTP client API
+│   │   ├── mqtt_handler.h         ← MQTT 3.1.1 client API
+│   │   ├── app_camera.h           ← Camera capture API (warm/cold)
+│   │   ├── scheduler.h            ← Schedule parser + RTC alarm API
+│   │   ├── wifi_credentials.h     ← Flash-persistent WiFi credential storage
+│   │   ├── captive_portal.h       ← SoftAP + embedded HTTP config page
+│   │   └── debug_log.h            ← UART logging macros
 │   └── Src/
-│       ├── main.c               ← Application orchestrator
-│       ├── wifi.c               ← EMW3080 BSP driver + TCP HTTP POST
-│       ├── camera.c             ← OV5640 DCMI capture + JPEG detection
-│       ├── mqtt_handler.c       ← Bare-metal MQTT 3.1.1 client
-│       ├── scheduler.c          ← cJSON schedule parser + RTC + STOP2
-│       ├── debug_log.c          ← USART1 init + printf redirect
-│       ├── cJSON.c              ← JSON parser implementation
-│       ├── stm32u5xx_it.c       ← ISR handlers (RTC, DCMI, DMA)
-│       └── system_stm32u5xx.c   ← System clock startup (ST-generated)
-└── STM32CubeIDE/
-    ├── .cproject / .project     ← IDE project files
-    ├── Drivers/                 ← BSP + HAL + CMSIS (must be populated)
-    └── STM32U585AIIX_FLASH.ld   ← Linker script
+│       ├── main.c                 ← Application orchestrator (2000+ lines)
+│       ├── ota_update.c           ← Dual-bank OTA: download → RAM → flash → swap
+│       ├── wifi.c                 ← EMW3080 driver + TCP HTTP POST/GET
+│       ├── mqtt_handler.c         ← Bare-metal MQTT 3.1.1 client
+│       ├── wifi_credentials.c     ← Flash credential storage (CRC32-validated)
+│       ├── captive_portal.c       ← SoftAP captive portal for WiFi provisioning
+│       ├── app_camera.c           ← OV5640 DCMI capture (warm + cold paths)
+│       ├── scheduler.c            ← cJSON schedule parser + RTC + STOP2
+│       └── debug_log.c            ← USART1 init + printf redirect
+├── Makefile                       ← ARM GCC build system
+├── monitor.py                     ← Serial ↔ MQTT log bridge
+└── test_ota.py                    ← OTA trigger test script
 ```
 
-## Prerequisites
-
-1. **STM32CubeIDE** (v1.14+) with STM32U5 support
-2. **B-U585I-IOT02A BSP pack** — install via CubeMX Package Manager
-3. **Camera module** — MB1379 (OV5640) plugged into DCMI connector
-
-## Configuration
-
-Edit `Core/Inc/firmware_config.h` before building:
-
-```c
-#define WIFI_SSID       "YourNetwork"
-#define WIFI_PASSWORD   "YourPassword"
-#define SERVER_HOST     "192.168.1.100"  // FastAPI server IP
-#define MQTT_BROKER_HOST SERVER_HOST      // Mosquitto broker IP
-```
-
-## Build & Flash
-
-1. Open `STM32CubeIDE/` as an existing project in STM32CubeIDE
-2. **Build** → `Project > Build All` (Ctrl+B)
-3. **Flash** → `Run > Debug As > STM32 C/C++ Application`
-4. **Monitor** → Open serial terminal on ST-Link VCP (115200 baud)
-
-## UART Debug Output
-
-```text
-[      0ms] [INFO] [BOOT] ========================================
-[      0ms] [INFO] [BOOT]   IoT Visual Monitoring Firmware v0.1
-[      1ms] [INFO] [BOOT]   Board: B-U585I-IOT02A
-[      1ms] [INFO] [BOOT] ========================================
-[    125ms] [INFO] [WIFI] Connecting to 'MyNetwork'...
-[   2340ms] [INFO] [WIFI] Connected (IP: 192.168.1.42)
-[   2890ms] [INFO] [MQTT] Connected to broker OK
-[   3100ms] [INFO] [MQTT] Subscribed to 'device/stm32/commands'
-[   3200ms] [INFO] [BOOT] Boot complete — waiting for schedule...
-```
+---
 
 ## Communication Protocols
 
-| Channel | Protocol                     | Direction      | Purpose                                      |
-|---------|------------------------------|----------------|----------------------------------------------|
-| MQTT    | `device/stm32/commands`      | Server → Board | General command & schedule delivery          |
-| MQTT    | `device/stm32/status`        | Board → Server | Status updates and telemetry                 |
-| HTTP    | `POST /api/upload`           | Board → Server | High-bandwidth image/binary payload upload   |
-| HTTP    | `GET /api/firmware/version`  | Board → Server | OTA firmware version check                   |
-| HTTP    | `GET /api/firmware/download` | Board → Server | OTA `.bin` stream download                   |
-| MQTT    | `device/stm32/logs`          | Board → Server | Live UART log tunneling for dash/observability|
+| Channel | Protocol | Direction | Purpose |
+|---------|----------|-----------|---------|
+| MQTT | `device/stm32/commands` | Server → Board | Command & schedule delivery |
+| MQTT | `device/stm32/status` | Board → Server | Status updates, telemetry, OTA progress |
+| MQTT | `device/stm32/logs` | Board → Server | Live UART log tunneling |
+| HTTP | `POST /api/upload` | Board → Server | Image upload (16KB chunked) |
+| HTTP | `GET /api/firmware/version` | Board → Server | OTA version check |
+| HTTP | `GET /api/firmware/download` | Board → Server | OTA binary download |
+| HTTP | `GET /api/time` | Board → Server | RTC time synchronization |
 
-## Supported MQTT Commands
+---
 
-The board acts dynamically based on JSON payloads sent to `device/stm32/commands`:
+## MQTT Command Reference
 
-- **Schedule (`"type":"schedule"` or legacy array)**: Parses a list of tasks and sleeps/wakes to execute them autonomously.
-- **Capture Now (`"type":"capture_now"`, optional `"task_id"`)**: Instantly captures an image and tracks it via the server-provided ID.
-- **Capture Sequence (`"type":"capture_sequence"`, `"delays_ms":[...]`, optional `"task_id"`)**: Captures multiple images at exact sub-second millisecond offsets.
-- **Sleep Toggle (`"type":"sleep_mode"`, `"enabled":true`)**: Modifies behavioral routing to STOP2 low-power mode between tasks.
-- **Firmware Update (`"type":"firmware_update"`)**: Initiates the Dual-Bank OTA sequence.
+All commands are JSON payloads published to `device/stm32/commands`:
 
-## Status Telemetry & Log Tunneling (MQTT)
+| Command | Payload | Description |
+|---------|---------|-------------|
+| Capture Now | `{"type":"capture_now"}` | Instant image capture + upload |
+| Capture Sequence | `{"type":"capture_sequence","delays_ms":[0,2000,5000]}` | Multi-capture at ms offsets |
+| Schedule | `{"type":"schedule","tasks":[...]}` | AI-generated task schedule |
+| Delete Schedule | `{"type":"delete_schedule"}` | Clear active schedule |
+| Firmware Update | `{"type":"firmware_update"}` | Trigger OTA update check |
+| Sleep Mode | `{"type":"sleep_mode","enabled":true}` | Toggle STOP2 between tasks |
+| Ping | `{"type":"ping"}` | LED strobe + acknowledgment |
+| Set WiFi | `{"type":"set_wifi","ssid":"...","password":"..."}` | Remote WiFi reconfiguration |
+| Erase WiFi | `{"type":"erase_wifi"}` | Erase credentials + reboot to portal |
+| Start Portal | `{"type":"start_portal"}` | Force captive portal mode |
 
-During any image capture cycle (manual or scheduled), the board broadcasts its exact hardware state to `device/stm32/status` to feed the dashboard's real-time stepper.
-Additionally, UART debug logs are natively tunneled to `device/stm32/logs` in real-time, removing the dependency on physical serial monitors.
-
-1. `{"status":"job_received"}` — Command intercepted / Alarm triggered.
-2. `{"status":"camera_init"}` — Sensor power-up and warm-up sequence (emitted if cold).
-3. `{"status":"capturing"}` — DCMI/DMA engaged; exact moment the image is being taken.
-4. `{"status":"uploading"}` — HTTP POST transfer to the server initiated.
-5. `{"status":"captured"}` / `{"status":"uploaded"}` — Cycle complete successfully.
-
-## Hardware Triggers
-
-- **B3 USER Button (Blue)**: Pressing this hardware interrupt instantly triggers a warm image capture and HTTP upload.
-
-## LED Status Indicators
-
-The physical `LED_GREEN` and `LED_RED` embedded on the board provide distinct visual feedback for every system state.
-
-### General Operation
-
-- **Booting Initialization**: Both **GREEN** and **RED** are solidly ON during hardware config.
-- **Board Ready**: 3 crisp **GREEN** flashes signal a successful network/MQTT connection.
-- **Idle / Monitoring**: Slow 50ms pulse on **GREEN** every 3 seconds confirms the node is monitoring.
-- **MQTT Command Received**: Brief 50ms pulse of **GREEN + RED** confirms packet delivery.
-- **Image Capturing**: **RED** turns solid ON (functioning identically to a camera recording light).
-- **Image Uploading (HTTP POST)**: **RED** stays solid, while **GREEN** flickers rapidly to symbolize dense data transfer.
-- **Fatal Error**: **RED** continuously blinks rapidly across infinite blocking loops.
-
-### Over-The-Air (OTA) Updates
-
-- **Update Checking**: **RED** stays ON during the blocking HTTP version request.
-- **Update Received**: 5 rapid strobe flashes on both **RED + GREEN** before commencing flash ops.
-- **Flushing Update (Flash Erase)**: Both **GREEN** and **RED** stay solidly ON representing a volatile hardware erasure state.
-- **Diff Update (Downloading)**: **RED** is mostly solid and **GREEN** rapidly pulses as granular chunks are dynamically streamed and programmed into flash.
-- **OTA Success**: **GREEN** guarantees integrity and completes a solid 1.5-second sequence right before hardware restart.
+---
 
 ## Over-The-Air (OTA) Architecture
 
-This firmware deeply utilizes the STM32U585's 2MB dual-bank flash architecture to provide resilient, atomic firmware updates.
+Dual-bank flash architecture (STM32U585AI, 2×1MB) with automatic rollback:
 
-1. **Poll**: The board verifies the latest application version with the server API.
-2. **Download**: The new `.bin` is natively streamed bit-by-bit directly into the *inactive* flash bank.
-3. **Verify**: Native software CRC32 validation guarantees bit-level accuracy against the file.
-4. **Swap & Reboot**: The non-volatile `SWAP_BANK` option bytes are flipped atomically during reboot.
-5. **Rollback (Rescue)**: If the new firmware fails to boot properly across 3 consecutive times, the MCU trips its RTC backup registry threshold and intrinsically forces a secondary bootbank reversion swap to rescue the node.
+```text
+Bank 1: 0x08000000 – 0x080FFFFF  (active firmware)
+Bank 2: 0x08100000 – 0x081FFFFF  (inactive / OTA target)
+```
 
-## Security Hardening (March 2026)
+### OTA Pipeline
 
-Enterprise-grade security audit conducted against **OWASP IoT Top 10 2025**, **CERT C Secure Coding**, and **NIST SP 800-183**. The following 8 vulnerability categories were identified and patched:
+1. **Check** — `GET /api/firmware/version` (semantic version compare, anti-downgrade)
+2. **Quiesce** — Disconnect MQTT, stop camera DCMI DMA, drain SPI bus
+3. **Download** — Stream firmware binary to RAM via non-blocking HTTP GET
+4. **Verify** — Software CRC32 integrity check before touching flash
+5. **Flash** — Erase inactive bank → write from RAM (quadword-aligned)
+6. **Swap** — Flip `SWAP_BANK` option bit → system reset into new firmware
+7. **Validate** — Boot counter in TAMP backup register (auto-rollback after 3 failures)
 
-| ID | Finding | Severity | Standard | Files Changed |
-|----|---------|----------|----------|---------------|
-| SEC-01 | Hardcoded Wi-Fi/server credentials | Critical | OWASP I1 | `firmware_config.h` |
-| SEC-02 | Unauthenticated MQTT broker access | High | OWASP I3 | `firmware_config.h`, `mqtt_handler.c` |
-| SEC-03 | Integer overflow in MQTT remaining-length decoder | High | CERT C INT32-C | `mqtt_handler.c` |
-| SEC-04 | Missing range validation on RTC time fields | Medium | CERT C INT32-C | `wifi.c`, `scheduler.c` |
-| SEC-05 | Server error details leaked in logs | Medium | OWASP I7 | `wifi.c` |
-| SEC-06 | OTA firmware downgrade attack vector | High | OWASP I4 | `ota_update.c`, `ota_update.h` |
-| SEC-07 | No hardware watchdog (IWDG) for autonomous recovery | High | OWASP I9 | `main.c`, `firmware_config.h` |
-| SEC-08 | Unsafe `atoi()` usage (undefined on overflow) | Medium | CERT C MSC24-C | `wifi.c`, `ota_update.c` |
-| SEC-09 | Watchdog starvation during slow network OTA downloads | High | OWASP I9 | `ota_update.c` |
+### OTA Reliability Hardening
 
-### Key Remediations
+- **Non-blocking download**: `MSG_DONTWAIT` polling prevents MIPC layer from blocking CPU for full `SO_RCVTIMEO`, ensuring watchdog refresh every ~50ms
+- **Bus isolation**: MQTT disconnected + Camera DMA stopped before download to eliminate SPI contention
+- **Autonomous polling**: Background daemon checks server every 60s (`OTA_CHECK_INTERVAL_MS`) as fallback if MQTT push is missed
+- **Download-to-RAM**: Firmware buffered in SRAM before flash erase — prevents bricking on network failure mid-write
 
-- **Credentials** are now overridable via `-D` build flags (`WIFI_SSID`, `WIFI_PASSWORD`, `SERVER_HOST`, `MQTT_USERNAME`, `MQTT_PASSWORD`)
-- **MQTT CONNECT** packet supports optional username/password authentication per MQTT 3.1.1 spec
-- **OTA anti-downgrade** uses semantic version comparison — only strictly newer versions are accepted
-- **IWDG watchdog** with 16s timeout provides autonomous hardware reset on main-loop stalls
-- **`atoi()` → `strtol()`** with error checking prevents undefined behavior from malformed HTTP responses
-- **Time/date fields** are range-validated before writing to RTC registers
-- **Network yield watchdog wrapper** explicitly feeds `IWDG` during all blocking HTTP sockets to prevent OTA download resets.
+---
 
-## OTA Telemetry & Stability (March 2026)
+## LED Status Indicators
 
-To resolve persistent systemic resets during the high-latency OTA firmware download phase, the firmware has been equipped with definitive diagnostic primitives:
+| State | LED Pattern | Meaning |
+|-------|-------------|---------|
+| Booting | 🔴+🟢 Solid | Hardware initialization in progress |
+| Ready | 🟢 3× Flash | All subsystems initialized, MQTT connected |
+| Idle | 🟢 50ms pulse / 3s | Heartbeat — system alive and monitoring |
+| Command Received | 🔴+🟢 50ms flash | MQTT command acknowledged |
+| Capturing | 🔴 Solid | Camera sensor active (recording indicator) |
+| Uploading | 🔴 Solid + 🟢 Flicker | HTTP POST data transfer in progress |
+| OTA Detected | 🔴+🟢 5× Strobe | Firmware update starting |
+| OTA Flashing | 🔴+🟢 Solid | Flash erase + write (do not power off) |
+| OTA Success | 🟢 Solid 1.5s | Verified — rebooting into new firmware |
+| Fatal Error | 🔴 Rapid Blink | Unrecoverable error — will watchdog reset |
 
-- **Hardware Reset Telemetry**: The `RCC->CSR` register is explicitly read and cleared at boot. The exact reset cause (Independent Watchdog, Brown-Out Reset, Software Reset, or Pin Reset) is logged to the `BOOT` UART banner.
-- **Stack Headroom Validation**: The `_Min_Stack_Size` has been expanded to **32KB** to safely accommodate deep driver call stacks + cJSON parsing. The absolute MSP (Main Stack Pointer) is dynamically logged in `ota_update.c` across volatile SPI socket bursts.
-- **IPC Buffer Headroom**: The `_Min_Heap_Size` has been explicitly expanded to **32KB** to guarantee sufficient overhead for the EMW3080 Wi-Fi driver socket allocation.
-- **Bus Isolation**: Explicit validation of `Camera_DeInit()` ensures the DCMI DMA and SRAM3 memory banks are cleanly quiesced before the OTA process hijacks the SPI bus.
+---
+
+## Security Hardening (OWASP IoT 2025)
+
+| ID | Finding | Severity | Remediation |
+|----|---------|----------|-------------|
+| SEC-01 | Hardcoded credentials | Critical | Build-time `-D` injection + flash storage |
+| SEC-02 | Unauthenticated MQTT | High | Username/password flags in CONNECT packet |
+| SEC-03 | MQTT remaining-length overflow | High | 4-byte limit per MQTT 3.1.1 §2.2.3 |
+| SEC-04 | Unvalidated RTC time fields | Medium | Range checks before register write |
+| SEC-06 | OTA firmware downgrade | High | Semantic version comparison |
+| SEC-07 | No hardware watchdog | High | 16s IWDG on dedicated LSI clock |
+| SEC-09 | Watchdog starvation during OTA | High | Non-blocking `MSG_DONTWAIT` SPI polling |
+| SEC-10 | Heap fragmentation (cJSON) | Medium | Static 12KB bump allocator |
+| SEC-11 | Memory sanitization | Medium | `secure_erase()` for sensitive buffers |
+

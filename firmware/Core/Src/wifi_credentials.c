@@ -87,17 +87,20 @@ WiFiCredStatus_t WiFiCred_Load(WiFiCredentials_t *creds)
     const FlashCredBlock_t *flash_block =
         (const FlashCredBlock_t *)WIFI_CRED_FLASH_ADDR;
 
-    /* Check for blank flash (erased = 0xFF) */
-    if (flash_block->magic == 0xFFFFFFFF)
+    /* Check for blank/zeroed flash — both 0xFFFFFFFF (erased) and
+     * 0x00000000 (zeroed by OTA bank erase or fresh MCU) mean
+     * no credentials have been stored yet. */
+    if (flash_block->magic == 0xFFFFFFFF || flash_block->magic == 0x00000000)
     {
-        LOG_INFO(TAG_PORT, "No stored WiFi credentials (flash blank)");
+        LOG_INFO(TAG_PORT, "No stored WiFi credentials (flash %s)",
+                 flash_block->magic == 0xFFFFFFFF ? "erased" : "zeroed");
         return WIFI_CRED_EMPTY;
     }
 
     /* Validate magic */
     if (flash_block->magic != WIFI_CRED_MAGIC)
     {
-        LOG_WARN(TAG_PORT, "Flash magic mismatch: 0x%08lX (expected 0x%08lX)",
+        LOG_INFO(TAG_PORT, "Flash magic mismatch: 0x%08lX (expected 0x%08lX)",
                  (unsigned long)flash_block->magic,
                  (unsigned long)WIFI_CRED_MAGIC);
         return WIFI_CRED_CORRUPT;
