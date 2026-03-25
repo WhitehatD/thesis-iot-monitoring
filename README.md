@@ -48,7 +48,9 @@ Built for reliability, the system features a complete CI/CD-driven Over-The-Air 
 ## 🔒 Enterprise Security & Reliability Hardening
 
 In March 2026, the firmware underwent a comprehensive production-grade audit:
+
 * **Decoupled & Hardened OTA Pipeline**: Resolved critical SPI bus contention and IWDG timeouts by separating version checks from binary downloads. Finalized in March 2026 with **32KB stack expansion**, systematic per-chunk watchdog refreshing, and robust buffer validation to eliminate memory corruption during long transfers.
+* **MIPC Socket Driver Hardening**: Resolved a severe API misuse involving the EMW3080 Wi-Fi driver where timeout values were incorrectly passed as TCP socket flags. This eliminated a critical networking freeze and hardware watchdog reset during the initial chunk reception of OTA downloads.
 * **Shared Socket Abstraction**: Abstracted and unified all TCP socket lifecycle management (`WiFi_TcpConnect`) across the MQTT and HTTP drivers, eliminating redundant magic numbers and silent network failure loops.
 * **Tactile Hardware Feedback**: Implemented a responsive `"ping"` command bridging the Next.js visual dashboard directly to the edge hardware (3× Red / 3× Green strobe).
 * **Strict Compiler Enforcement**: Upgraded the `Makefile` with a dedicated `-Werror` release target. Eradicated all implicit conversions and unreferenced variables.
@@ -194,7 +196,7 @@ Bare-metal C code compiled via `arm-none-eabi-gcc`.
 
 Modern Python `FastAPI` application engineered for speed and resilience.
 
-* **API Layer**: Ingests image arrays, coordinates LLM generation, curates metadata, and handles OTA payload authorization. Error handling prevents malformed uploads. 
+* **API Layer**: Ingests image arrays, coordinates LLM generation, curates metadata, and handles OTA payload authorization. Error handling prevents malformed uploads.
 * **MQTT Layer**: Connects asynchronously to Mosquitto, pushing live commands (`capture_sequence`, `firmware_update`) to the fleet in real-time.
 * **AI Planner**: Converts abstract prompt strings to discrete JSON cron tasks using `gemini-3-flash` or local `vLLM`.
 
@@ -233,6 +235,7 @@ Ambiguous flashing LEDs are the bane of IoT engineering. This system employs a s
 ## 🛠️ Deployment & Setup (The "Zero-Friction" Way)
 
 ### 1. The Cloud Platform (VPS)
+
 We bypass complicated third-party runners in favor of an aggressively streamlined VPS Docker model.
 
 ```bash
@@ -263,6 +266,7 @@ make flash
 Edit `firmware/Core/Inc/firmware_config.h` to supply your respective `WIFI_SSID` and `SERVER_HOST`.
 
 ### 3. The CI/CD OTA Loop
+
 When modifying Edge Firmware (`main.c` / `camera.c`), you no longer physically touch the board.
 
 1. Commit and push your C code to GitHub `main` branch.
