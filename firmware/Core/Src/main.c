@@ -17,6 +17,8 @@
   *       5. Repeat until all tasks complete
   *   → Enter deep sleep / wait for next schedule
   ******************************************************************************
+  * @note    Added comment to trigger GitHub Actions CI/CD pipeline
+  ******************************************************************************
   */
 
 /* Includes ------------------------------------------------------------------*/
