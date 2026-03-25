@@ -1631,8 +1631,14 @@ static void _do_ota_update(void)
      * Solution: Disconnect MQTT → drain SPI queue → download in isolation
      * → reconnect MQTT after flashing.
      * ═════════════════════════════════════════════════════════════════════ */
-    LOG_INFO(TAG_OTA, "Quiescing MQTT to isolate SPI bus for download...");
+    LOG_INFO(TAG_OTA, "Quiescing MQTT and Camera to isolate buses for download...");
     MQTT_Disconnect();
+
+    if (Camera_IsInitialized())
+    {
+        LOG_INFO(TAG_OTA, "Stopping Camera DCMI DMA before reusing frame buffer...");
+        Camera_DeInit();
+    }
 
     /* Drain any residual SPI traffic from the MQTT disconnect */
     for (int drain = 0; drain < 10; drain++)
@@ -1664,6 +1670,14 @@ static void _do_ota_update(void)
                  "{\"status\":\"ota_error\",\"reason\":\"flash_failed\",\"code\":%d}",
                  status);
         MQTT_PublishStatus(msg);
+
+        /* Restore camera state since payload failed and we are resuming normal ops */
+        if (!Camera_IsInitialized())
+        {
+            LOG_INFO(TAG_OTA, "Restoring Camera state after failed OTA...");
+            Camera_Init(CAMERA_DEFAULT_RESOLUTION);
+        }
+
         s_ota_in_progress = 0;
         return;
     }

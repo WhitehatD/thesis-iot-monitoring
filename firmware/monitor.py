@@ -6,10 +6,19 @@ import json
 import time
 import paho.mqtt.client as mqtt
 
-PORT = sys.argv[1] if len(sys.argv) > 1 else "COM7"
-BAUD = int(sys.argv[2]) if len(sys.argv) > 2 else 115200
+import argparse
 
-MQTT_BROKER = "localhost"
+parser = argparse.ArgumentParser(description="STM32 Serial Monitor to MQTT")
+parser.add_argument("port", nargs="?", default="COM7", help="Serial port (default: COM7)")
+parser.add_argument("baud", nargs="?", type=int, default=115200, help="Baud rate (default: 115200)")
+parser.add_argument("--board-id", default="stm32-iot-cam-01", help="Board ID for MQTT state")
+args = parser.parse_args()
+
+PORT = args.port
+BAUD = args.baud
+BOARD_ID = args.board_id
+
+MQTT_BROKER = "89.167.11.147"
 MQTT_PORT = 1883
 TOPIC_LOGS = "dashboard/logs"
 TOPIC_STATE = "dashboard/state"
@@ -56,18 +65,19 @@ def extract_state(line: str):
     
     return state_updates if state_updates else None
 
-def on_connect(client, userdata, flags, rc):
-    print(f"{CYAN}║  MQTT Connected to {MQTT_BROKER}:{MQTT_PORT} (rc={rc}){RESET}")
+def on_connect(client, userdata, flags, reason_code, properties):
+    print(f"{CYAN}║  MQTT Connected to {MQTT_BROKER}:{MQTT_PORT} (rc={reason_code}){RESET}")
 
 def main():
     print(f"{CYAN}╔══════════════════════════════════════════════╗{RESET}")
-    print(f"{CYAN}║  STM32 Serial Monitor — {PORT} @ {BAUD}    ║{RESET}")
+    print(f"{CYAN}║  STM32 Monitor — {PORT} @ {BAUD}    ║{RESET}")
+    print(f"{CYAN}║  Board: {BOARD_ID:<27}║{RESET}")
     print(f"{CYAN}║  Press Ctrl+C to stop                       ║{RESET}")
     print(f"{CYAN}╚══════════════════════════════════════════════╝{RESET}")
     print()
 
     # Setup MQTT
-    mqttc = mqtt.Client()
+    mqttc = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
     mqttc.on_connect = on_connect
     try:
         mqttc.connect(MQTT_BROKER, MQTT_PORT, 60)
@@ -95,7 +105,8 @@ def main():
                 log_payload = {
                     "timestamp": time.time(),
                     "level": determine_level(line),
-                    "text": line
+                    "text": line,
+                    "board_id": BOARD_ID
                 }
                 mqttc.publish(TOPIC_LOGS, json.dumps(log_payload))
 
@@ -103,6 +114,7 @@ def main():
                 state_updates = extract_state(line)
                 if state_updates:
                     state_updates["timestamp"] = time.time()
+                    state_updates["board_id"] = BOARD_ID
                     mqttc.publish(TOPIC_STATE, json.dumps(state_updates))
 
     except KeyboardInterrupt:

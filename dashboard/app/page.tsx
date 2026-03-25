@@ -13,7 +13,7 @@ interface BoardTelemetry {
 	lastImageSize: number | null;
 	lastLatencyMs: number | null;
 	isOnline: boolean;
-	logs: string[];
+	logs: { time: string; level: string; text: string }[];
 }
 
 interface ImageCapture {
@@ -70,11 +70,35 @@ export default function DashboardPage() {
 			client.subscribe("device/+/status", { qos: 0 }); // Subscribe to any device
 			client.subscribe("device/stm32/status", { qos: 0 }); // Fallback for legacy topic
 			client.subscribe("dashboard/images/new", { qos: 0 });
+			client.subscribe("dashboard/logs", { qos: 0 });
 		});
 
 		client.on("message", (topic, payload) => {
 			try {
 				const data = JSON.parse(payload.toString());
+
+				if (topic === "dashboard/logs") {
+					const boardId = data.board_id || "stm32-iot-cam-01";
+					setBoards((prev) => {
+						if (!prev[boardId]) return prev;
+						const logTime = data.timestamp
+							? new Date(data.timestamp * 1000).toLocaleTimeString()
+							: new Date().toLocaleTimeString();
+						const logEntry = {
+							time: logTime,
+							level: data.level || "log",
+							text: data.text,
+						};
+						return {
+							...prev,
+							[boardId]: {
+								...prev[boardId],
+								logs: [logEntry, ...prev[boardId].logs].slice(0, 100),
+							},
+						};
+					});
+					return;
+				}
 
 				if (topic === "dashboard/images/new") {
 					const newImg: ImageCapture = {
@@ -129,8 +153,12 @@ export default function DashboardPage() {
 					if (data.firmware) update.firmware = data.firmware;
 					if (data.status) {
 						update.status = data.status;
-						const logEntry = `[${new Date().toLocaleTimeString()}] Status: ${data.status}`;
-						update.logs = [logEntry, ...update.logs].slice(0, 50); // keep last 50 logs
+						const logEntry = {
+							time: new Date().toLocaleTimeString(),
+							level: "info",
+							text: `Status transition: ${data.status}`,
+						};
+						update.logs = [logEntry, ...update.logs].slice(0, 100);
 					}
 					if (data.status === "captured" || data.status === "uploaded") {
 						update.captures += 1;
@@ -183,12 +211,16 @@ export default function DashboardPage() {
 
 			setBoards((prev) => {
 				if (!prev[boardId]) return prev;
-				const logEntry = `[${new Date().toLocaleTimeString()}] 📡 Ping command sent`;
+				const logEntry = {
+					time: new Date().toLocaleTimeString(),
+					level: "info",
+					text: `📡 Ping command sent to fleet`,
+				};
 				return {
 					...prev,
 					[boardId]: {
 						...prev[boardId],
-						logs: [logEntry, ...prev[boardId].logs].slice(0, 50),
+						logs: [logEntry, ...prev[boardId].logs].slice(0, 100),
 					},
 				};
 			});
@@ -316,6 +348,21 @@ export default function DashboardPage() {
 									>
 										📡 Ping Node
 									</button>
+								</div>
+
+								<div className="terminal-window">
+									{board.logs.length === 0 ? (
+										<div className="terminal-empty">
+											No telemetry received yet...
+										</div>
+									) : (
+										board.logs.map((log, idx) => (
+											<div key={idx} className={`log-line log-${log.level}`}>
+												<span className="log-time">[{log.time}]</span>
+												{log.text}
+											</div>
+										))
+									)}
 								</div>
 							</div>
 						))
