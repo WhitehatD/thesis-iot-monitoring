@@ -221,6 +221,54 @@ static const char HTML_SUCCESS_PAGE[] =
     "</body></html>";
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Error Page — Validation Failed
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static const char HTML_ERROR_PAGE[] =
+    "HTTP/1.1 200 OK\r\n"
+    "Content-Type: text/html; charset=UTF-8\r\n"
+    "Connection: close\r\n"
+    "\r\n"
+    "<!DOCTYPE html>"
+    "<html lang='en'>"
+    "<head>"
+    "<meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Connection Failed</title>"
+    "<style>"
+    "*{margin:0;padding:0;box-sizing:border-box}"
+    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+    "min-height:100vh;display:flex;align-items:center;justify-content:center;"
+    "background:linear-gradient(135deg,#0a0e27,#1a1f3a,#0d1117);color:#e6edf3;padding:20px}"
+    ".card{background:rgba(22,27,52,0.85);backdrop-filter:blur(20px);"
+    "border:1px solid rgba(255,85,85,0.2);border-radius:20px;"
+    "padding:40px 36px;width:100%;max-width:420px;text-align:center;"
+    "animation:fadeUp 0.6s ease-out}"
+    "@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}"
+    ".icon{width:64px;height:64px;margin:0 auto 20px;"
+    "background:linear-gradient(135deg,#ff5555,#ff3333);"
+    "border-radius:50%;display:flex;align-items:center;justify-content:center;"
+    "box-shadow:0 4px 20px rgba(255,85,85,0.3)}"
+    ".icon svg{width:32px;height:32px;fill:white}"
+    "h1{font-size:22px;font-weight:700;margin-bottom:8px;"
+    "background:linear-gradient(135deg,#fff,#ffcccc);-webkit-background-clip:text;"
+    "-webkit-text-fill-color:transparent}"
+    "p{color:#8b949e;font-size:14px;line-height:1.6;margin-bottom:24px}"
+    "button{width:100%;padding:13px;font-size:15px;font-weight:600;"
+    "background:linear-gradient(135deg,#638cff,#4f6ef7);color:#fff;border:none;border-radius:10px;cursor:pointer;"
+    "transition:transform 0.15s,box-shadow 0.15s;box-shadow:0 4px 16px rgba(99,140,255,0.3)}"
+    "button:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(99,140,255,0.4)}"
+    "</style></head><body>"
+    "<div class='card'>"
+    "<div class='icon'>"
+    "<svg viewBox='0 0 24 24'><path d='M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z'/></svg>"
+    "</div>"
+    "<h1>Connection Failed</h1>"
+    "<p>Could not connect to the WiFi network. Please check the spelling and password.</p>"
+    "<button onclick='window.history.back()'>Try Again</button>"
+    "</div></body></html>";
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  404 Response
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -549,6 +597,21 @@ static int _handle_http_client(int32_t client_sock)
 
         LOG_INFO(TAG_PORT, "Received credentials: SSID='%s' PWD=(%u chars)",
                  ssid, (unsigned)strlen(password));
+
+        /* Test credentials in real-time before saving */
+        LOG_INFO(TAG_PORT, "Testing WiFi credentials in background...");
+        
+        if (WiFi_TestConnection(ssid, password) != WIFI_OK)
+        {
+            LOG_WARN(TAG_PORT, "Credentials failed test. Serving error page.");
+            _portal_send_all(client_sock,
+                             (const uint8_t *)HTML_ERROR_PAGE,
+                             (int32_t)strlen(HTML_ERROR_PAGE));
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+            return 0; /* Return 0 to keep portal running and NOT reboot */
+        }
+
+        LOG_INFO(TAG_PORT, "Credentials verified!");
 
         /* Save to flash */
         WiFiCredStatus_t save_ret = WiFiCred_Save(ssid, password);

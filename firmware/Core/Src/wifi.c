@@ -211,6 +211,72 @@ bool WiFi_IsConnected(void)
     return (s_connected != 0);
 }
 
+WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password)
+{
+    if (!s_initialized)
+    {
+        LOG_ERROR(TAG_WIFI, "Cannot test — module not initialized");
+        return WIFI_ERROR_INIT;
+    }
+
+    LOG_INFO(TAG_WIFI, "Testing connection to '%s' (fast fail)...", ssid);
+
+    /* Enable DHCP */
+    wifi_obj_get()->NetSettings.DHCP_IsEnabled = 1;
+
+    int32_t ret = MX_WIFI_Connect(
+        wifi_obj_get(),
+        ssid,
+        password,
+        MX_WIFI_SEC_AUTO
+    );
+
+    if (ret == MX_WIFI_STATUS_OK)
+    {
+        /* connected, wait for DHCP */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+
+        uint8_t ip[4] = {0};
+        bool got_ip = false;
+        
+        /* 15 * 1000 = 15s wait max (faster than 35s in WiFi_Connect) */
+        for (int dhcp_wait = 0; dhcp_wait < 15; dhcp_wait++)
+        {
+            if (MX_WIFI_IsConnected(wifi_obj_get()) <= 0)
+            {
+                LOG_ERROR(TAG_WIFI, "Test: Link dropped during DHCP (wrong password or AP reject)");
+                break;
+            }
+
+            if (MX_WIFI_GetIPAddress(wifi_obj_get(), ip, MC_STATION) == MX_WIFI_STATUS_OK
+                && (ip[0] | ip[1] | ip[2] | ip[3]) != 0)
+            {
+                got_ip = true;
+                break;
+            }
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+        }
+
+        if (got_ip)
+        {
+            LOG_INFO(TAG_WIFI, "Test SUCCESS. IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+            /* We leave the station connected. Captive portal will reboot the board anyway. */
+            return WIFI_OK;
+        }
+        else
+        {
+            LOG_ERROR(TAG_WIFI, "Test FAILED — no IP assigned (timeout)");
+            /* Tear down the failed connection so the module is ready for next attempt */
+            MX_WIFI_Disconnect(wifi_obj_get());
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+            return WIFI_ERROR_CONNECT;
+        }
+    }
+
+    LOG_ERROR(TAG_WIFI, "Test FAILED — association rejected");
+    return WIFI_ERROR_CONNECT;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  HTTP POST — Multipart Image Upload
  * ═══════════════════════════════════════════════════════════════════════════ */

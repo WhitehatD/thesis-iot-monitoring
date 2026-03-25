@@ -40,6 +40,14 @@ WiFiStatus_t WiFi_Init(void);
 WiFiStatus_t WiFi_Connect(const char *ssid, const char *password);
 
 /**
+ * @brief  Test WiFi credentials with a single fast attempt and short DHCP timeout.
+ * @param  ssid: Network SSID.
+ * @param  password: Network password.
+ * @retval WIFI_OK if connected and acquired IP.
+ */
+WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password);
+
+/**
  * @brief  Check if Wi-Fi is currently connected.
  * @retval true if connected.
  */
