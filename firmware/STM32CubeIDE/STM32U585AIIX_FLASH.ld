@@ -39,7 +39,7 @@ ENTRY(Reset_Handler)
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM);	/* end of "RAM" Ram type memory */
 
-_Min_Heap_Size = 0x1000;	/* 4 KB heap — cJSON + dynamic alloc headroom */
+_Min_Heap_Size = 0x8000;	/* 32 KB heap — cJSON + driver headroom + Wi-Fi IPC buffers */
 _Min_Stack_Size = 0x8000;	/* 32 KB stack — safe margin for deep driver calls + cJSON */
 
 /* Memories definition */

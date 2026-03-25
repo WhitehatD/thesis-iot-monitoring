@@ -45,6 +45,23 @@ RTC_HandleTypeDef hrtc;
 static IWDG_HandleTypeDef hiwdg;
 #endif
 
+/* ── Reset Reason Reporting ─────────────────────────────────────────── */
+static void Boot_ReportResetReason(void)
+{
+    uint32_t rsr = RCC->CSR;
+    LOG_INFO("BOOT", "Reset Reason Register (CSR): 0x%08lX", rsr);
+
+    if (rsr & RCC_CSR_IWDGRSTF) LOG_WARN("BOOT", "Reset caused by Independent Watchdog (IWDG)");
+    if (rsr & RCC_CSR_WWDGRSTF) LOG_WARN("BOOT", "Reset caused by Window Watchdog (WWDG)");
+    if (rsr & RCC_CSR_SFTRSTF)  LOG_INFO("BOOT", "Reset caused by Software (NVIC_SystemReset)");
+    if (rsr & RCC_CSR_BORRSTF)  LOG_WARN("BOOT", "Reset caused by Brown-out (BOR)");
+    if (rsr & RCC_CSR_PINRSTF)  LOG_INFO("BOOT", "Reset caused by External Pin (NRST)");
+    if (rsr & RCC_CSR_LPWRRSTF) LOG_WARN("BOOT", "Reset caused by Illegal Low Power Entry");
+
+    /* Clear reset flags for next boot */
+    __HAL_RCC_CLEAR_RESET_FLAGS();
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Private Variables
  * ═══════════════════════════════════════════════════════════════════════════ */
@@ -447,13 +464,14 @@ int main(void)
     /* ── Phase 1: Hardware Initialization ────────────── */
 
     HAL_Init();
+    Boot_ReportResetReason();
     CACHE_Enable();
     SystemClock_Config();
 
     /* Debug UART — must be first for logging */
     Debug_Init();
     LOG_INFO(TAG_BOOT, "========================================");
-    LOG_INFO(TAG_BOOT, "  IoT Visual Monitoring Firmware v0.1  ");
+    LOG_INFO(TAG_BOOT, "  IoT Visual Monitoring Firmware v%s  ", FW_VERSION);
     LOG_INFO(TAG_BOOT, "  Board: B-U585I-IOT02A               ");
     LOG_INFO(TAG_BOOT, "========================================");
 

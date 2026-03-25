@@ -198,3 +198,12 @@ Enterprise-grade security audit conducted against **OWASP IoT Top 10 2025**, **C
 - **`atoi()` → `strtol()`** with error checking prevents undefined behavior from malformed HTTP responses
 - **Time/date fields** are range-validated before writing to RTC registers
 - **Network yield watchdog wrapper** explicitly feeds `IWDG` during all blocking HTTP sockets to prevent OTA download resets.
+
+## OTA Telemetry & Stability (March 2026)
+
+To resolve persistent systemic resets during the high-latency OTA firmware download phase, the firmware has been equipped with definitive diagnostic primitives:
+
+- **Hardware Reset Telemetry**: The `RCC->CSR` register is explicitly read and cleared at boot. The exact reset cause (Independent Watchdog, Brown-Out Reset, Software Reset, or Pin Reset) is logged to the `BOOT` UART banner.
+- **Stack Headroom Validation**: The `_Min_Stack_Size` has been expanded to **32KB** to safely accommodate deep driver call stacks + cJSON parsing. The absolute MSP (Main Stack Pointer) is dynamically logged in `ota_update.c` across volatile SPI socket bursts.
+- **IPC Buffer Headroom**: The `_Min_Heap_Size` has been explicitly expanded to **32KB** to guarantee sufficient overhead for the EMW3080 Wi-Fi driver socket allocation.
+- **Bus Isolation**: Explicit validation of `Camera_DeInit()` ensures the DCMI DMA and SRAM3 memory banks are cleanly quiesced before the OTA process hijacks the SPI bus.
