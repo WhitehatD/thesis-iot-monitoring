@@ -3,7 +3,7 @@
 import mqtt from "mqtt";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { use, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 
 interface BoardTelemetry {
 	id: string;
@@ -65,7 +65,7 @@ export default function BoardPage({
 				`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/mqtt`
 			: "ws://localhost:9001";
 
-	const fetchImages = () => {
+	const fetchImages = useCallback(() => {
 		fetch(`${apiBase}/api/images?board_id=${boardId}`)
 			.then((res) => res.json())
 			.then((data) => {
@@ -83,7 +83,7 @@ export default function BoardPage({
 				}
 			})
 			.catch(console.error);
-	};
+	}, [apiBase, boardId]);
 
 	useEffect(() => {
 		fetchImages();
@@ -186,7 +186,7 @@ export default function BoardPage({
 			client.end();
 			clearInterval(interval);
 		};
-	}, [apiBase, mqttUrl, boardId]);
+	}, [mqttUrl, boardId, fetchImages]);
 
 	const pingBoard = async () => {
 		try {
