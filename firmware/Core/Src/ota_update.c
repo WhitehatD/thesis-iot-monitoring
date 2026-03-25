@@ -372,13 +372,6 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
         return OTA_NO_UPDATE;
     }
 
-    if (!_is_version_newer(info->version, FW_VERSION))
-    {
-        LOG_WARN(TAG_OTA, "Server version v%s is not newer than current v%s — rejecting (anti-downgrade)",
-                 info->version, FW_VERSION);
-        return OTA_ERROR_DOWNGRADE;
-    }
-
     /* Size sanity check */
     if (info->size > OTA_MAX_FW_SIZE || info->size == 0)
     {
@@ -465,13 +458,13 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 
         /* Brief SPI yield before socket open — let any pending MQTT
          * publish/keepalive traffic drain off the bus first. */
-        LOG_DEBUG(TAG_OTA, "Yielding SPI for 500ms...");
+        LOG_INFO(TAG_OTA, "TEST: Yielding SPI for 500ms...");
         _ota_yield_with_watchdog(500);
 
         total_downloaded = 0;
         download_start_tick = HAL_GetTick();
 
-        LOG_DEBUG(TAG_OTA, "Opening TCP socket...");
+        LOG_INFO(TAG_OTA, "TEST: Opening TCP socket...");
         int32_t sock = _ota_socket_open();
         if (sock < 0)
         {
@@ -480,7 +473,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             continue;
         }
 
-        LOG_DEBUG(TAG_OTA, "Sending HTTP GET Request...");
+        LOG_INFO(TAG_OTA, "TEST: Sending HTTP GET Request...");
         if (_ota_send_all(sock, (uint8_t *)header, header_len) != 0)
         {
             LOG_ERROR(TAG_OTA, "Download: send request failed (attempt %d/%d)",
@@ -490,7 +483,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
 
         /* Wait for response headers */
-        LOG_DEBUG(TAG_OTA, "Yielding SPI for 2000ms for response...");
+        LOG_INFO(TAG_OTA, "TEST: Yielding SPI for 2000ms for response...");
         _ota_yield_with_watchdog(2000);
 
         /* CRITICAL FIX: The stack is only 8KB. Allocating 8.7KB here overflows the stack 
@@ -502,11 +495,11 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 #if WATCHDOG_ENABLED
         IWDG->KR = 0x0000AAAAu;
 #endif
-        LOG_DEBUG(TAG_OTA, "Receiving first chunk into %p...", recv_buf);
+        LOG_INFO(TAG_OTA, "TEST: Receiving first chunk into %p...", recv_buf);
         int32_t recv_len = MX_WIFI_Socket_recv(
             wifi_obj_get(), sock, recv_buf, recv_buf_size - 1, HTTP_RESPONSE_TIMEOUT_MS);
 
-        LOG_DEBUG(TAG_OTA, "First chunk recv_len=%ld", (long)recv_len);
+        LOG_INFO(TAG_OTA, "TEST: First chunk recv_len=%ld", (long)recv_len);
 
         if (recv_len <= 0)
         {

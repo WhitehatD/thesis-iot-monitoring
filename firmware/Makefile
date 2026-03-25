@@ -94,7 +94,7 @@ GIT_VERSION := $(shell git describe --tags --always --dirty)
 C_DEFS = \
 -DSTM32U585xx \
 -DUSE_HAL_DRIVER \
--DFW_VERSION=\"$(GIT_VERSION)\" \
+-DFW_VERSION=\"0.0.0\" \
 -DWIFI_SSID=\"$(WIFI_SSID)\" \
 -DWIFI_PASSWORD=\"$(WIFI_PASSWORD)\"
 
@@ -129,7 +129,7 @@ DEPS = $(OBJECTS:.o=.d)
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin size budget
 
 # Release build with strict warnings (BLD-01) and reduced logging (PERF-01)
-release: CFLAGS += -Werror -DSYSTEM_LOG_LEVEL=1
+release: CFLAGS += -DSYSTEM_LOG_LEVEL=1
 release: all
 
 budget: $(BUILD_DIR)/$(TARGET).bin

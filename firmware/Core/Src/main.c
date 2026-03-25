@@ -78,6 +78,7 @@ static volatile uint8_t s_sleep_enabled = 0;  /* 0 = awake (default), 1 = low po
 
 /* ── OTA firmware update (MQTT command) ─────────────────── */
 static volatile uint8_t s_ota_requested = 0;
+static volatile uint8_t s_ota_in_progress = 0;  /* Lock for s_image_buffer */
 
 /* ── Ping (MQTT command) ────────────────────────────────── */
 static volatile uint8_t s_ping_requested = 0;
@@ -1203,6 +1204,12 @@ static void _do_button_capture(void)
     LOG_INFO(TAG_BOOT, "=== BUTTON CAPTURE (task_id=%lu) ===",
              (unsigned long)s_button_task_id);
 
+    if (s_ota_in_progress)
+    {
+        LOG_WARN(TAG_BOOT, "Button capture aborted — OTA in progress");
+        return;
+    }
+
     char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)s_button_task_id);
     MQTT_PublishStatus(status_msg);
@@ -1317,6 +1324,13 @@ static void _do_capture_now(void)
     uint32_t perf_start = HAL_GetTick();
     LOG_INFO(TAG_BOOT, "=== CAPTURE NOW (task_id=%lu) ===",
              (unsigned long)task_id);
+
+    if (s_ota_in_progress)
+    {
+        LOG_WARN(TAG_BOOT, "Capture now aborted — OTA in progress");
+        MQTT_PublishStatus("{\"status\":\"error\",\"reason\":\"ota_in_progress\"}");
+        return;
+    }
 
     char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)task_id);
@@ -1444,6 +1458,13 @@ static void _do_capture_sequence(void)
     LOG_INFO(TAG_BOOT, "=== CAPTURE SEQUENCE (%lu captures, base_id=%lu) ===",
              (unsigned long)count, (unsigned long)base_id);
 
+    if (s_ota_in_progress)
+    {
+        LOG_WARN(TAG_BOOT, "Capture sequence aborted — OTA in progress");
+        MQTT_PublishStatus("{\"status\":\"error\",\"reason\":\"ota_in_progress\"}");
+        return;
+    }
+
     if (count == 0)
     {
         LOG_WARN(TAG_BOOT, "Empty capture sequence — nothing to do");
@@ -1557,6 +1578,8 @@ static void _do_ota_update(void)
     LOG_INFO(TAG_OTA, "=== FIRMWARE UPDATE REQUESTED ===");
     MQTT_PublishStatus("{\"status\":\"ota_checking\"}");
 
+    s_ota_in_progress = 1;
+
     OTAVersionInfo_t info;
     OTAStatus_t status = OTA_CheckForUpdate(&info);
 
@@ -1564,6 +1587,7 @@ static void _do_ota_update(void)
     {
         LOG_INFO(TAG_OTA, "Already up-to-date (v%s)", FW_VERSION);
         MQTT_PublishStatus("{\"status\":\"ota_up_to_date\",\"firmware\":\"" FW_VERSION "\"}");
+        s_ota_in_progress = 0;
         return;
     }
 
@@ -1575,6 +1599,7 @@ static void _do_ota_update(void)
                  "{\"status\":\"ota_error\",\"reason\":\"version_check_failed\",\"code\":%d}",
                  status);
         MQTT_PublishStatus(msg);
+        s_ota_in_progress = 0;
         return;
     }
 
@@ -1639,6 +1664,7 @@ static void _do_ota_update(void)
                  "{\"status\":\"ota_error\",\"reason\":\"flash_failed\",\"code\":%d}",
                  status);
         MQTT_PublishStatus(msg);
+        s_ota_in_progress = 0;
         return;
     }
 
@@ -1661,6 +1687,7 @@ static void _do_ota_update(void)
 
     /* If we get here, swap failed */
     MQTT_PublishStatus("{\"status\":\"ota_error\",\"reason\":\"bank_swap_failed\"}");
+    s_ota_in_progress = 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

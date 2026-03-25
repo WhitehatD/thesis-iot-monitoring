@@ -1,4 +1,5 @@
-#!/usr/import sys
+#!/usr/bin/env python3
+import sys
 import serial
 import serial.tools.list_ports
 import json
