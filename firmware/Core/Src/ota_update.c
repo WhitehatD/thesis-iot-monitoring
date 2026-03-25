@@ -945,3 +945,6 @@ OTAStatus_t OTA_CheckAndUpdate(uint8_t *ram_buffer, uint32_t ram_size)
     /* Step 3: Swap & Reset */
     return OTA_SwapBankAndReset();
 }
+
+/* Trigger CI update */
+
