@@ -89,12 +89,13 @@ WIFI_SSID     ?= "A I 2.4"
 WIFI_PASSWORD ?= "alex1234"
 
 # ── Defines ───────────────────────────────────────────
-GIT_VERSION := $(shell git describe --tags --always --dirty)
+GIT_COMMIT_COUNT := $(shell git rev-list --count HEAD)
+GIT_HASH := $(shell git rev-parse --short HEAD)
 
 C_DEFS = \
 -DSTM32U585xx \
 -DUSE_HAL_DRIVER \
--DFW_VERSION=\"$(GIT_VERSION)\" \
+-DFW_VERSION=\"1.0.$(GIT_COMMIT_COUNT)\" \
 -DWIFI_SSID=\"$(WIFI_SSID)\" \
 -DWIFI_PASSWORD=\"$(WIFI_PASSWORD)\"
 

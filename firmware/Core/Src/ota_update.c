@@ -86,11 +86,11 @@ static uint32_t _crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
 
 static int _is_version_newer(const char *candidate, const char *current)
 {
-    int c_major = 0, c_minor = 0;
-    int n_major = 0, n_minor = 0;
+    int c_major = 0, c_minor = 0, c_patch = 0;
+    int n_major = 0, n_minor = 0, n_patch = 0;
 
-    int c_parsed = sscanf(current,   "%d.%d", &c_major, &c_minor);
-    int n_parsed = sscanf(candidate, "%d.%d", &n_major, &n_minor);
+    int c_parsed = sscanf(current,   "%d.%d.%d", &c_major, &c_minor, &c_patch);
+    int n_parsed = sscanf(candidate, "%d.%d.%d", &n_major, &n_minor, &n_patch);
     (void)c_parsed;
     (void)n_parsed;
 
@@ -99,12 +99,13 @@ static int _is_version_newer(const char *candidate, const char *current)
     {
         if (n_major > c_major) return 1;
         if (n_major == c_major && n_minor > c_minor) return 1;
+        if (n_major == c_major && n_minor == c_minor && n_patch > c_patch) return 1;
         return 0;  /* Equal or older */
     }
 
     /* Fallback for git hashes / non-semantic versions.
-       Since we only call this if strcmp(candidate, current) != 0,
-       assume any new distinct hash is an update. */
+       Reject equal strings to prevent infinite looping. */
+    if (strcmp(candidate, current) == 0) return 0;
     return 1;
 }
 
