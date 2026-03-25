@@ -151,6 +151,16 @@ WiFiStatus_t WiFi_Connect(const char *ssid, const char *password)
             bool got_ip = false;
             for (int dhcp_wait = 0; dhcp_wait < 15; dhcp_wait++)
             {
+                /* EMW3080 Connect API is asynchronous for WPA handshakes.
+                 * If the user provided a wrong password, association might succeed 
+                 * but the subsequent 4-way handshake will fail and the AP will kick us.
+                 * If we lose link layer connectivity, fail fast instead of waiting 35s. */
+                if (MX_WIFI_IsConnected(wifi_obj_get()) <= 0)
+                {
+                    LOG_ERROR(TAG_WIFI, "Link dropped during DHCP (wrong password or AP reject)");
+                    break;
+                }
+
                 if (MX_WIFI_GetIPAddress(wifi_obj_get(), ip, MC_STATION) == MX_WIFI_STATUS_OK
                     && (ip[0] | ip[1] | ip[2] | ip[3]) != 0)
                 {
@@ -164,15 +174,19 @@ WiFiStatus_t WiFi_Connect(const char *ssid, const char *password)
             if (got_ip)
             {
                 LOG_INFO(TAG_WIFI, "IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+                return WIFI_OK;
             }
             else
             {
-                LOG_ERROR(TAG_WIFI, "DHCP failed — no IP assigned after 35s");
+                LOG_ERROR(TAG_WIFI, "DHCP failed — no IP assigned (timeout or link drop)");
                 s_connected = 0;
+                
+                /* CRITICAL: Force the module to tear down the socket and radio
+                 * state before we attempt another connection, avoiding state machine locks */
+                MX_WIFI_Disconnect(wifi_obj_get());
+                MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
                 continue;  /* Retry full connection */
             }
-
-            return WIFI_OK;
         }
 
         LOG_WARN(TAG_WIFI, "Attempt %d failed (err=%ld), retrying in %lu ms...",
