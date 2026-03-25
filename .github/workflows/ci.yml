@@ -142,16 +142,17 @@ jobs:
             -H "X-Firmware-Token: ${FIRMWARE_TOKEN}" \
             -F "file=@firmware/build/thesis-iot-firmware.bin" \
             --connect-timeout 15 \
-            --max-time 60) || true
+            --max-time 60)
             
           if [ "$HTTP_CODE" = "200" ]; then
             echo "✅ Firmware uploaded successfully"
             cat /tmp/upload_resp.json
             echo ""
           else
-            echo "❌ HTTP $HTTP_CODE — upload failed (likely MQTT disconnect fallback):"
+            echo "❌ HTTP $HTTP_CODE — upload failed:"
             cat /tmp/upload_resp.json 2>/dev/null || echo "(no response body)"
-            echo "Continuing pipeline to allow server deployment to proceed..."
+            echo "Aborting pipeline to prevent firmware version mismatch..."
+            exit 1
           fi
 
   # ══════════════════════════════════════════════════════════════════════════

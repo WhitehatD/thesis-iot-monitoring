@@ -222,6 +222,7 @@ export default function BoardPage({
 		try {
 			await fetch(`${apiBase}/api/capture`, {
 				method: "POST",
+				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ board_id: boardId }),
 			});
 			const logEntry = {
