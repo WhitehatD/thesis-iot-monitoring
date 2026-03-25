@@ -217,19 +217,13 @@ static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
  *  Watchdog-Safe Non-Blocking Socket Receive
  *
  *  Solves two critical enterprise-grade reliability issues:
- *  1. Watchdog timeouts: MX_WIFI_Socket_recv is completely blocking. We apply
- *     a short 250ms SO_RCVTIMEO to the socket, allowing us to kick the watchdog
- *     frequently without resetting the MCU during slow server responses.
+ *  1. Watchdog timeouts: Pets the watchdog repeatedly natively.
  *  2. MIPC Buffer Corruption: Requesting > 2000 bytes in a single receive
  *     call can crash the EMW3080 SPI firmware. We strictly clamp all reading
  *     to 1024 bytes per transaction.
  * ═══════════════════════════════════════════════════════════════════════════ */
 static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint32_t total_timeout_ms)
 {
-    /* Set short receive timeout to prevent infinite blocking */
-    int32_t rcvtimeo = 250;
-    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
-
     uint32_t start = HAL_GetTick();
     int32_t ret = 0;
 
@@ -241,22 +235,19 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
         /* Strict 1024 boundary to prevent SPI payload crashes */
         int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
         
+        /* The socket inherits the 4000ms RCVTIMEO set during connection. 
+           It will safely block for up to 4s, which is comfortably below the 16s watchdog. */
         ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
 
         if (ret > 0)
         {
-            /* Restore original 4000ms timeout for other logic */
-            rcvtimeo = 4000;
-            MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
             return ret;
         }
 
         /* Wait before next poll to let EMW3080 OS tasks process */
-        _ota_yield_with_watchdog(20);
+        _ota_yield_with_watchdog(100);
     }
 
-    rcvtimeo = 4000;
-    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcvtimeo, sizeof(rcvtimeo));
     return ret;
 }
 

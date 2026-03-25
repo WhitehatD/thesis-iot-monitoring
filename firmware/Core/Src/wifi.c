@@ -212,6 +212,9 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
 
     while (offset < len)
     {
+#if WATCHDOG_ENABLED
+        IWDG->KR = 0x0000AAAAu; /* Prevent 16s watchdog reset during 37s uploads */
+#endif
         /* Send in chunks to prevent EMW3080 SPI buffer flooding.
          * Yield the SPI pipeline between chunks so the WiFi module
          * can drain its internal TX buffers. */
