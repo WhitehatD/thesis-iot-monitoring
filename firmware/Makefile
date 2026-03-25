@@ -94,7 +94,7 @@ GIT_VERSION := $(shell git describe --tags --always --dirty)
 C_DEFS = \
 -DSTM32U585xx \
 -DUSE_HAL_DRIVER \
--DFW_VERSION=\"0.0.0\" \
+-DFW_VERSION=\"$(GIT_VERSION)\" \
 -DWIFI_SSID=\"$(WIFI_SSID)\" \
 -DWIFI_PASSWORD=\"$(WIFI_PASSWORD)\"
 
