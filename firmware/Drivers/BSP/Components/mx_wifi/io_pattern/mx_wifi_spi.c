@@ -208,7 +208,11 @@ void HAL_SPI_ErrorCallback(SPI_HandleTypeDef *hspi)
 {
   if (hspi == HSpiMX)
   {
-    MX_ASSERT(false);
+    /* ENTERPRISE FIX: Removed MX_ASSERT(false). 
+     * During heavy OTA chunk downloads, SPI Overruns (OVR) naturally occur due to SysTick delays.
+     * Asserting here translates to a fatal while(1) loop, causing the 16s IWDG watchdog reset.
+     * By doing nothing, the HAL driver natively aborts the transfer, returns HAL_ERROR, 
+     * and allows the upper MIPC layer to gracefully timeout and retry the TCP chunk. */
   }
 }
 
