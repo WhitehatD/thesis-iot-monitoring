@@ -47,7 +47,7 @@
 #define FLASH_PAGE_SIZE     (8 * 1024)       /* 8 KB per page */
 #endif
 #define FLASH_PAGES_PER_BANK 128
-/* Trigger CI — 2026-03-25T22:43 OTA recv fix */
+/* Trigger CI — 2026-03-25T22:56 OTA test */
 /* TAMP Backup Register for boot counter (BKP0R..BKP3R may be used by HAL,
  * so we use BKP4R to avoid conflicts).
  * On STM32U5, backup registers are in the TAMP peripheral, NOT RTC. */
@@ -214,44 +214,55 @@ static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- *  Watchdog-Safe Blocking Socket Receive
+ *  Industrial-Grade Non-Blocking Socket Receive
  *
- *  Solves two critical enterprise-grade reliability issues:
- *  1. Watchdog timeouts: Pets the watchdog before each blocking recv.
- *  2. MIPC Buffer Corruption: Requesting > 2000 bytes in a single receive
- *     call can crash the EMW3080 SPI firmware. We strictly clamp all reading
- *     to 1024 bytes per transaction.
+ *  Uses MSG_DONTWAIT (0x08) so MX_WIFI_Socket_recv returns immediately
+ *  if no data is buffered. Between polls, yields the SPI bus for 500ms
+ *  so the EMW3080 has sustained, uninterrupted time to process incoming
+ *  TCP segments from its internal radio buffer into the SPI MIPC layer.
  *
- *  Uses blocking recv (flags=0) which respects the SO_RCVTIMEO (4s) set on
- *  the socket in WiFi_TcpConnect(). The 4s blocking window is safe for the
- *  16s IWDG watchdog, and lets the MIPC layer properly signal when data
- *  arrives instead of busy-polling with MSG_DONTWAIT.
+ *  Why 500ms: The EMW3080 needs to receive TCP ACKs, process the TCP
+ *  window, buffer payload data, and make it available via MIPC — all
+ *  over SPI. 50ms was too short; 500ms matches ~1 TCP round-trip to
+ *  a VPS and gives the module ample processing time.
+ *
+ *  Chunk size clamped to 1024 bytes to prevent MIPC buffer corruption.
  * ═══════════════════════════════════════════════════════════════════════════ */
 static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint32_t total_timeout_ms)
 {
     uint32_t start = HAL_GetTick();
     int32_t ret = 0;
+    uint32_t polls = 0;
 
     while ((HAL_GetTick() - start) < total_timeout_ms)
     {
 #if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu; /* Pet dog before each blocking recv */
+        IWDG->KR = 0x0000AAAAu;
 #endif
-        /* Yield SPI bus before recv so EMW3080 can process buffered TCP data */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
+        /* Yield SPI bus for 500ms — give EMW3080 time to buffer TCP data */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 500);
 
         /* Strict 1024 boundary to prevent SPI payload crashes */
         int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
 
-        /* Blocking recv (flags=0): respects SO_RCVTIMEO (4s) set on socket.
-         * The MIPC layer handles waiting internally with proper SPI event
-         * signaling, avoiding the empty busy-poll loops that caused stalls. */
-        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
+        /* MSG_DONTWAIT: return immediately if no data buffered.
+         * This avoids the 10s MIPC timeout blocking per call.  */
+        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0x08);
+        polls++;
 
         if (ret > 0)
+        {
+            LOG_DEBUG(TAG_OTA, "recv: %ld bytes after %lu polls (%lums)",
+                      (long)ret, (unsigned long)polls,
+                      (unsigned long)(HAL_GetTick() - start));
             return ret;
+        }
     }
 
+    LOG_WARN(TAG_OTA, "recv timeout: %lu polls in %lums, last ret=%ld",
+             (unsigned long)polls,
+             (unsigned long)(HAL_GetTick() - start),
+             (long)ret);
     return ret;
 }
 
@@ -461,6 +472,13 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         "\r\n",
         OTA_DOWNLOAD_PATH, SERVER_HOST, SERVER_PORT);
 
+    /* SPI warm-up: let the EMW3080 fully drain any residual MIPC state
+     * from the MQTT disconnect + Camera deinit before we start fresh
+     * HTTP traffic. Without this, stale SPI frames can corrupt the
+     * first socket open. */
+    LOG_DEBUG(TAG_OTA, "SPI warm-up yield (2s)...");
+    _ota_yield_with_watchdog(2000);
+
     uint32_t total_downloaded = 0;
     int download_ok = 0;
     uint32_t retry_delay_ms = OTA_DOWNLOAD_RETRY_BASE_MS;
@@ -489,6 +507,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         total_downloaded = 0;
         download_start_tick = HAL_GetTick();
 
+        LOG_DEBUG(TAG_OTA, "Opening TCP socket to %s:%d...", SERVER_HOST, SERVER_PORT);
         int32_t sock = _ota_socket_open();
         if (sock < 0)
         {
@@ -496,6 +515,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
             continue;
         }
+        LOG_DEBUG(TAG_OTA, "Socket opened (fd=%ld) — sending HTTP GET...", (long)sock);
 
         if (_ota_send_all(sock, (uint8_t *)header, header_len) != 0)
         {
@@ -504,6 +524,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             MX_WIFI_Socket_close(wifi_obj_get(), sock);
             continue;
         }
+        LOG_DEBUG(TAG_OTA, "HTTP GET sent (%d bytes) — waiting for response...", header_len);
 
         /* Wait for response headers — 500ms lets the EMW3080 buffer
          * the full HTTP response (headers + initial body) over SPI */
@@ -556,6 +577,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
 
         LOG_INFO(TAG_OTA, "HTTP %d OK — streaming firmware body", http_status);
+        LOG_DEBUG(TAG_OTA, "Header recv: %ld bytes in first chunk", (long)recv_len);
 
         /* ── Content-Length Cross-Validation ────────────────────────── */
         const char *cl_hdr = strstr((char *)recv_buf, "Content-Length: ");
@@ -614,6 +636,10 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         uint8_t toggle_led = 0;
         int stall = 0;
         uint32_t last_progress_bytes = 0;  /* Track MQTT progress interval */
+        uint32_t chunk_count = 0;
+
+        LOG_DEBUG(TAG_OTA, "Starting body download (first_body=%ld bytes already in RAM)...",
+                  (long)total_downloaded);
 
         while (total_downloaded < info->size)
         {
@@ -626,13 +652,12 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             else BSP_LED_Off(LED_GREEN);
             toggle_led = !toggle_led;
 
-            _ota_yield_with_watchdog(100);
-
             uint32_t remaining = info->size - total_downloaded;
             uint32_t chunk_max = (remaining < OTA_DOWNLOAD_CHUNK_SIZE)
                                  ? remaining : OTA_DOWNLOAD_CHUNK_SIZE;
 
-            recv_len = _ota_safe_recv(sock, ram_buffer + total_downloaded, chunk_max, 10000);
+            recv_len = _ota_safe_recv(sock, ram_buffer + total_downloaded, chunk_max, 15000);
+            chunk_count++;
 
             if (recv_len <= 0)
             {
@@ -687,6 +712,13 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             download_ok = 1;
             break;
         }
+
+        /* Wait before retrying (exponential backoff) */
+        LOG_WARN(TAG_OTA, "Download attempt %d failed, retrying in %lums...",
+                 dl_attempt + 1, (unsigned long)retry_delay_ms);
+        _ota_yield_with_watchdog(retry_delay_ms);
+        retry_delay_ms = (retry_delay_ms * 2 > OTA_DOWNLOAD_RETRY_MAX_MS)
+                         ? OTA_DOWNLOAD_RETRY_MAX_MS : (retry_delay_ms * 2);
     }
 
     BSP_LED_Off(LED_RED);
