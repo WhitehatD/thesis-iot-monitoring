@@ -820,9 +820,23 @@ int main(void)
             poll_start = HAL_GetTick();
         }
 
-        /* ── Enterprise OTA Architecture: We no longer poll HTTP for versions.
-         * Server PUSHES {"type":"firmware_update"} via MQTT, triggering s_ota_requested 
-         * seamlessly without blocking the photo capture loop. ── */
+        /* ── Enterprise OTA Architecture: Hybrid Push/Pull ──
+         * Server PUSHES {"type":"firmware_update"} via MQTT for instant OTAs.
+         * Firmware also runs a background daemon pulling versions every OTA_CHECK_INTERVAL_MS
+         * to guarantee no node is ever stranded on deprecated firmware. ── */
+        if ((HAL_GetTick() - last_ota_check) > OTA_CHECK_INTERVAL_MS)
+        {
+            if (!s_ota_requested && !s_ota_in_progress && MQTT_IsConnected())
+            {
+                OTAVersionInfo_t check_info;
+                if (OTA_CheckForUpdate(&check_info) == OTA_OK)
+                {
+                    LOG_INFO(TAG_OTA, "Autonomous daemon detected new firmware v%s! Triggering...", check_info.version);
+                    s_ota_requested = 1; /* Delegate full download to the OTA block on next loop */
+                }
+            }
+            last_ota_check = HAL_GetTick();
+        }
 
         /* ── Handle: Scheduled Tasks (RTC polling) ── */
         if (s_schedule_received && s_schedule.current_index < s_schedule.task_count)
