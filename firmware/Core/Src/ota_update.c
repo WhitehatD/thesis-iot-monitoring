@@ -214,13 +214,18 @@ static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- *  Watchdog-Safe Non-Blocking Socket Receive
+ *  Watchdog-Safe Blocking Socket Receive
  *
  *  Solves two critical enterprise-grade reliability issues:
- *  1. Watchdog timeouts: Pets the watchdog repeatedly natively.
+ *  1. Watchdog timeouts: Pets the watchdog before each blocking recv.
  *  2. MIPC Buffer Corruption: Requesting > 2000 bytes in a single receive
  *     call can crash the EMW3080 SPI firmware. We strictly clamp all reading
  *     to 1024 bytes per transaction.
+ *
+ *  Uses blocking recv (flags=0) which respects the SO_RCVTIMEO (4s) set on
+ *  the socket in WiFi_TcpConnect(). The 4s blocking window is safe for the
+ *  16s IWDG watchdog, and lets the MIPC layer properly signal when data
+ *  arrives instead of busy-polling with MSG_DONTWAIT.
  * ═══════════════════════════════════════════════════════════════════════════ */
 static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint32_t total_timeout_ms)
 {
@@ -230,21 +235,21 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
     while ((HAL_GetTick() - start) < total_timeout_ms)
     {
 #if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu; /* Pet dog every poll iteration */
+        IWDG->KR = 0x0000AAAAu; /* Pet dog before each blocking recv */
 #endif
+        /* Yield SPI bus before recv so EMW3080 can process buffered TCP data */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
+
         /* Strict 1024 boundary to prevent SPI payload crashes */
         int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
 
-        /* MSG_DONTWAIT (0x08): return immediately if no data available.
-         * This prevents the MIPC layer from blocking the CPU for the full
-         * SO_RCVTIMEO (4s), which starves the 16s IWDG watchdog. */
-        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0x08);
+        /* Blocking recv (flags=0): respects SO_RCVTIMEO (4s) set on socket.
+         * The MIPC layer handles waiting internally with proper SPI event
+         * signaling, avoiding the empty busy-poll loops that caused stalls. */
+        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
 
         if (ret > 0)
             return ret;
-
-        /* Non-blocking: yield SPI bus so EMW3080 can process incoming TCP data */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 50);
     }
 
     return ret;
@@ -500,8 +505,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             continue;
         }
 
-        /* Wait for response headers */
-        _ota_yield_with_watchdog(100);
+        /* Wait for response headers — 500ms lets the EMW3080 buffer
+         * the full HTTP response (headers + initial body) over SPI */
+        _ota_yield_with_watchdog(500);
 
         /* Dedicated stack buffer for HTTP header reception.
          * MUST NOT overlap ram_buffer — the old placement at
@@ -626,7 +632,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             uint32_t chunk_max = (remaining < OTA_DOWNLOAD_CHUNK_SIZE)
                                  ? remaining : OTA_DOWNLOAD_CHUNK_SIZE;
 
-            recv_len = _ota_safe_recv(sock, ram_buffer + total_downloaded, chunk_max, 5000);
+            recv_len = _ota_safe_recv(sock, ram_buffer + total_downloaded, chunk_max, 10000);
 
             if (recv_len <= 0)
             {
