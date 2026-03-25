@@ -208,6 +208,32 @@ export default function BoardPage({
 		}
 	};
 
+	const triggerSetupMode = async () => {
+		if (
+			!confirm(
+				"This will permanently erase the board's WiFi credentials and force it into setup mode. The device will reboot and broadcast its 'IoT-Setup' network. Are you sure?",
+			)
+		)
+			return;
+		try {
+			await fetch(`${apiBase}/api/erase-wifi`, {
+				method: "POST",
+				body: JSON.stringify({ board_id: boardId }),
+			});
+			const logEntry = {
+				time: new Date().toLocaleTimeString(),
+				level: "warning",
+				text: `⚠️ Setup mode triggered for node ${boardId} (WiFi erased)`,
+			};
+			setBoard((prev) => ({
+				...prev,
+				logs: [logEntry, ...prev.logs].slice(0, 500),
+			}));
+		} catch (err) {
+			console.error("Trigger setup failed:", err);
+		}
+	};
+
 	const capturePicture = async () => {
 		try {
 			await fetch(`${apiBase}/api/capture`, {
@@ -361,6 +387,18 @@ export default function BoardPage({
 							disabled={!board.isOnline}
 						>
 							📡 Ping Node
+						</button>
+						<button
+							className="btn btn-danger"
+							onClick={triggerSetupMode}
+							disabled={!board.isOnline}
+							style={{
+								backgroundColor: "#ff5555",
+								borderColor: "#ff3333",
+								color: "white",
+							}}
+						>
+							⚠️ Setup Mode
 						</button>
 					</div>
 

@@ -94,6 +94,21 @@ async def ping_board():
         "command": "ping",
     }
 
+@router.post("/erase-wifi")
+async def erase_wifi():
+    """
+    Send an immediate erase_wifi command to the STM32 board.
+    Forces the board to erase flash credentials and reboot into the captive portal.
+    """
+    command = {"type": "erase_wifi"}
+    command_json = json.dumps(command)
+    await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
+
+    return {
+        "status": "sent",
+        "command": "erase_wifi",
+    }
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_image(task_id: int, file: UploadFile = File(...)):
     """
