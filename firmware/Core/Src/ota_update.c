@@ -47,7 +47,7 @@
 #define FLASH_PAGE_SIZE     (8 * 1024)       /* 8 KB per page */
 #endif
 #define FLASH_PAGES_PER_BANK 128
-/* Trigger CI */
+/* Trigger CI — 2026-03-25T22:43 OTA recv fix */
 /* TAMP Backup Register for boot counter (BKP0R..BKP3R may be used by HAL,
  * so we use BKP4R to avoid conflicts).
  * On STM32U5, backup registers are in the TAMP peripheral, NOT RTC. */
