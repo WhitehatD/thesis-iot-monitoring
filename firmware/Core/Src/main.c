@@ -28,6 +28,8 @@
 #include "mqtt_handler.h"
 #include "scheduler.h"
 #include "ota_update.h"
+#include "wifi_credentials.h"
+#include "captive_portal.h"
 #include "mx_wifi.h"
 
 #include "cJSON.h"
@@ -97,6 +99,9 @@ static volatile uint8_t s_sleep_enabled = 0;  /* 0 = awake (default), 1 = low po
 static volatile uint8_t s_ota_requested = 0;
 static volatile uint8_t s_ota_in_progress = 0;  /* Lock for s_image_buffer */
 
+/* ── Captive Portal (MQTT command or boot fallback) ──── */
+static volatile uint8_t s_portal_requested = 0;
+
 /* ── Ping (MQTT command) ────────────────────────────────── */
 static volatile uint8_t s_ping_requested = 0;
 
@@ -134,6 +139,7 @@ static void _do_capture_sequence(void);
 static void _do_ota_update(void);
 static void _do_wifi_reconfig(void);
 static void _do_ping_sequence(void);
+static void _do_start_portal(void);
 
 /* SEC-07: Watchdog initialization */
 #if WATCHDOG_ENABLED
@@ -423,6 +429,22 @@ static void on_command_received(const char *json_str, uint32_t length)
         LOG_INFO(TAG_MQTT, ">> PING command received");
         MQTT_PublishStatus("{\"status\":\"ping_received\"}");
     }
+    else if (type_str != NULL && strcmp(type_str, "start_portal") == 0)
+    {
+        /* ── Start captive portal for WiFi reconfiguration ── */
+        s_portal_requested = 1;
+        LOG_INFO(TAG_MQTT, ">> START_PORTAL command received");
+        MQTT_PublishStatus("{\"status\":\"portal_starting\"}");
+    }
+    else if (type_str != NULL && strcmp(type_str, "erase_wifi") == 0)
+    {
+        /* ── Erase stored WiFi credentials and reboot into portal ── */
+        LOG_INFO(TAG_MQTT, ">> ERASE_WIFI command received");
+        MQTT_PublishStatus("{\"status\":\"wifi_credentials_erasing\"}");
+        WiFiCred_Erase();
+        HAL_Delay(500);
+        NVIC_SystemReset();
+    }
     else if (type_str != NULL && strcmp(type_str, "set_wifi") == 0)
     {
         /* ── Remote WiFi credential reconfiguration ── */
@@ -436,6 +458,9 @@ static void on_command_received(const char *json_str, uint32_t length)
             strlen(pass_obj->valuestring) >= 8 &&
             strlen(pass_obj->valuestring) <= 63)
         {
+            /* Save to flash for persistence across reboots */
+            WiFiCred_Save(ssid_obj->valuestring, pass_obj->valuestring);
+
             strncpy(s_runtime_ssid, ssid_obj->valuestring, sizeof(s_runtime_ssid) - 1);
             s_runtime_ssid[sizeof(s_runtime_ssid) - 1] = '\0';
             strncpy(s_runtime_password, pass_obj->valuestring, sizeof(s_runtime_password) - 1);
@@ -443,7 +468,7 @@ static void on_command_received(const char *json_str, uint32_t length)
 
             s_has_runtime_wifi = 1;
             s_wifi_reconfig_requested = 1;
-            LOG_INFO(TAG_MQTT, ">> SET_WIFI command — SSID='%s' (queued for reconnect)",
+            LOG_INFO(TAG_MQTT, ">> SET_WIFI command — SSID='%s' (saved to flash + queued)",
                      s_runtime_ssid);
             MQTT_PublishStatus("{\"status\":\"wifi_reconfig_queued\"}");
         }
@@ -532,26 +557,82 @@ int main(void)
 
     /* ── Phase 2: Connectivity ──────────────────────── */
 
-    /* Wi-Fi */
-    /* REL-01: Soft retry loop for Wi-Fi before surrendering to Watchdog/OTA rollback */
-    int wifi_retries = 0;
-    while (wifi_retries < WIFI_CONNECT_RETRIES)
+    /* Wi-Fi — Enterprise credential chain:
+     *   1. Try flash-stored credentials (from captive portal or MQTT set_wifi)
+     *   2. Fall back to compile-time credentials
+     *   3. If all fail → start captive portal (blocks until user configures) */
     {
-        if (WiFi_Init() == WIFI_OK && WiFi_Connect(WIFI_SSID, WIFI_PASSWORD) == WIFI_OK)
-            break;
-        LOG_WARN(TAG_BOOT, "Wi-Fi connect failed, retrying... (%d/%d)", 
-                 wifi_retries + 1, WIFI_CONNECT_RETRIES);
-        HAL_Delay(2000);
-        wifi_retries++;
+        uint8_t wifi_connected = 0;
+
+        /* ── Step 1: Try flash-stored credentials ── */
+        WiFiCredentials_t flash_creds;
+        if (WiFiCred_Load(&flash_creds) == WIFI_CRED_OK)
+        {
+            LOG_INFO(TAG_BOOT, "Found stored WiFi credentials: SSID='%s'", flash_creds.ssid);
+
+            if (WiFi_Init() == WIFI_OK &&
+                WiFi_Connect(flash_creds.ssid, flash_creds.password) == WIFI_OK)
+            {
+                wifi_connected = 1;
+                LOG_INFO(TAG_BOOT, "Connected using stored credentials");
+            }
+            else
+            {
+                LOG_WARN(TAG_BOOT, "Stored credentials failed — trying compile-time defaults...");
+            }
+        }
+        else
+        {
+            LOG_INFO(TAG_BOOT, "No stored WiFi credentials — trying compile-time defaults...");
+        }
+
+        /* ── Step 2: Try compile-time credentials ── */
+        if (!wifi_connected)
+        {
+            int wifi_retries = 0;
+            while (wifi_retries < WIFI_CONNECT_RETRIES)
+            {
+                /* Re-init WiFi module if first attempt failed */
+                if (wifi_retries > 0 || WiFiCred_HasValid())
+                {
+                    WiFi_DeInit();
+                    HAL_Delay(1000);
+                    if (WiFi_Init() != WIFI_OK)
+                    {
+                        wifi_retries++;
+                        continue;
+                    }
+                }
+                else if (WiFi_Init() != WIFI_OK)
+                {
+                    wifi_retries++;
+                    continue;
+                }
+
+                if (WiFi_Connect(WIFI_SSID, WIFI_PASSWORD) == WIFI_OK)
+                {
+                    wifi_connected = 1;
+                    LOG_INFO(TAG_BOOT, "Connected using compile-time credentials");
+                    break;
+                }
+
+                LOG_WARN(TAG_BOOT, "Wi-Fi connect failed, retrying... (%d/%d)",
+                         wifi_retries + 1, WIFI_CONNECT_RETRIES);
+                HAL_Delay(2000);
+                wifi_retries++;
 #if WATCHDOG_ENABLED
-        HAL_IWDG_Refresh(&hiwdg);
+                HAL_IWDG_Refresh(&hiwdg);
 #endif
-    }
-    
-    if (wifi_retries >= WIFI_CONNECT_RETRIES)
-    {
-        LOG_ERROR(TAG_BOOT, "FATAL: Wi-Fi permanent failure");
-        LED_SignalError();
+            }
+        }
+
+        /* ── Step 3: All failed → start captive portal ── */
+        if (!wifi_connected)
+        {
+            LOG_WARN(TAG_BOOT, "All WiFi connection attempts failed — starting captive portal");
+            CaptivePortal_Start();  /* Blocks until user configures WiFi + auto-reboots */
+            /* CaptivePortal_Start calls NVIC_SystemReset — we never reach here */
+        }
     }
 
     /* ── Time synchronization — set RTC from server clock ── */
@@ -817,6 +898,14 @@ int main(void)
         {
             s_ping_requested = 0;
             _do_ping_sequence();
+            poll_start = HAL_GetTick();
+        }
+
+        /* ── Handle: Captive Portal (MQTT command) ── */
+        if (s_portal_requested)
+        {
+            s_portal_requested = 0;
+            _do_start_portal();
             poll_start = HAL_GetTick();
         }
 
@@ -1895,6 +1984,36 @@ static void _do_ping_sequence(void)
     }
     
     MQTT_PublishStatus("{\"status\":\"ping_complete\"}");
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Captive Portal Handler (MQTT-triggered)
+ *
+ *  Tears down current connectivity and enters portal mode.
+ *  The board reboots after the user configures new WiFi credentials.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static void _do_start_portal(void)
+{
+    LOG_INFO(TAG_PORT, "=== MQTT-TRIGGERED PORTAL MODE ===");
+
+    /* Graceful MQTT/WiFi teardown */
+    MQTT_Disconnect();
+    MX_WIFI_Disconnect(wifi_obj_get());
+    MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+
+    /* Re-init WiFi module for AP mode */
+    WiFi_DeInit();
+    HAL_Delay(1000);
+
+    if (WiFi_Init() != WIFI_OK)
+    {
+        LOG_ERROR(TAG_PORT, "WiFi re-init failed for portal mode");
+        NVIC_SystemReset();  /* Hard reboot as last resort */
+    }
+
+    CaptivePortal_Start();  /* Blocks until configured + auto-reboots */
+    /* Never returns */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

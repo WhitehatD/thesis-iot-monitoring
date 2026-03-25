@@ -40,6 +40,8 @@ Core/Src/camera.c \
 Core/Src/mqtt_handler.c \
 Core/Src/scheduler.c \
 Core/Src/ota_update.c \
+Core/Src/wifi_credentials.c \
+Core/Src/captive_portal.c \
 Core/Src/cJSON.c \
 Core/Src/mx_wifi_hw.c \
 Core/Src/stm32u5xx_it.c \

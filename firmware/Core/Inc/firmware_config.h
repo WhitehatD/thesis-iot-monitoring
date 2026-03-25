@@ -174,6 +174,25 @@
 #define OTA_DOWNLOAD_PATH           "/api/firmware/download"
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  Captive Portal Configuration (WiFi Provisioning)
+ *
+ *  When no stored credentials exist (or connection fails), the board
+ *  starts a SoftAP and serves a local configuration page.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define PORTAL_AP_CHANNEL           6
+#define PORTAL_AP_IP                "192.168.10.1"
+#define PORTAL_AP_NETMASK           "255.255.255.0"
+#define PORTAL_AP_GATEWAY           "192.168.10.1"
+#define PORTAL_HTTP_PORT            80
+#define PORTAL_DNS_PORT             53
+#define PORTAL_MAX_CONNECTIONS      4
+#define PORTAL_ACCEPT_TIMEOUT_MS    500
+
+/* Flash storage page for WiFi credentials (last page of Bank 2) */
+#define WIFI_CRED_FLASH_ADDR        0x081FE000u  /* Page 127, Bank 2 */
+#define WIFI_CRED_MAGIC             0x57494649u  /* "WIFI" in ASCII */
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  SEC-10/11: Fintech Memory Sanitization & Static Allocation
  * ═══════════════════════════════════════════════════════════════════════════ */
 void json_mem_reset(void);
