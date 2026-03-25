@@ -174,7 +174,16 @@ static void _ota_yield_with_watchdog(uint32_t delay_ms)
 
 static int32_t _ota_socket_open(void)
 {
-    return WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
+    int32_t sock = WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
+    if (sock >= 0)
+    {
+        /* ENTERPRISE FIX: Override receive timeout to 100ms.
+         * The default 4000ms or 0x08 (MSG_DONTWAIT) stalls the EMW3080 MIPC layer.
+         * 100ms ensures rapid polling without crashing the module. */
+        int32_t timeout_ms = 100;
+        MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+    }
+    return sock;
 }
 
 static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
@@ -239,15 +248,17 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
 #if WATCHDOG_ENABLED
         IWDG->KR = 0x0000AAAAu;
 #endif
-        /* Yield SPI bus for 500ms — give EMW3080 time to buffer TCP data */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 500);
+        /* Yield SPI bus for 10ms to let the ST stack breathe.
+         * The previous 500ms yield caused 60-second downloads and didn't prevent timeouts. */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 10);
 
         /* Strict 1024 boundary to prevent SPI payload crashes */
         int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
 
-        /* MSG_DONTWAIT: return immediately if no data buffered.
-         * This avoids the 10s MIPC timeout blocking per call.  */
-        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0x08);
+        /* ENTERPRISE FIX: using flag 0 instead of 0x08 (MSG_DONTWAIT).
+         * 0x08 crashed the EMW3080 AT firmware. Relying on the 100ms SO_RCVTIMEO
+         * set in _ota_socket_open, which safely times out inside the module. */
+        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
         polls++;
 
         if (ret > 0)

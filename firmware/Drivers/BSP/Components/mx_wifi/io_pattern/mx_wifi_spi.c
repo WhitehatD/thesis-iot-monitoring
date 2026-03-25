@@ -306,6 +306,20 @@ static HAL_StatusTypeDef TransmitReceive(SPI_HandleTypeDef *hspi, uint8_t *txdat
 
   DEBUG_LOG(("\n%s()> %"PRIu32"\n"), __FUNCTION__, (uint32_t)datalen);
 
+  /* ENTERPRISE FIX: Ensure SPI is ready before starting, aborting previous stuck transfers. */
+  if (hspi->State != HAL_SPI_STATE_READY)
+  {
+      HAL_SPI_Abort(hspi);
+      hspi->State = HAL_SPI_STATE_READY;
+  }
+
+  /* ENTERPRISE FIX: If datalen is 0, return HAL_OK immediately.
+   * This prevents misleading HAL_ERRORs for zero-length transfers. */
+  if (datalen == 0)
+  {
+      return HAL_OK;
+  }
+
   /* ENTERPRISE FIX: Clear SPI error flags proactively before polling.
    * Extremely high TCP payloads without DMA drop the CPU into SysTick/Watchdog
    * yield loops, guaranteeing natural SPI Overruns (OVR). If these flags are
@@ -352,6 +366,20 @@ static HAL_StatusTypeDef Transmit(SPI_HandleTypeDef *hspi, uint8_t *txdata, uint
 {
   HAL_StatusTypeDef ret;
 
+  /* ENTERPRISE FIX: Ensure SPI is ready before starting, aborting previous stuck transfers. */
+  if (hspi->State != HAL_SPI_STATE_READY)
+  {
+      HAL_SPI_Abort(hspi);
+      hspi->State = HAL_SPI_STATE_READY;
+  }
+
+  /* ENTERPRISE FIX: If datalen is 0, return HAL_OK immediately.
+   * This prevents misleading HAL_ERRORs for zero-length transfers. */
+  if (datalen == 0)
+  {
+      return HAL_OK;
+  }
+
   DEBUG_LOG("\n%s()> %" PRIu32 "\n", __FUNCTION__, (uint32_t)datalen);
 
   /* Proactively clear SPI flags to prevent polling aborts */
@@ -396,6 +424,20 @@ static HAL_StatusTypeDef Transmit(SPI_HandleTypeDef *hspi, uint8_t *txdata, uint
 static HAL_StatusTypeDef Receive(SPI_HandleTypeDef *hspi, uint8_t *rxdata, uint16_t datalen, uint32_t timeout)
 {
   HAL_StatusTypeDef ret;
+
+  /* ENTERPRISE FIX: Ensure SPI is ready before starting, aborting previous stuck transfers. */
+  if (hspi->State != HAL_SPI_STATE_READY)
+  {
+      HAL_SPI_Abort(hspi);
+      hspi->State = HAL_SPI_STATE_READY;
+  }
+
+  /* ENTERPRISE FIX: If datalen is 0, return HAL_OK immediately.
+   * This prevents misleading HAL_ERRORs for zero-length transfers. */
+  if (datalen == 0)
+  {
+      return HAL_OK;
+  }
 
   DEBUG_LOG("\n%s()> %" PRIu32 "\n", __FUNCTION__, (uint32_t)datalen);
 
@@ -590,7 +632,14 @@ void process_txrx_poll(uint32_t timeout)
                         }
                         else
                         {
-                          ret = Receive(HSpiMX, rxdata, datalen, timeout);
+                          if (datalen > 0)
+                          {
+                            ret = Receive(HSpiMX, rxdata, datalen, timeout);
+                          }
+                          else
+                          {
+                            ret = HAL_OK;
+                          }
                         }
 
                         if (HAL_OK != ret)
