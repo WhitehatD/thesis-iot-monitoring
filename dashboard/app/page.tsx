@@ -30,16 +30,12 @@ export default function DashboardPage() {
 	const [globalStatus, setGlobalStatus] = useState("connecting");
 	const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
 
-	const apiBase =
-		typeof window !== "undefined"
-			? process.env.NEXT_PUBLIC_API_URL ||
-				`http://${window.location.hostname}:8000`
-			: "http://localhost:8000";
+	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
 
 	const mqttUrl =
 		typeof window !== "undefined"
 			? process.env.NEXT_PUBLIC_MQTT_WS_URL ||
-				`ws://${window.location.hostname}:9001`
+				`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/mqtt`
 			: "ws://localhost:9001";
 
 	useEffect(() => {
