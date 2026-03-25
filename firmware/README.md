@@ -61,8 +61,9 @@ If all connection attempts fail, the board **automatically launches a Captive Po
 
 #### How to Connect via Captive Portal
 
-1. **The board creates a WiFi hotspot** named `IoT-Monitor-Setup`
-2. **Connect your phone/laptop** to the `IoT-Monitor-Setup` network
+1. **The board creates a WiFi hotspot** named `IoT-Setup-XXXX` (where `XXXX` is the end of its MAC address)
+2. **Connect your phone/laptop** to the `IoT-Setup-XXXX` network
+   - **Password:** `setup123`
 3. **A configuration page opens automatically** (captive portal redirect)
    - If it doesn't auto-open, navigate to `http://192.168.10.1` manually
 4. **Enter your WiFi SSID and password** on the configuration page

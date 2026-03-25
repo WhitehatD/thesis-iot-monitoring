@@ -613,8 +613,8 @@ static PortalStatus_t _start_softap(void)
              "IoT-Setup-%02X%02X",
              wifi->SysInfo.MAC[4], wifi->SysInfo.MAC[5]);
 
-    /* Open network (no password) for frictionless first-time setup */
-    ap_settings.pswd[0] = '\0';
+    /* WPA2 network for first-time setup (open unsupported by EMW3080) */
+    strncpy(ap_settings.pswd, "setup123", sizeof(ap_settings.pswd) - 1);
     ap_settings.channel = PORTAL_AP_CHANNEL;
 
     /* IP configuration */

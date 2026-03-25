@@ -225,6 +225,25 @@ React 19 / Next.js 16 highly-responsive frontend, engineered as a direct extensi
 
 ---
 
+## 📡 MQTT Command Reference
+
+All commands are JSON payloads published to the `device/stm32/commands` topic. The FastAPI backend coordinates these, but they can also be triggered manually during testing:
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| Capture Now | `{"type":"capture_now"}` | Instant image capture + upload |
+| Capture Sequence | `{"type":"capture_sequence","delays_ms":[0,2000]}` | Multi-capture at ms offsets |
+| Schedule | `{"type":"schedule","tasks":[...]}` | AI-generated task schedule |
+| Delete Schedule | `{"type":"delete_schedule"}` | Clear active schedule |
+| Firmware Update | `{"type":"firmware_update"}` | Trigger OTA update check |
+| Sleep Mode | `{"type":"sleep_mode","enabled":true}` | Toggle STOP2 between tasks |
+| Ping | `{"type":"ping"}` | LED strobe + acknowledgment |
+| Set WiFi | `{"type":"set_wifi","ssid":"...","password":"..."}` | Remote WiFi reconfiguration |
+| Erase WiFi | `{"type":"erase_wifi"}` | Erase credentials + reboot to portal |
+| Start Portal | `{"type":"start_portal"}` | Force captive portal mode |
+
+---
+
 ## 🚦 Edge Hardware Observability
 
 Ambiguous flashing LEDs are the bane of IoT engineering. This system employs a strictly enforced visual state machine via the board's Red and Green LEDs:
@@ -255,6 +274,8 @@ cp server/.env.example server/.env
 
 # Summon the stack
 docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Once running, access the Next.js Dashboard at: http://localhost:3000
 ```
 
 ### 2. The Edge Firmware
@@ -287,7 +308,7 @@ When modifying Edge Firmware (`main.c` / `camera.c`), you no longer physically t
 If the board is freshly flashed or cannot connect to a known network, it will automatically launch a secure Captive Portal for headless configuration:
 
 1. Look for a solid **Red LED** indicating Portal Mode.
-2. On your phone or laptop, connect to the newly broadcasted **`IoT-Setup-XXXX`** Wi-Fi network.
+2. On your phone or laptop, connect to the newly broadcasted **`IoT-Setup-XXXX`** Wi-Fi network using the default password **`setup123`**.
 3. Your device should automatically prompt you to "Sign in to network". If it doesn't, open a browser and navigate to **[http://192.168.10.1](http://192.168.10.1)**.
 4. Enter your target Wi-Fi SSID and Password in the portal UI.
 5. Click **Save & Connect**. The board will save the credentials to its internal flash memory, reboot automatically, and join your local network.
