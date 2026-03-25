@@ -126,17 +126,15 @@ export default function WifiConfigPanel({
 		}
 	};
 
-	// Ping board via capture command (lightweight health check)
+	// Ping board via dedicated ping command (lightweight health check)
 	const handlePing = async () => {
 		setPinging(true);
 		setPingResult(null);
 		const pingStart = Date.now();
 
 		try {
-			const res = await fetch(`${apiBase}/api/capture`, {
+			const res = await fetch(`${apiBase}/api/ping`, {
 				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ objective: "ping" }),
 			});
 
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);

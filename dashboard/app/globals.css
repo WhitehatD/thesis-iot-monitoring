@@ -2269,3 +2269,143 @@ However, applying backdrop filter on a fast scrolling list kills fps. We use sol
 		grid-template-columns: 1fr;
 	}
 }
+
+/* ── Log Terminal Console ────────────────────────────────── */
+.terminal-section {
+	padding: 0 40px 32px 40px;
+}
+
+.log-terminal-container {
+	background: var(--bg-card);
+	border: 1px solid var(--border-subtle);
+	border-radius: var(--radius-lg);
+	display: flex;
+	flex-direction: column;
+	backdrop-filter: blur(24px) saturate(180%);
+	-webkit-backdrop-filter: blur(24px) saturate(180%);
+	box-shadow: var(--shadow-card);
+	overflow: hidden;
+	height: 380px; /* Fixed height for scrollable logs */
+	position: relative;
+}
+
+.log-terminal-container::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 1px;
+	background: linear-gradient(
+		90deg,
+		transparent,
+		rgba(56, 189, 248, 0.4),
+		transparent
+	);
+	opacity: 0.5;
+}
+
+.log-terminal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 12px 20px;
+	background: rgba(0, 0, 0, 0.4);
+	border-bottom: 1px solid var(--border-subtle);
+}
+
+.log-terminal-title {
+	font-family: "JetBrains Mono", monospace;
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-secondary);
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.terminal-icon {
+	color: var(--text-primary);
+	font-weight: 800;
+	text-shadow: 0 0 10px var(--accent-emerald-glow);
+}
+
+.log-clear-btn {
+	background: transparent;
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: var(--text-muted);
+	padding: 4px 12px;
+	border-radius: 4px;
+	font-size: 11px;
+	font-family: "JetBrains Mono", monospace;
+	cursor: pointer;
+	transition: all 0.2s;
+}
+
+.log-clear-btn:hover {
+	color: var(--text-primary);
+	border-color: rgba(255, 255, 255, 0.3);
+	background: rgba(255, 255, 255, 0.05);
+}
+
+.log-terminal-body {
+	flex: 1;
+	overflow-y: auto;
+	padding: 16px 20px;
+	font-family: "JetBrains Mono", monospace;
+	font-size: 11px;
+	line-height: 1.6;
+	background: #020306;
+}
+
+.log-empty {
+	color: var(--text-muted);
+	font-style: italic;
+	opacity: 0.6;
+}
+
+.log-line {
+	display: flex;
+	gap: 12px;
+	margin-bottom: 4px;
+	word-break: break-absolute;
+	animation: fade-in-line 0.2s ease-out forwards;
+}
+
+@keyframes fade-in-line {
+	from {
+		opacity: 0;
+		transform: translateX(-5px);
+	}
+	to {
+		opacity: 1;
+		transform: translateX(0);
+	}
+}
+
+.log-time {
+	color: var(--text-muted);
+	flex-shrink: 0;
+	opacity: 0.8;
+}
+
+.log-text {
+	color: var(--text-primary);
+}
+
+.log-line.level-error .log-text {
+	color: var(--accent-rose);
+	font-weight: 600;
+}
+
+.log-line.level-warning .log-text {
+	color: var(--accent-amber);
+}
+
+.log-line.level-info .log-text {
+	color: var(--accent-blue);
+}
+
+.log-line.level-debug .log-text {
+	color: var(--text-muted);
+}

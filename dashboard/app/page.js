@@ -5,6 +5,7 @@ import CaptureButton from "@/components/CaptureButton";
 import ConnectionStatus from "@/components/ConnectionStatus";
 import DeviceStatusStepper from "@/components/DeviceStatusStepper";
 import ImageGrid from "@/components/ImageGrid";
+import LogTerminal from "@/components/LogTerminal";
 import SchedulerPanel from "@/components/SchedulerPanel";
 import WifiConfigPanel from "@/components/WifiConfigPanel";
 import { useMqttImages } from "@/hooks/useMqttImages";
@@ -98,6 +99,11 @@ export default function DashboardPage() {
 
 			{/* ── Live Device Status ─────────────────────────────── */}
 			<DeviceStatusStepper jobState={jobState} />
+
+			{/* ── Real-Time Console ─────────────────────────────── */}
+			<section className="main-content terminal-section">
+				<LogTerminal />
+			</section>
 
 			{/* ── Scheduler ─────────────────────────────────────── */}
 			<section className="main-content scheduler-section">

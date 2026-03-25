@@ -79,6 +79,21 @@ async def capture_now(request: CaptureRequest = CaptureRequest()):
         schedule_json=command_json,
     )
 
+@router.post("/ping")
+async def ping_board():
+    """
+    Send an immediate ping command to the STM32 board.
+    Triggers the LED light sequence on the physical hardware.
+    """
+    command = {"type": "ping"}
+    command_json = json.dumps(command)
+    await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
+
+    return {
+        "status": "sent",
+        "command": "ping",
+    }
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_image(task_id: int, file: UploadFile = File(...)):
     """
