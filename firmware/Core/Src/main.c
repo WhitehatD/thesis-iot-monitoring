@@ -464,12 +464,12 @@ int main(void)
     /* ── Phase 1: Hardware Initialization ────────────── */
 
     HAL_Init();
-    Boot_ReportResetReason();
     CACHE_Enable();
     SystemClock_Config();
 
     /* Debug UART — must be first for logging */
     Debug_Init();
+    Boot_ReportResetReason();
     LOG_INFO(TAG_BOOT, "========================================");
     LOG_INFO(TAG_BOOT, "  IoT Visual Monitoring Firmware v%s  ", FW_VERSION);
     LOG_INFO(TAG_BOOT, "  Board: B-U585I-IOT02A               ");

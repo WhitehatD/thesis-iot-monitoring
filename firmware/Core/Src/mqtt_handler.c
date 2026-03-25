@@ -226,8 +226,9 @@ static int32_t _tcp_send(const uint8_t *data, int len)
 
 static int32_t _tcp_recv(uint8_t *buf, int max_len, int timeout_ms)
 {
+    (void)timeout_ms;  /* MIPC driver inherently enforces MX_WIFI_CMD_TIMEOUT */
     if (s_socket < 0) return -1;
-    return MX_WIFI_Socket_recv(wifi_obj_get(), s_socket, buf, max_len, timeout_ms);
+    return MX_WIFI_Socket_recv(wifi_obj_get(), s_socket, buf, max_len, 0);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
