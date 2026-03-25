@@ -220,8 +220,9 @@ static int _build_disconnect_packet(uint8_t *buf)
 static int32_t _tcp_send(const uint8_t *data, int len)
 {
     if (s_socket < 0) return -1;
-    return MX_WIFI_Socket_send(wifi_obj_get(), s_socket, (uint8_t *)data, len,
-                                MQTT_CONNECT_TIMEOUT_MS);
+    /* SEC-08: Ensure '0' is passed as the flags parameter to MX_WIFI_Socket_send.
+     * The last argument is 'flags' (e.g., MSG_DONTWAIT), not a timeout! */
+    return MX_WIFI_Socket_send(wifi_obj_get(), s_socket, (uint8_t *)data, len, 0);
 }
 
 static int32_t _tcp_recv(uint8_t *buf, int max_len, int timeout_ms)
