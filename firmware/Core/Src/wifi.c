@@ -134,7 +134,7 @@ WiFiStatus_t WiFi_Connect(const char *ssid, const char *password)
             wifi_obj_get(),
             ssid,
             password,
-            MX_WIFI_SEC_WPA2_AES
+            MX_WIFI_SEC_AUTO
         );
 
         if (ret == MX_WIFI_STATUS_OK)
