@@ -1773,6 +1773,8 @@ static void _do_ping_sequence(void)
         BSP_LED_Off(LED_GREEN);
         HAL_Delay(100);
     }
+    
+    MQTT_PublishStatus("{\"status\":\"ping_complete\"}");
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
