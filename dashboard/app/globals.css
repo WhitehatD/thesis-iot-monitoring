@@ -501,6 +501,35 @@ body {
 	gap: 4px;
 }
 
+.terminal-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 4px 8px 8px 8px;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+	margin-bottom: 8px;
+	color: var(--text-tertiary);
+	font-size: 0.7rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.btn-text {
+	background: transparent;
+	border: none;
+	color: var(--accent-cyan);
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	cursor: pointer;
+	opacity: 0.6;
+	transition: opacity 0.2s;
+}
+
+.btn-text:hover {
+	opacity: 1;
+	text-decoration: underline;
+}
+
 .terminal-window::-webkit-scrollbar {
 	width: 6px;
 }

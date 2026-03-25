@@ -94,28 +94,51 @@ def main():
             print(f"  {p.device}  —  {p.description}")
         sys.exit(1)
 
-    try:
-        while True:
-            raw = ser.readline()
-            if raw:
-                line = raw.decode("utf-8", errors="replace").rstrip()
-                print(colorize(line))
-                
-                # Publish log line
-                log_payload = {
-                    "timestamp": time.time(),
-                    "level": determine_level(line),
-                    "text": line,
-                    "board_id": BOARD_ID
-                }
-                mqttc.publish(TOPIC_LOGS, json.dumps(log_payload))
+    def publish_log(text: str):
+        log_payload = {
+            "timestamp": time.time(),
+            "level": determine_level(text),
+            "text": text,
+            "board_id": BOARD_ID
+        }
+        mqttc.publish(TOPIC_LOGS, json.dumps(log_payload))
+        
+        # Publish implicit state if any
+        state_updates = extract_state(text)
+        if state_updates:
+            state_updates["timestamp"] = time.time()
+            state_updates["board_id"] = BOARD_ID
+            mqttc.publish(TOPIC_STATE, json.dumps(state_updates))
 
-                # Publish implicit state if any
-                state_updates = extract_state(line)
-                if state_updates:
-                    state_updates["timestamp"] = time.time()
-                    state_updates["board_id"] = BOARD_ID
-                    mqttc.publish(TOPIC_STATE, json.dumps(state_updates))
+    try:
+        buffer = ""
+        last_data_time = time.time()
+        while True:
+            # Read available data
+            if ser.in_waiting > 0:
+                raw_chunk = ser.read(ser.in_waiting)
+                chunk = raw_chunk.decode("utf-8", errors="replace")
+                buffer += chunk
+                last_data_time = time.time()
+                
+                # If we have newlines, publish full lines
+                if "\n" in buffer:
+                    lines = buffer.split("\n")
+                    for line in lines[:-1]:
+                        line_clean = line.rstrip()
+                        print(colorize(line_clean))
+                        publish_log(line_clean)
+                    buffer = lines[-1]
+            
+            # If buffer has data but no newline for 100ms, flush as partial log
+            if buffer and (time.time() - last_data_time > 0.1):
+                # Ensure we don't just print a bunch of empty lines if buffer is just spaces/newlines
+                if buffer.strip():
+                    print(colorize(buffer.rstrip()), end="\r\n", flush=True)
+                publish_log(buffer)
+                buffer = ""
+            
+            time.sleep(0.01)
 
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Monitor stopped.{RESET}")

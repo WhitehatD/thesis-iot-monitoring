@@ -89,7 +89,7 @@ export default function DashboardPage() {
 							...prev,
 							[boardId]: {
 								...prev[boardId],
-								logs: [logEntry, ...prev[boardId].logs].slice(0, 100),
+								logs: [logEntry, ...prev[boardId].logs].slice(0, 500),
 							},
 						};
 					});
@@ -154,7 +154,7 @@ export default function DashboardPage() {
 							level: "info",
 							text: `Status transition: ${data.status}`,
 						};
-						update.logs = [logEntry, ...update.logs].slice(0, 100);
+						update.logs = [logEntry, ...update.logs].slice(0, 500);
 					}
 					if (data.status === "captured" || data.status === "uploaded") {
 						update.captures += 1;
@@ -200,7 +200,6 @@ export default function DashboardPage() {
 	}, [apiBase, mqttUrl]);
 
 	const pingBoard = async (boardId: string) => {
-		// For now the server just broadcasts the ping. Adding boardId support in API could be a future step.
 		try {
 			// Send ping using standard fetch
 			await fetch(`${apiBase}/api/ping`, { method: "POST" });
@@ -216,13 +215,26 @@ export default function DashboardPage() {
 					...prev,
 					[boardId]: {
 						...prev[boardId],
-						logs: [logEntry, ...prev[boardId].logs].slice(0, 100),
+						logs: [logEntry, ...prev[boardId].logs].slice(0, 500),
 					},
 				};
 			});
 		} catch (err) {
 			console.error("Ping failed:", err);
 		}
+	};
+
+	const clearLogs = (boardId: string) => {
+		setBoards((prev) => {
+			if (!prev[boardId]) return prev;
+			return {
+				...prev,
+				[boardId]: {
+					...prev[boardId],
+					logs: [],
+				},
+			};
+		});
 	};
 
 	const getStatusClass = (status: string) => {
@@ -347,6 +359,15 @@ export default function DashboardPage() {
 								</div>
 
 								<div className="terminal-window">
+									<div className="terminal-header">
+										<span>Board Console</span>
+										<button
+											className="btn-text"
+											onClick={() => clearLogs(board.id)}
+										>
+											Clear
+										</button>
+									</div>
 									{board.logs.length === 0 ? (
 										<div className="terminal-empty">
 											No telemetry received yet...
