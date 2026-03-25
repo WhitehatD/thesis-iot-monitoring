@@ -338,7 +338,8 @@ OTAStatus_t OTA_CheckForUpdate(OTAVersionInfo_t *info)
         return OTA_ERROR_PARSE;
     }
 
-    /* Parse JSON */
+    /* ── 5. Setup JSON Allocator and Parse ── */
+    json_mem_reset();
     cJSON *root = cJSON_Parse(body);
     if (root == NULL)
     {

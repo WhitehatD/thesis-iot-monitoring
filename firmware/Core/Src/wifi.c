@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "cJSON.h"
+#include "mqtt_handler.h"
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Module State
@@ -582,6 +583,7 @@ WiFiStatus_t WiFi_HttpGetTime(uint8_t *hour, uint8_t *minute, uint8_t *second,
 
     /* ── 6. Parse JSON fields ──────────────────────────── */
 
+    json_mem_reset();
     cJSON *root = cJSON_Parse(body);
     if (root == NULL)
     {

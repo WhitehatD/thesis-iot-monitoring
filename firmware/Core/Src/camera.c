@@ -24,6 +24,7 @@
 #include "app_camera.h"
 #include "firmware_config.h"
 #include "debug_log.h"
+#include "stm32u5xx_ll_dcache.h"
 #include "main.h"
 
 #include "b_u585i_iot02a_camera.h"
@@ -361,6 +362,15 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
     /* No memcpy needed — DMA wrote directly into caller's buffer */
     *captured_size = copy_size;
 
+    /* SEC-09: Enterprise Cache Coherency (Fintech Grade)
+     * Invalidate the CPU D-Cache for the DMA destination buffer so the CPU
+     * reads the actual photo from physical SRAM, not stale zeroed cache lines. */
+    LL_DCACHE_SetCommand(DCACHE1, LL_DCACHE_COMMAND_INVALIDATE_BY_ADDR);
+    LL_DCACHE_SetStartAddress(DCACHE1, (uint32_t)buffer);
+    LL_DCACHE_SetEndAddress(DCACHE1, (uint32_t)buffer + copy_size - 1);
+    LL_DCACHE_StartCommand(DCACHE1);
+    while (LL_DCACHE_IsActiveFlag_BUSYCMD(DCACHE1));
+
     LOG_INFO(TAG_CAM, "Captured in %lums: %lu bytes (%lu frames)",
              (unsigned long)(HAL_GetTick() - start_tick),
              (unsigned long)copy_size,
@@ -508,6 +518,13 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
                 copy_size = buffer_size;
 
             *captured_size = copy_size;
+
+            /* SEC-09: Enterprise Cache Coherency */
+            LL_DCACHE_SetCommand(DCACHE1, LL_DCACHE_COMMAND_INVALIDATE_BY_ADDR);
+            LL_DCACHE_SetStartAddress(DCACHE1, (uint32_t)buffer);
+            LL_DCACHE_SetEndAddress(DCACHE1, (uint32_t)buffer + copy_size - 1);
+            LL_DCACHE_StartCommand(DCACHE1);
+            while (LL_DCACHE_IsActiveFlag_BUSYCMD(DCACHE1));
 
             LOG_INFO(TAG_CAM, "[PERF] Warm capture: %lums, %lu bytes (attempt %lu/%lu)",
                      (unsigned long)(HAL_GetTick() - perf_start),

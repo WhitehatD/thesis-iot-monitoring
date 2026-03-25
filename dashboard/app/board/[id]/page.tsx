@@ -22,6 +22,7 @@ interface ImageCapture {
 	taskId: number;
 	filename: string;
 	url: string;
+	date: string;
 	timestamp: number;
 	isNew: boolean;
 }
@@ -52,6 +53,8 @@ export default function BoardPage({
 	const [globalStatus, setGlobalStatus] = useState("connecting");
 	const [scheduleInput, setScheduleInput] = useState("");
 	const [isScheduling, setIsScheduling] = useState(false);
+	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
+	const [activeFilter, setActiveFilter] = useState("filter-normal");
 	const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
 
 	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
@@ -62,19 +65,17 @@ export default function BoardPage({
 				`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/mqtt`
 			: "ws://localhost:9001";
 
-	useEffect(() => {
-		// Fetch initial images for this board (if backend supports filtering, assuming it returns all for now and we filter)
-		fetch(`${apiBase}/api/images?board_id=${boardId}`) // Or we filter client side if backend doesn't filter
+	const fetchImages = () => {
+		fetch(`${apiBase}/api/images?board_id=${boardId}`)
 			.then((res) => res.json())
 			.then((data) => {
 				if (data.images) {
-					// We only show images for this board if possible. Currently the backend /api/images might return all.
-					// We'll map them. In a real scenario we'd filter `img.board_id === boardId`.
 					setImages(
 						data.images.map((img: any) => ({
 							taskId: img.task_id,
 							filename: img.filename,
 							url: `${apiBase}${img.url}`,
+							date: img.date,
 							timestamp: img.timestamp,
 							isNew: false,
 						})),
@@ -82,6 +83,10 @@ export default function BoardPage({
 				}
 			})
 			.catch(console.error);
+	};
+
+	useEffect(() => {
+		fetchImages();
 
 		// Setup MQTT
 		const client = mqtt.connect(mqttUrl, { reconnectPeriod: 3000 });
@@ -112,7 +117,13 @@ export default function BoardPage({
 					sourceBoardId = data.client_id || data.board_id;
 				}
 
-				// Only process messages for THIS board
+				if (topic === "dashboard/images/new") {
+					// Immediately trigger a refetch of all images from the backend to ensure consistency
+					fetchImages();
+					return;
+				}
+
+				// Global topic checks are done, now enforce source board filtering for board-specific telemetry
 				if (sourceBoardId !== boardId) return;
 
 				if (topic === "dashboard/logs") {
@@ -128,27 +139,6 @@ export default function BoardPage({
 						...prev,
 						logs: [logEntry, ...prev.logs].slice(0, 500),
 					}));
-					return;
-				}
-
-				if (topic === "dashboard/images/new") {
-					const newImg: ImageCapture = {
-						taskId: data.task_id,
-						filename: data.filename,
-						url: `${apiBase}${data.url}`,
-						timestamp: data.timestamp || Date.now() / 1000,
-						isNew: true,
-					};
-					setImages((prev) => [newImg, ...prev]);
-
-					// Remove popup animation class after 3s
-					setTimeout(() => {
-						setImages((prev) =>
-							prev.map((i) =>
-								i.taskId === newImg.taskId ? { ...i, isNew: false } : i,
-							),
-						);
-					}, 3000);
 					return;
 				}
 
@@ -266,6 +256,19 @@ export default function BoardPage({
 			console.error("Schedule failed:", err);
 		} finally {
 			setIsScheduling(false);
+		}
+	};
+
+	const deleteImage = async (img: any) => {
+		if (!confirm("Are you sure you want to delete this capture?")) return;
+		try {
+			await fetch(`${apiBase}/api/images/${img.date}/${img.filename}`, {
+				method: "DELETE",
+			});
+			setImages((prev) => prev.filter((i) => i.filename !== img.filename));
+			setSelectedImage(null);
+		} catch (err) {
+			console.error("Delete failed:", err);
 		}
 	};
 
@@ -407,15 +410,34 @@ export default function BoardPage({
 
 			<main className="main-content">
 				<section className="images-section">
-					<h2>Capture History</h2>
-					<div className="gallery-grid">
+					<div className="gallery-header">
+						<h2>Capture History</h2>
+						<div className="filter-controls">
+							<span className="filter-label">Lens Filter:</span>
+							<select
+								className="filter-select"
+								value={activeFilter}
+								onChange={(e) => setActiveFilter(e.target.value)}
+							>
+								<option value="filter-normal">Normal (Raw)</option>
+								<option value="filter-hdr">Ultra HDR</option>
+								<option value="filter-noir">Cinematic Noir</option>
+								<option value="filter-vintage">1998 Vintage</option>
+							</select>
+						</div>
+					</div>
+					<div className={`gallery-grid ${activeFilter}`}>
 						{images.length === 0 ? (
 							<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
 								No captures received yet.
 							</div>
 						) : (
 							images.map((img) => (
-								<div key={img.taskId} className="image-card">
+								<div
+									key={img.filename}
+									className="image-card"
+									onClick={() => setSelectedImage(img)}
+								>
 									{img.isNew && <div className="badge-new">NEW</div>}
 									<div className="image-wrapper">
 										<img
@@ -430,12 +452,70 @@ export default function BoardPage({
 											{new Date(img.timestamp * 1000).toLocaleTimeString()}
 										</span>
 									</div>
+									<button
+										className="btn-delete"
+										onClick={(e) => {
+											e.stopPropagation();
+											deleteImage(img);
+										}}
+										title="Delete Image"
+									>
+										🗑️
+									</button>
 								</div>
 							))
 						)}
 					</div>
 				</section>
 			</main>
+
+			{/* Zoom Lightbox Overlay */}
+			{selectedImage && (
+				<div
+					className="lightbox-overlay"
+					onClick={() => setSelectedImage(null)}
+				>
+					<div
+						className="lightbox-content"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<button
+							className="lightbox-close"
+							onClick={() => setSelectedImage(null)}
+						>
+							✕
+						</button>
+						<img
+							src={selectedImage.url}
+							alt="Full Size Export"
+							className={`lightbox-image ${activeFilter}`}
+						/>
+						<div className="lightbox-footer">
+							<div>
+								<h3>Task #{selectedImage.taskId}</h3>
+								<p>
+									{new Date(selectedImage.timestamp * 1000).toLocaleString()}
+								</p>
+							</div>
+							<div className="lightbox-actions">
+								<a
+									href={selectedImage.url}
+									download
+									className="btn btn-secondary"
+								>
+									Download HD
+								</a>
+								<button
+									className="btn btn-danger"
+									onClick={() => deleteImage(selectedImage)}
+								>
+									Delete Permanently
+								</button>
+							</div>
+						</div>
+					</div>
+				</div>
+			)}
 		</div>
 	);
 }

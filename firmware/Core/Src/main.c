@@ -141,6 +141,25 @@ static void Watchdog_Init(void);
 #endif
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  SEC-11: cJSON Static Bump Allocator (Fintech Heap Protection)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+static uint8_t s_json_mem[12288];  /* 12 KB dedicated static pool for JSON DOM */
+static size_t s_json_idx = 0;
+
+static void* json_malloc(size_t sz) {
+    size_t align = (sz + 7) & ~7;
+    if(s_json_idx + align > sizeof(s_json_mem)) return NULL;
+    void* p = &s_json_mem[s_json_idx];
+    s_json_idx += align;
+    return p;
+}
+static void json_free(void* ptr) { (void)ptr; }
+
+void json_mem_reset(void) {
+    s_json_idx = 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  Stack Watermark — Enterprise RAM Safety
  *
  *  Paints the stack region (top of RAM, grows downward) with canary words.
@@ -260,6 +279,9 @@ static uint32_t RAM_CheckStackHighWater(void)
 
 static void on_command_received(const char *json_str, uint32_t length)
 {
+    /* Reset JSON arena before parsing new command to prevent fragmentation */
+    json_mem_reset();
+
     /* REL-04: Do not allocate 2KB on stack in ISR/MQTT callback context */
     static char s_cmd_buf[SCHEDULE_JSON_MAX];
 
@@ -466,6 +488,12 @@ int main(void)
     HAL_Init();
     CACHE_Enable();
     SystemClock_Config();
+
+    /* SEC-11: Initialize static JSON allocator to prevent heap fragmentation */
+    cJSON_Hooks hooks;
+    hooks.malloc_fn = json_malloc;
+    hooks.free_fn = json_free;
+    cJSON_InitHooks(&hooks);
 
     /* Debug UART — must be first for logging */
     Debug_Init();
@@ -792,25 +820,9 @@ int main(void)
             poll_start = HAL_GetTick();
         }
 
-        /* ── Periodic OTA version check (every 30 min) ── */
-        if ((HAL_GetTick() - last_ota_check) > OTA_CHECK_INTERVAL_MS)
-        {
-            last_ota_check = HAL_GetTick();
-            /* REL-06: Guard OTA check. Only check version, defer heavy download to main loop */
-            if (!s_capture_now_requested && !s_sequence_requested && !s_button_capture_requested) {
-                LOG_INFO(TAG_OTA, "Periodic firmware update check...");
-                
-                OTAVersionInfo_t info;
-                OTAStatus_t status = OTA_CheckForUpdate(&info);
-                if (status == OTA_OK)
-                {
-                    LOG_INFO(TAG_OTA, "Update available: v%s", info.version);
-                    s_ota_requested = 1; /* Main loop will safely handle download */
-                }
-            } else {
-                LOG_INFO(TAG_OTA, "Periodic update check deferred (capture active)");
-            }
-        }
+        /* ── Enterprise OTA Architecture: We no longer poll HTTP for versions.
+         * Server PUSHES {"type":"firmware_update"} via MQTT, triggering s_ota_requested 
+         * seamlessly without blocking the photo capture loop. ── */
 
         /* ── Handle: Scheduled Tasks (RTC polling) ── */
         if (s_schedule_received && s_schedule.current_index < s_schedule.task_count)
@@ -920,6 +932,9 @@ int main(void)
 
                         /* Turn off RED LED when upload completes */
                         BSP_LED_Off(LED_RED);
+                        
+                        /* SEC-10: Cryptographic Sanitization of Image Buffer */
+                        secure_erase(s_image_buffer, captured_size);
 
                         /* Re-establish MQTT if connection was lost */
                         if (MQTT_Init(&mqtt_cfg) == 0)
@@ -1151,20 +1166,23 @@ static void CACHE_Enable(void)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Rapid red LED blink to signal a fatal error.
- * Does not return — the system must be reset.
+ * Assert a hardware reset on a fatal error, saving the state in TAMP.
+ * Fintech best practice: bricking requires autonomous recovery.
  */
 static void LED_SignalError(void)
 {
-    BSP_LED_Off(LED_GREEN);
-    while (1)
-    {
-        BSP_LED_Toggle(LED_RED);
-        HAL_Delay(150);
-#if WATCHDOG_ENABLED
-        HAL_IWDG_Refresh(&hiwdg);  /* Keep alive during error blink — allows debugger attach */
-#endif
-    }
+    LOG_ERROR(TAG_BOOT, "FATAL ERROR — Asserting NVIC System Reset");
+    
+    /* Enable backup domain access if not already */
+    __HAL_RCC_PWR_CLK_ENABLE();
+    HAL_PWR_EnableBkUpAccess();
+    
+    /* Store fatal fault code (0xDEAD0001) in backup register */
+    TAMP->BKP5R = 0xDEAD0001;
+    
+    /* Short delay for logs to flush if using UART, then hard reset */
+    HAL_Delay(100);
+    NVIC_SystemReset();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1327,6 +1345,9 @@ static void _do_button_capture(void)
     /* Turn off RED LED after capture cycle completes */
     BSP_LED_Off(LED_RED);
 
+    /* SEC-10: Cryptographic Sanitization */
+    secure_erase(s_image_buffer, captured_size);
+
 #if STACK_WATERMARK_ENABLED
     RAM_CheckStackHighWater();
 #endif
@@ -1451,6 +1472,9 @@ static void _do_capture_now(void)
 
     /* Turn off RED LED after capture cycle completes */
     BSP_LED_Off(LED_RED);
+
+    /* SEC-10: Cryptographic Sanitization */
+    secure_erase(s_image_buffer, captured_size);
 
 #if STACK_WATERMARK_ENABLED
     RAM_CheckStackHighWater();
@@ -1577,6 +1601,9 @@ static void _do_capture_sequence(void)
     }
 
     /* Do NOT deinit camera — keep warm for next capture */
+    
+    /* SEC-10: Cryptographic Sanitization */
+    secure_erase(s_image_buffer, CAMERA_FRAME_BUFFER_SIZE);
 
     LOG_INFO(TAG_BOOT, "[PERF] Sequence complete — %lu captures in %lums",
              (unsigned long)count,

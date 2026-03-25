@@ -104,6 +104,7 @@ int Scheduler_ParseJSON(Schedule_t *schedule, const char *json_str)
               (unsigned)json_len);
 
     /* Parse JSON */
+    json_mem_reset();
     cJSON *root = cJSON_Parse(json_str);
     if (root == NULL)
     {

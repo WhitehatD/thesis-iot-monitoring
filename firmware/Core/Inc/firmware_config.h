@@ -12,6 +12,9 @@
 #ifndef __FIRMWARE_CONFIG_H
 #define __FIRMWARE_CONFIG_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Wi-Fi Configuration
  *
@@ -169,5 +172,18 @@
 #define OTA_PROGRESS_INTERVAL_BYTES (32 * 1024)    /* MQTT progress update every 32KB */
 #define OTA_VERSION_PATH            "/api/firmware/version"
 #define OTA_DOWNLOAD_PATH           "/api/firmware/download"
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  SEC-10/11: Fintech Memory Sanitization & Static Allocation
+ * ═══════════════════════════════════════════════════════════════════════════ */
+void json_mem_reset(void);
+
+#pragma GCC push_options
+#pragma GCC optimize ("O0")
+static inline void secure_erase(void *v, size_t n) {
+    volatile uint8_t *p = (volatile uint8_t *)v;
+    while (n--) *p++ = 0;
+}
+#pragma GCC pop_options
 
 #endif /* __FIRMWARE_CONFIG_H */
