@@ -306,6 +306,21 @@ static HAL_StatusTypeDef TransmitReceive(SPI_HandleTypeDef *hspi, uint8_t *txdat
 
   DEBUG_LOG(("\n%s()> %"PRIu32"\n"), __FUNCTION__, (uint32_t)datalen);
 
+  /* ENTERPRISE FIX: Clear SPI error flags proactively before polling.
+   * Extremely high TCP payloads without DMA drop the CPU into SysTick/Watchdog
+   * yield loops, guaranteeing natural SPI Overruns (OVR). If these flags are
+   * left set, the next HAL_SPI_TransmitReceive will immediately abort with
+   * HAL_ERROR, permanently stalling the MIPC protocol (0x0205 timeout). */
+#if defined(__HAL_SPI_CLEAR_OVRFLAG)
+  __HAL_SPI_CLEAR_OVRFLAG(hspi);
+#endif
+#if defined(__HAL_SPI_CLEAR_UDRFLAG)
+  __HAL_SPI_CLEAR_UDRFLAG(hspi);
+#endif
+#if defined(__HAL_SPI_CLEAR_MODFFLAG)
+  __HAL_SPI_CLEAR_MODFFLAG(hspi);
+#endif
+
 #if 0
   for (uint32_t i = 0; i < datalen; i++)
   {
@@ -322,6 +337,12 @@ static HAL_StatusTypeDef TransmitReceive(SPI_HandleTypeDef *hspi, uint8_t *txdat
 #endif /* (DMA_ON_USE == 1) */
 
   DEBUG_LOG("\n%s()< %" PRIi32 "\n\n", __FUNCTION__, (int32_t)ret);
+  
+  /* Fallback: Force state to READY if an abort left it BUSY */
+  if (ret != HAL_OK && hspi->State != HAL_SPI_STATE_READY)
+  {
+      hspi->State = HAL_SPI_STATE_READY;
+  }
 
   return ret;
 }
@@ -332,6 +353,17 @@ static HAL_StatusTypeDef Transmit(SPI_HandleTypeDef *hspi, uint8_t *txdata, uint
   HAL_StatusTypeDef ret;
 
   DEBUG_LOG("\n%s()> %" PRIu32 "\n", __FUNCTION__, (uint32_t)datalen);
+
+  /* Proactively clear SPI flags to prevent polling aborts */
+#if defined(__HAL_SPI_CLEAR_OVRFLAG)
+  __HAL_SPI_CLEAR_OVRFLAG(hspi);
+#endif
+#if defined(__HAL_SPI_CLEAR_UDRFLAG)
+  __HAL_SPI_CLEAR_UDRFLAG(hspi);
+#endif
+#if defined(__HAL_SPI_CLEAR_MODFFLAG)
+  __HAL_SPI_CLEAR_MODFFLAG(hspi);
+#endif
 
 #if 0
   for (uint32_t i = 0; i < datalen; i++)
@@ -351,6 +383,12 @@ static HAL_StatusTypeDef Transmit(SPI_HandleTypeDef *hspi, uint8_t *txdata, uint
 
   DEBUG_LOG("\n%s() <%" PRIi32 "\n\n", __FUNCTION__, (int32_t)ret);
 
+  /* Fallback: Force state to READY if an abort left it BUSY */
+  if (ret != HAL_OK && hspi->State != HAL_SPI_STATE_READY)
+  {
+      hspi->State = HAL_SPI_STATE_READY;
+  }
+
   return ret;
 }
 
@@ -360,6 +398,17 @@ static HAL_StatusTypeDef Receive(SPI_HandleTypeDef *hspi, uint8_t *rxdata, uint1
   HAL_StatusTypeDef ret;
 
   DEBUG_LOG("\n%s()> %" PRIu32 "\n", __FUNCTION__, (uint32_t)datalen);
+
+  /* Proactively clear SPI flags to prevent polling aborts */
+#if defined(__HAL_SPI_CLEAR_OVRFLAG)
+  __HAL_SPI_CLEAR_OVRFLAG(hspi);
+#endif
+#if defined(__HAL_SPI_CLEAR_UDRFLAG)
+  __HAL_SPI_CLEAR_UDRFLAG(hspi);
+#endif
+#if defined(__HAL_SPI_CLEAR_MODFFLAG)
+  __HAL_SPI_CLEAR_MODFFLAG(hspi);
+#endif
 
 #if (defined(DMA_ON_USE) && (DMA_ON_USE == 1))
   ret = HAL_SPI_Receive_DMA(hspi, rxdata, datalen);
@@ -377,6 +426,12 @@ static HAL_StatusTypeDef Receive(SPI_HandleTypeDef *hspi, uint8_t *rxdata, uint1
 #endif /* 0 */
 
   DEBUG_LOG("\n%s()< %" PRIi32 "\n\n", __FUNCTION__, (int32_t)ret);
+
+  /* Fallback: Force state to READY if an abort left it BUSY */
+  if (ret != HAL_OK && hspi->State != HAL_SPI_STATE_READY)
+  {
+      hspi->State = HAL_SPI_STATE_READY;
+  }
 
   return ret;
 }
