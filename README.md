@@ -53,6 +53,9 @@ In March 2026, the firmware underwent a comprehensive production-grade audit:
 * **Tactile Hardware Feedback**: Implemented a responsive `"ping"` command bridging the Next.js visual dashboard directly to the edge hardware (3× Red / 3× Green strobe).
 * **Strict Compiler Enforcement**: Upgraded the `Makefile` with a dedicated `-Werror` release target. Eradicated all implicit conversions and unreferenced variables.
 * **Log-Level Compilation**: Introduced `#define SYSTEM_LOG_LEVEL` filtering, stripping out heavy UART format strings locally while retaining critical error traces. This reliably squeezed the firmware footprint down to **8.3%** of the available 1MB flash bank.
+* **Distributed Enterprise Dashboard (Next.js + TS)**: Re-architected the monolithic JavaScript UI into a robust TypeScript Next.js 16 application. Features a "Mechanical Luxury" YC-grade aesthetic with independent, real-time telemetry panels for tracking fleet-wide distributed STM32 nodes concurrently.
+* **Closed-Loop Hardware Feedback**: Hardened the visual "ping" sequence. The firmware now emits a conclusive `{"status":"ping_complete"}` MQTT acknowledgment back to the fleet dashboard after executing its hardware strobe sequence.
+* **Zero-Trust CORS Policies**: Audited the FastAPI cloud backend. Eliminated insecure wildcard origins combined with credential inclusions to strictly authenticate local UI traffic and eliminate implicit frontend `fetch` failures.
 
 ---
 
