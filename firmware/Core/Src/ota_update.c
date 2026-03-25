@@ -174,7 +174,18 @@ static void _ota_yield_with_watchdog(uint32_t delay_ms)
 
 static int32_t _ota_socket_open(void)
 {
-    return WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
+    int32_t sock = WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
+    if (sock >= 0)
+    {
+        /* ENTERPRISE FIX: Override receive timeout to 100ms.
+         * The AT firmware expects a POSIX `struct mx_timeval` (8 bytes) for MX_SO_RCVTIMEO.
+         * Passing an int (4 bytes) caused memory misalignment and 100-second stalls! */
+        struct mx_timeval tv;
+        tv.tv_sec = 0;
+        tv.tv_usec = 100000; /* 100ms */
+        MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &tv, sizeof(tv));
+    }
+    return sock;
 }
 
 static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
@@ -245,37 +256,18 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
         /* Strict 1024 boundary to prevent SPI payload crashes */
         int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
 
-        /* ENTERPRISE FIX: Use robust select() instead of MSG_DONTWAIT or broken SO_RCVTIMEO.
-         * The EMW3080 silently ignores socket timeouts and hangs indefinitely if recv
-         * is called on an empty buffer, dropping the SPI bus entirely.
-         * We explicitly check if data is readable before issuing the blocking recv. */
-        mx_fd_set readfds;
-        MX_FD_ZERO(&readfds);
-        MX_FD_SET(sock, &readfds);
+        /* ENTERPRISE FIX: using flag 0 instead of 0x08 (MSG_DONTWAIT).
+         * 0x08 crashed the EMW3080 AT firmware. Relying on the 100ms SO_RCVTIMEO
+         * properly set via struct mx_timeval in _ota_socket_open. */
+        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
+        polls++;
 
-        struct mx_timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; /* 100 ms timeout for select */
-
-        int32_t sel_ret = MX_WIFI_Socket_select(wifi_obj_get(), sock + 1, &readfds, NULL, NULL, &tv);
-
-        if (sel_ret > 0 && MX_FD_ISSET(sock, &readfds))
+        if (ret > 0)
         {
-            /* Socket is strictly readable — recv will return instantaneously */
-            ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
-            polls++;
-
-            if (ret > 0)
-            {
-                LOG_DEBUG(TAG_OTA, "recv: %ld bytes after %lu polls (%lums)",
-                          (long)ret, (unsigned long)polls,
-                          (unsigned long)(HAL_GetTick() - start));
-                return ret;
-            }
-        }
-        else
-        {
-            polls++;
+            LOG_DEBUG(TAG_OTA, "recv: %ld bytes after %lu polls (%lums)",
+                      (long)ret, (unsigned long)polls,
+                      (unsigned long)(HAL_GetTick() - start));
+            return ret;
         }
     }
 
