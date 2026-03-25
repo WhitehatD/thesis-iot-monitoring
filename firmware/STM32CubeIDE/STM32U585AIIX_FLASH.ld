@@ -40,7 +40,7 @@ ENTRY(Reset_Handler)
 _estack = ORIGIN(RAM) + LENGTH(RAM);	/* end of "RAM" Ram type memory */
 
 _Min_Heap_Size = 0x1000;	/* 4 KB heap — cJSON + dynamic alloc headroom */
-_Min_Stack_Size = 0x2000;	/* 8 KB stack — safe margin for ISR nesting + deep call chains */
+_Min_Stack_Size = 0x8000;	/* 32 KB stack — safe margin for deep driver calls + cJSON */
 
 /* Memories definition */
 MEMORY

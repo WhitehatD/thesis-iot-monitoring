@@ -165,7 +165,7 @@ static void _ota_yield_with_watchdog(uint32_t delay_ms)
         if (chunk > 100) chunk = 100;
         MX_WIFI_IO_YIELD(wifi_obj_get(), chunk);
 #if WATCHDOG_ENABLED
-        IWDG->KR = 0x0000AAAAu; /* Pet the dog frequently */
+        IWDG->KR = 0x0000AAAAu; /* Pet the dog frequently during yield */
 #endif
     }
 }
@@ -486,6 +486,10 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         LOG_INFO(TAG_OTA, "TEST: Yielding SPI for 2000ms for response...");
         _ota_yield_with_watchdog(2000);
 
+#if WATCHDOG_ENABLED
+        IWDG->KR = 0x0000AAAAu; /* Pet the dog before blocking recv */
+#endif
+
         /* CRITICAL FIX: The stack is only 8KB. Allocating 8.7KB here overflows the stack 
          * and corrupts the SPI Wi-Fi driver's structural data below it in RAM, causing MIPC timeouts!
          * We safely repurpose the end of our massive frame buffer for the initial HTTP header receive. */
@@ -523,6 +527,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
 
         /* ── HTTP Status Code Validation ────────────────────────────── */
+        if (recv_len >= (int32_t)recv_buf_size) recv_len = recv_buf_size - 1;
         recv_buf[recv_len] = '\0';  /* Safe — recv_buf has +512 headroom */
 
         int http_status = 0;

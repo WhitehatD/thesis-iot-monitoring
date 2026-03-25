@@ -1637,7 +1637,19 @@ static void _do_ota_update(void)
     if (Camera_IsInitialized())
     {
         LOG_INFO(TAG_OTA, "Stopping Camera DCMI DMA before reusing frame buffer...");
-        Camera_DeInit();
+        if (Camera_DeInit() != CAMERA_OK) {
+            LOG_ERROR(TAG_OTA, "CRITICAL: Camera de-init FAILED — aborting OTA for safety");
+            MQTT_PublishStatus("{\"status\":\"ota_error\",\"reason\":\"camera_deinit_failed\"}");
+            MQTTConfig_t re_cfg = {
+                .broker_host = MQTT_BROKER_HOST,
+                .broker_port = MQTT_BROKER_PORT,
+                .client_id   = MQTT_CLIENT_ID,
+            };
+            MQTT_Init(&re_cfg);
+            MQTT_SubscribeCommands(on_command_received);
+            s_ota_in_progress = 0;
+            return;
+        }
     }
 
     /* Drain any residual SPI traffic from the MQTT disconnect */
@@ -1650,7 +1662,15 @@ static void _do_ota_update(void)
     }
     LOG_INFO(TAG_OTA, "MQTT disconnected — SPI bus dedicated to OTA");
 
+#if STACK_WATERMARK_ENABLED
+    LOG_INFO(TAG_OTA, "Stack usage before OTA: %lu bytes", (unsigned long)RAM_CheckStackHighWater());
+#endif
+
     status = OTA_DownloadAndFlash(&info, s_image_buffer, sizeof(s_image_buffer));
+
+#if STACK_WATERMARK_ENABLED
+    LOG_INFO(TAG_OTA, "Stack usage after OTA: %lu bytes", (unsigned long)RAM_CheckStackHighWater());
+#endif
 
     if (status != OTA_OK)
     {
