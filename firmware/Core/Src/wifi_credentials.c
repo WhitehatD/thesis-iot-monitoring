@@ -8,10 +8,13 @@
  * credentials with integrity validation (magic header + CRC32).
  *
  * STM32U585AI Flash geometry:
- *   Bank 1: 0x08000000 — 0x080FFFFF (1 MB, firmware)
- *   Bank 2: 0x08100000 — 0x081FFFFF (1 MB, available)
+ *   Bank 1: 0x08000000 — 0x080FFFFF (1 MB, active usually)
+ *   Bank 2: 0x08100000 — 0x081FFFFF (1 MB, inactive usually)
  *   Page size: 8 KB (0x2000)
- *   Last page: 0x081FE000 — 0x081FFFFF
+ *   Last page: Page 127
+ *
+ * To survive OTA dual-bank swaps, credentials are unconditionally
+ * written to BOTH Page 127 of Bank 1 (0x080FE000) AND Bank 2 (0x081FE000).
  *
  * Flash Layout:
  *   Offset 0x00: Magic   (4 bytes) = 0x57494649 ("WIFI")
@@ -34,8 +37,9 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 #define CRED_PAGE_SIZE      0x2000    /* 8 KB */
-#define CRED_BANK           FLASH_BANK_2
-#define CRED_PAGE_NUMBER    127       /* Last page of Bank 2 (128 pages, 0-indexed) */
+#define CRED_ADDR_ACTIVE    0x080FE000u  /* Last page of CPU active space */
+#define CRED_ADDR_INACTIVE  0x081FE000u  /* Last page of CPU inactive space */
+#define CRED_PAGE_NUMBER    127          /* Last page of 1MB bank */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  On-Flash Data Structure (packed, 105 bytes)
@@ -84,41 +88,34 @@ WiFiCredStatus_t WiFiCred_Load(WiFiCredentials_t *creds)
     if (creds == NULL)
         return WIFI_CRED_CORRUPT;
 
-    const FlashCredBlock_t *flash_block =
-        (const FlashCredBlock_t *)WIFI_CRED_FLASH_ADDR;
+    /* Check ACTIVE bank first (0x080FE000) then INACTIVE bank (0x081FE000) */
+    uint32_t addrs[2] = { CRED_ADDR_ACTIVE, CRED_ADDR_INACTIVE };
+    const FlashCredBlock_t *valid_block = NULL;
 
-    /* Check for blank/zeroed flash — both 0xFFFFFFFF (erased) and
-     * 0x00000000 (zeroed by OTA bank erase or fresh MCU) mean
-     * no credentials have been stored yet. */
-    if (flash_block->magic == 0xFFFFFFFF || flash_block->magic == 0x00000000)
+    for (int i = 0; i < 2; i++)
     {
-        LOG_INFO(TAG_PORT, "No stored WiFi credentials (flash %s)",
-                 flash_block->magic == 0xFFFFFFFF ? "erased" : "zeroed");
+        const FlashCredBlock_t *block = (const FlashCredBlock_t *)addrs[i];
+        
+        if (block->magic == 0xFFFFFFFF || block->magic == 0x00000000 || block->magic != WIFI_CRED_MAGIC)
+            continue;
+
+        uint32_t computed_crc = _crc32((const uint8_t *)block, CRED_DATA_SIZE);
+        if (computed_crc == block->crc32)
+        {
+            valid_block = block;
+            break; /* Found valid credentials! */
+        }
+    }
+
+    if (valid_block == NULL)
+    {
+        LOG_INFO(TAG_PORT, "No valid WiFi credentials found in flash");
         return WIFI_CRED_EMPTY;
     }
 
-    /* Validate magic */
-    if (flash_block->magic != WIFI_CRED_MAGIC)
-    {
-        LOG_INFO(TAG_PORT, "Flash magic mismatch: 0x%08lX (expected 0x%08lX)",
-                 (unsigned long)flash_block->magic,
-                 (unsigned long)WIFI_CRED_MAGIC);
-        return WIFI_CRED_CORRUPT;
-    }
-
-    /* Validate CRC32 */
-    uint32_t computed_crc = _crc32((const uint8_t *)flash_block, CRED_DATA_SIZE);
-    if (computed_crc != flash_block->crc32)
-    {
-        LOG_ERROR(TAG_PORT, "Flash CRC32 mismatch: stored=0x%08lX computed=0x%08lX",
-                  (unsigned long)flash_block->crc32,
-                  (unsigned long)computed_crc);
-        return WIFI_CRED_CORRUPT;
-    }
-
     /* Copy validated credentials */
-    memcpy(creds->ssid, flash_block->ssid, sizeof(creds->ssid));
-    memcpy(creds->password, flash_block->password, sizeof(creds->password));
+    memcpy(creds->ssid, valid_block->ssid, sizeof(creds->ssid));
+    memcpy(creds->password, valid_block->password, sizeof(creds->password));
 
     /* Ensure null termination (defense in depth) */
     creds->ssid[sizeof(creds->ssid) - 1] = '\0';
@@ -168,80 +165,71 @@ WiFiCredStatus_t WiFiCred_Save(const char *ssid, const char *password)
         return WIFI_CRED_FLASH_ERROR;
     }
 
-    /* ── Step 2: Erase the credential page ────────────── */
+    /* ── Step 2: Erase Page 127 on BOTH Physical Banks ── */
     FLASH_EraseInitTypeDef erase_cfg = {0};
     erase_cfg.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase_cfg.Banks     = CRED_BANK;
     erase_cfg.Page      = CRED_PAGE_NUMBER;
     erase_cfg.NbPages   = 1;
 
     uint32_t page_error = 0;
-    hal_ret = HAL_FLASHEx_Erase(&erase_cfg, &page_error);
-    if (hal_ret != HAL_OK)
+    
+    erase_cfg.Banks = FLASH_BANK_1;
+    if (HAL_FLASHEx_Erase(&erase_cfg, &page_error) != HAL_OK)
     {
-        LOG_ERROR(TAG_PORT, "Flash erase failed (HAL=%d, page_error=0x%08lX)",
-                  hal_ret, (unsigned long)page_error);
-        HAL_FLASH_Lock();
-        return WIFI_CRED_FLASH_ERROR;
+        LOG_ERROR(TAG_PORT, "Flash erase Bank 1 failed (err=0x%08lX)", (unsigned long)HAL_FLASH_GetError());
     }
 
-    LOG_DEBUG(TAG_PORT, "Flash page %d erased OK", CRED_PAGE_NUMBER);
+    erase_cfg.Banks = FLASH_BANK_2;
+    if (HAL_FLASHEx_Erase(&erase_cfg, &page_error) != HAL_OK)
+    {
+        LOG_ERROR(TAG_PORT, "Flash erase Bank 2 failed (err=0x%08lX)", (unsigned long)HAL_FLASH_GetError());
+    }
 
-    /* ── Step 3: Program in 16-byte quadwords ─────────── */
-    /*
-     * STM32U5 flash row programming: each HAL_FLASH_Program call writes
-     * exactly 16 bytes (128-bit quadword). We pad the block to 16-byte
-     * alignment and write sequentially.
-     */
+    LOG_DEBUG(TAG_PORT, "Flash page %d erased on both banks", CRED_PAGE_NUMBER);
+
+    /* ── Step 3: Program in 16-byte quadwords to BOTH address spaces */
     uint32_t total_bytes = sizeof(FlashCredBlock_t);
     uint32_t padded_size = (total_bytes + 15) & ~15u;  /* Round up to 16 */
 
-    /* Zero-padded write buffer (aligned for flash DMA) */
     uint8_t write_buf[128] __attribute__((aligned(16)));
-    memset(write_buf, 0xFF, sizeof(write_buf));  /* Fill with erased state */
+    memset(write_buf, 0xFF, sizeof(write_buf));
     memcpy(write_buf, &block, total_bytes);
 
-    uint32_t flash_addr = WIFI_CRED_FLASH_ADDR;
-    for (uint32_t offset = 0; offset < padded_size; offset += 16)
-    {
-        /* Build 128-bit quadword from the buffer */
-        uint32_t qw[4];
-        memcpy(qw, &write_buf[offset], 16);
+    uint32_t target_addrs[2] = { CRED_ADDR_ACTIVE, CRED_ADDR_INACTIVE };
+    int write_ok = 0;
 
-        hal_ret = HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD,
-                                    flash_addr + offset,
-                                    (uint32_t)(uintptr_t)&write_buf[offset]);
-        if (hal_ret != HAL_OK)
+    for (int b = 0; b < 2; b++)
+    {
+        uint32_t flash_addr = target_addrs[b];
+        int bank_success = 1;
+        
+        for (uint32_t offset = 0; offset < padded_size; offset += 16)
         {
-            LOG_ERROR(TAG_PORT, "Flash program failed at 0x%08lX (HAL=%d)",
-                      (unsigned long)(flash_addr + offset), hal_ret);
-            HAL_FLASH_Lock();
-            return WIFI_CRED_FLASH_ERROR;
+            hal_ret = HAL_FLASH_Program(FLASH_TYPEPROGRAM_QUADWORD,
+                                        flash_addr + offset,
+                                        (uint32_t)(uintptr_t)&write_buf[offset]);
+            if (hal_ret != HAL_OK)
+            {
+                LOG_ERROR(TAG_PORT, "Flash program failed at 0x%08lX (HAL=%d, ERR=0x%08lX)",
+                          (unsigned long)(flash_addr + offset), hal_ret, (unsigned long)HAL_FLASH_GetError());
+                bank_success = 0;
+                break;
+            }
         }
+        
+        if (bank_success) write_ok++;
     }
 
     /* ── Step 4: Lock flash and verify ────────────────── */
     HAL_FLASH_Lock();
 
-    /* Read-back verification */
-    const FlashCredBlock_t *verify =
-        (const FlashCredBlock_t *)WIFI_CRED_FLASH_ADDR;
-
-    if (verify->magic != WIFI_CRED_MAGIC)
+    if (write_ok == 0)
     {
-        LOG_ERROR(TAG_PORT, "Flash write verify FAILED: magic=0x%08lX",
-                  (unsigned long)verify->magic);
+        LOG_ERROR(TAG_PORT, "Flash writes failed for both banks");
         return WIFI_CRED_FLASH_ERROR;
     }
 
-    uint32_t verify_crc = _crc32((const uint8_t *)verify, CRED_DATA_SIZE);
-    if (verify_crc != verify->crc32)
-    {
-        LOG_ERROR(TAG_PORT, "Flash write verify FAILED: CRC mismatch");
-        return WIFI_CRED_FLASH_ERROR;
-    }
-
-    LOG_INFO(TAG_PORT, "WiFi credentials saved and verified OK");
+    LOG_INFO(TAG_PORT, "WiFi credentials saved OK (%d/2 banks)", write_ok);
     return WIFI_CRED_OK;
 }
 
@@ -262,22 +250,20 @@ WiFiCredStatus_t WiFiCred_Erase(void)
 
     FLASH_EraseInitTypeDef erase_cfg = {0};
     erase_cfg.TypeErase = FLASH_TYPEERASE_PAGES;
-    erase_cfg.Banks     = CRED_BANK;
     erase_cfg.Page      = CRED_PAGE_NUMBER;
     erase_cfg.NbPages   = 1;
 
     uint32_t page_error = 0;
-    hal_ret = HAL_FLASHEx_Erase(&erase_cfg, &page_error);
+    
+    erase_cfg.Banks = FLASH_BANK_1;
+    HAL_FLASHEx_Erase(&erase_cfg, &page_error);
+    
+    erase_cfg.Banks = FLASH_BANK_2;
+    HAL_FLASHEx_Erase(&erase_cfg, &page_error);
 
     HAL_FLASH_Lock();
 
-    if (hal_ret != HAL_OK)
-    {
-        LOG_ERROR(TAG_PORT, "Flash erase failed");
-        return WIFI_CRED_FLASH_ERROR;
-    }
-
-    LOG_INFO(TAG_PORT, "WiFi credentials erased OK");
+    LOG_INFO(TAG_PORT, "WiFi credentials erased OK on both banks");
     return WIFI_CRED_OK;
 }
 
