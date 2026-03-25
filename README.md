@@ -282,6 +282,16 @@ When modifying Edge Firmware (`main.c` / `camera.c`), you no longer physically t
 4. Your VPS securely brokers an MQTT payload to the board (`"type": "firmware_update"`).
 5. The board intercepts the payload, downloads chunks out of standard execution paths, flashes the inactive bank, and self-resets gracefully into the new logic.
 
+### 4. Board Setup (Wi-Fi Provisioning)
+
+If the board is freshly flashed or cannot connect to a known network, it will automatically launch a secure Captive Portal for headless configuration:
+
+1. Look for a solid **Red LED** indicating Portal Mode.
+2. On your phone or laptop, connect to the newly broadcasted **`IoT-Setup-XXXX`** Wi-Fi network.
+3. Your device should automatically prompt you to "Sign in to network". If it doesn't, open a browser and navigate to **[http://192.168.10.1](http://192.168.10.1)**.
+4. Enter your target Wi-Fi SSID and Password in the portal UI.
+5. Click **Save & Connect**. The board will save the credentials to its internal flash memory, reboot automatically, and join your local network.
+
 ---
 
 <p align="center">
