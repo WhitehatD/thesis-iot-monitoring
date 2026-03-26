@@ -254,15 +254,12 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
 #if WATCHDOG_ENABLED
         IWDG->KR = 0x0000AAAAu;
 #endif
-        /* Yield SPI bus for 200ms BEFORE subsequent polls.
-         * The first poll MUST NOT yield, as the remote VPS instantly transmits
-         * data which can exhaust the EMW3080's internal LwIP packet pool if we
-         * delay the first read, fatally locking up the SPI IPC command parser. */
-        if (polls > 0)
-        {
-            MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
-        }
-
+        /* ENTERPRISE FIX: We must poll the Wi-Fi module as fast as possible!
+         * Explicitly yielding for 200ms between reads artificially caps the STM32 processing
+         * speed to ~5 KB/s. Even with the Backend StreamingRate limit at 200 KB/s, the 
+         * fast server instantly overwhelms the EMW3080 LwIP buffer while the STM32 sleeps!
+         * MX_WIFI_Socket_recv_timeout internally yields the IO thread safely while waiting. */
+        
         /* ENTERPRISE FIX: MIPC/SPI Payload Allocation Fault mitigation.
          * Although standard Ethernet MSS is 1460, EMW3080 AT firmware internally
          * allocates MIPC structures from a very small pool. If we request 1460
