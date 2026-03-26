@@ -269,7 +269,8 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
          * the STM32 drops the SPI command, but the EMW3080 AT firmware is STILL executing
          * it, permanently bricking the MIPC sync. We set it to 15000ms to allow the AT 
          * firmware to safely return its own -1 after 10s if no data arrives. 
-         * Retriggering CI. */
+         * Retriggering CI. 
+         * Quadruple CI trigger. */
         ret = MX_WIFI_Socket_recv_timeout(wifi_obj_get(), sock, buf, safe_chunk, 0, 15000);
         polls++;
 
