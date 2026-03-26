@@ -558,16 +558,13 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         
         int32_t sock = _ota_socket_open();
         
-        for (int i = 0; i < 3; i++) {
-            if (dummies[i] >= 0) {
-                MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
-            }
-        }
-        
         if (sock < 0)
         {
             LOG_ERROR(TAG_OTA, "Download: socket connect failed (attempt %d/%d)",
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
+            for (int i = 0; i < 3; i++) {
+                if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
+            }
             continue;
         }
         LOG_DEBUG(TAG_OTA, "Socket opened (fd=%ld) — sending HTTP GET...", (long)sock);
@@ -577,6 +574,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             LOG_ERROR(TAG_OTA, "Download: send request failed (attempt %d/%d)",
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
             MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            for (int i = 0; i < 3; i++) {
+                if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
+            }
             continue;
         }
         LOG_DEBUG(TAG_OTA, "HTTP GET sent (%d bytes) — waiting for response...", header_len);
@@ -604,6 +604,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             LOG_ERROR(TAG_OTA, "Download: no response (attempt %d/%d)",
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
             MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            for (int i = 0; i < 3; i++) {
+                if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
+            }
             continue;
         }
 
@@ -766,6 +769,9 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
 
         MX_WIFI_Socket_close(wifi_obj_get(), sock);
+        for (int i = 0; i < 3; i++) {
+            if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
+        }
 
         if (!stall && total_downloaded >= info->size)
         {

@@ -155,10 +155,10 @@
  *
  *  Enterprise OTA using STM32U585 dual-bank flash.
  *  Board polls the server for new versions and auto-flashes if available.
- * ═══════════════════════════════════════════════════════════════════════════ */
-#ifndef FW_VERSION
-#define FW_VERSION                  "0.3"          /* Current firmware version string */
-#endif
+ * ═══════════════════════════════════════════════════════════════════════════*/
+/* Firmware Versioning */
+#define __FW_VERSION_STR            "1.0.155"
+#define FW_VERSION                  __FW_VERSION_STR          /* Current firmware version string */
 #define OTA_CHECK_INTERVAL_MS       (1 * 60 * 1000)   /* Check every 1 minute */
 #define OTA_DOWNLOAD_CHUNK_SIZE     2048           /* 2KB chunks — fits in single MIPC frame (2494 payload max) */
 #define OTA_MAX_FW_SIZE             (896 * 1024)   /* 896KB max — leave room for vector table */
