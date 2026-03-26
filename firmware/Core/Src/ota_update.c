@@ -547,12 +547,14 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 
         LOG_DEBUG(TAG_OTA, "Opening TCP socket to %s:%d...", SERVER_HOST, SERVER_PORT);
         
-        /* ENTERPRISE FIX: Rotate the dummy sockets based on the attempt number to
-         * prevent EMW3080 socket recycling. By keeping multiple UDP sockets open
-         * temporarily, we force the EMW3080 to give us a different FD on each retry,
-         * avoiding the AT stack's TIME_WAIT packet-drop bug. */
-        int32_t dummies[3] = {-1, -1, -1};
-        for (int i = 0; i < (dl_attempt % 3) + 1; i++) {
+        /* ENTERPRISE FIX: Rotate dummy UDP sockets to prevent EMW3080 socket recycling.
+         * Because MQTT disconnects right before this, fd=0 is freed. OTA_CheckForUpdate
+         * previously used and freed fd=1 (now in TIME_WAIT). If we only allocate 1 dummy 
+         * socket, it takes fd=0, and our TCP download explicitly recycles the poisoned fd=1!
+         * Base offset must be 2 to unconditionally burn fd=0 and fd=1 on attempt 0. */
+        int32_t dummies[4] = {-1, -1, -1, -1};
+        int num_dummies = (dl_attempt % 3) + 2; 
+        for (int i = 0; i < num_dummies; i++) {
             dummies[i] = MX_WIFI_Socket_create(wifi_obj_get(), MX_AF_INET, MX_SOCK_DGRAM, MX_IPPROTO_UDP);
         }
         
@@ -562,7 +564,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         {
             LOG_ERROR(TAG_OTA, "Download: socket connect failed (attempt %d/%d)",
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
             }
             continue;
@@ -574,7 +576,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             LOG_ERROR(TAG_OTA, "Download: send request failed (attempt %d/%d)",
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
             MX_WIFI_Socket_close(wifi_obj_get(), sock);
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
             }
             continue;
@@ -604,7 +606,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
             LOG_ERROR(TAG_OTA, "Download: no response (attempt %d/%d)",
                       dl_attempt + 1, OTA_DOWNLOAD_MAX_RETRIES);
             MX_WIFI_Socket_close(wifi_obj_get(), sock);
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < 4; i++) {
                 if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
             }
             continue;
@@ -769,7 +771,7 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
 
         MX_WIFI_Socket_close(wifi_obj_get(), sock);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             if (dummies[i] >= 0) MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
         }
 
