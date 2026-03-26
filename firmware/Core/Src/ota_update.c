@@ -264,10 +264,12 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
          * 1460 = standard Ethernet MSS = max TCP payload per segment. */
         int32_t safe_chunk = (max_len > 1460) ? 1460 : max_len;
 
-        /* Blocking recv with 1s SO_RCVTIMEO set in _ota_socket_open.
-         * Flag 0x08 (MSG_DONTWAIT) crashed the EMW3080 AT firmware;
-         * flag 0 with a socket-level timeout is the safe alternative. */
-        ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
+        /* ENTERPRISE FIX: Use MX_WIFI_Socket_recv_timeout to prevent the 10s MIPC
+         * command (0x0205) timeout deadlock. SO_RCVTIMEO is ignored by the EMW3080
+         * AT firmware for some sockets, causing the SPI transport to stall for 10s
+         * if no data is available. Passing a 1000ms timeout explicitly caps the
+         * SPI wait, matching our polling 1s expectations. */
+        ret = MX_WIFI_Socket_recv_timeout(wifi_obj_get(), sock, buf, safe_chunk, 0, 1000);
         polls++;
 
         if (ret > 0)
