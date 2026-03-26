@@ -177,10 +177,11 @@ static int32_t _ota_socket_open(void)
     int32_t sock = WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
     if (sock >= 0)
     {
-        /* ENTERPRISE FIX: Override receive timeout to 100ms.
-         * The AT firmware expects an int32_t timeout in milliseconds, 
-         * unlike standard lwIP which expects a struct timeval. */
-        int32_t rcv_timeout = 100; /* 100ms */
+        /* ENTERPRISE FIX: Override receive timeout to 1000ms.
+         * The EMW3080 AT firmware ignores sub-500ms SO_RCVTIMEO values
+         * and falls back to MX_WIFI_CMD_TIMEOUT (10s). 1000ms is reliably
+         * honored, preventing recv() from blocking the entire MIPC layer. */
+        int32_t rcv_timeout = 1000; /* 1s — minimum the EMW3080 reliably honors */
         MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcv_timeout, sizeof(rcv_timeout));
     }
     return sock;
@@ -223,19 +224,21 @@ static int _ota_send_all(int32_t sock, const uint8_t *data, int32_t len)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
- *  Industrial-Grade Non-Blocking Socket Receive
+ *  Enterprise-Grade Yield-First Socket Receive
  *
- *  Uses MSG_DONTWAIT (0x08) so MX_WIFI_Socket_recv returns immediately
- *  if no data is buffered. Between polls, yields the SPI bus for 500ms
- *  so the EMW3080 has sustained, uninterrupted time to process incoming
- *  TCP segments from its internal radio buffer into the SPI MIPC layer.
+ *  The EMW3080 processes TCP data asynchronously: radio → internal buffer
+ *  → MIPC framing → SPI transfer to STM32. Each step requires sustained
+ *  SPI bus time. The critical insight: we must yield the SPI bus BEFORE
+ *  each recv() call so the module has uninterrupted time to complete
+ *  this pipeline.
  *
- *  Why 500ms: The EMW3080 needs to receive TCP ACKs, process the TCP
- *  window, buffer payload data, and make it available via MIPC — all
- *  over SPI. 50ms was too short; 500ms matches ~1 TCP round-trip to
- *  a VPS and gives the module ample processing time.
+ *  Strategy (matches proven WiFi_HttpGetTime pattern in wifi.c):
+ *    1. Yield SPI bus for 200ms (≈2 TCP round-trips to a remote VPS)
+ *    2. Call recv() with flag 0 + 1s SO_RCVTIMEO
+ *    3. Each poll cycle takes ~1.2s max → 10+ polls in a 15s window
  *
- *  Chunk size clamped to 1024 bytes to prevent MIPC buffer corruption.
+ *  Chunk size aligned to 1460 bytes (TCP MSS) to prevent MIPC
+ *  fragmentation and maximize per-recv throughput.
  * ═══════════════════════════════════════════════════════════════════════════ */
 static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint32_t total_timeout_ms)
 {
@@ -248,15 +251,22 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
 #if WATCHDOG_ENABLED
         IWDG->KR = 0x0000AAAAu;
 #endif
-        /* Yield SPI bus for 10ms to let the ST stack breathe. */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 10);
+        /* Yield SPI bus for 200ms BEFORE each poll.
+         * The EMW3080 needs sustained, uninterrupted SPI time to:
+         *   1. Receive TCP ACK + data segments over the radio
+         *   2. Buffer them in its internal PBUF pool
+         *   3. Frame them as MIPC responses for SPI transfer
+         * 200ms matches ~2 TCP round-trips to a remote VPS and gives
+         * the module ample processing time between our recv calls. */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
 
-        /* Strict 1024 boundary to prevent SPI payload crashes */
-        int32_t safe_chunk = (max_len > 1024) ? 1024 : max_len;
+        /* TCP MSS-aligned chunk size prevents MIPC fragmentation.
+         * 1460 = standard Ethernet MSS = max TCP payload per segment. */
+        int32_t safe_chunk = (max_len > 1460) ? 1460 : max_len;
 
-        /* ENTERPRISE FIX: using flag 0 instead of 0x08 (MSG_DONTWAIT).
-         * 0x08 crashed the EMW3080 AT firmware. Relying on the 100ms SO_RCVTIMEO
-         * properly set via struct mx_timeval in _ota_socket_open. */
+        /* Blocking recv with 1s SO_RCVTIMEO set in _ota_socket_open.
+         * Flag 0x08 (MSG_DONTWAIT) crashed the EMW3080 AT firmware;
+         * flag 0 with a socket-level timeout is the safe alternative. */
         ret = MX_WIFI_Socket_recv(wifi_obj_get(), sock, buf, safe_chunk, 0);
         polls++;
 
@@ -266,6 +276,15 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
                       (long)ret, (unsigned long)polls,
                       (unsigned long)(HAL_GetTick() - start));
             return ret;
+        }
+
+        /* Log progress every 5 polls so serial output shows liveness */
+        if (polls % 5 == 0)
+        {
+            LOG_DEBUG(TAG_OTA, "recv polling: %lu polls, %lums elapsed, last ret=%ld",
+                      (unsigned long)polls,
+                      (unsigned long)(HAL_GetTick() - start),
+                      (long)ret);
         }
     }
 
@@ -536,9 +555,11 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
         LOG_DEBUG(TAG_OTA, "HTTP GET sent (%d bytes) — waiting for response...", header_len);
 
-        /* Wait for response headers — 500ms lets the EMW3080 buffer
-         * the full HTTP response (headers + initial body) over SPI */
-        _ota_yield_with_watchdog(500);
+        /* Wait for response headers — 1500ms lets the EMW3080 complete
+         * the TCP handshake with the remote VPS and start buffering the
+         * HTTP response (headers + initial body) over SPI. 500ms was
+         * insufficient for VPS latency + TCP window negotiation. */
+        _ota_yield_with_watchdog(1500);
 
         /* Dedicated stack buffer for HTTP header reception.
          * MUST NOT overlap ram_buffer — the old placement at
@@ -546,8 +567,10 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         uint8_t recv_buf[1536];
         uint32_t recv_buf_size = sizeof(recv_buf);
         
-        /* Non-blocking safe wrapper with 8000ms total timeout */
-        int32_t recv_len = _ota_safe_recv(sock, recv_buf, recv_buf_size - 1, 8000);
+        /* Yield-first safe recv with 15s total timeout.
+         * 15s allows 10+ poll cycles (200ms yield + 1s SO_RCVTIMEO each)
+         * instead of the old 8s which only allowed 1 blocked recv. */
+        int32_t recv_len = _ota_safe_recv(sock, recv_buf, recv_buf_size - 1, 15000);
 
         if (recv_len <= 0)
         {
