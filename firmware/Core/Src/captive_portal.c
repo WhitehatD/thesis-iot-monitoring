@@ -602,8 +602,10 @@ static void _wifi_test_callback(const char *msg, int percent)
 {
     if (s_current_client_sock >= 0)
     {
-        char buf[256];
-        snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>\n", msg, percent);
+        char buf[512];
+        /* Pad with 256 spaces to force iOS Safari to flush its progressive DOM blocks */
+        snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>%*s\n", 
+                 msg, percent, 256, " ");
         _portal_send_chunk(s_current_client_sock, buf);
     }
 }

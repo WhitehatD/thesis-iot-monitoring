@@ -240,9 +240,7 @@ WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password, WiFiTes
         if (cb) cb("WPA handshake complete! Associated.", 25);
 
         if (cb) cb("Starting DHCP negotiation...", 30);
-        /* connected, wait for DHCP */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 4000);
-
+        
         uint8_t ip[4] = {0};
         bool got_ip = false;
         
