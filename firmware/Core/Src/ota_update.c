@@ -265,9 +265,13 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
             MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
         }
 
-        /* TCP MSS-aligned chunk size prevents MIPC fragmentation.
-         * 1460 = standard Ethernet MSS = max TCP payload per segment. */
-        int32_t safe_chunk = (max_len > 1460) ? 1460 : max_len;
+        /* ENTERPRISE FIX: MIPC/SPI Payload Allocation Fault mitigation.
+         * Although standard Ethernet MSS is 1460, EMW3080 AT firmware internally
+         * allocates MIPC structures from a very small pool. If we request 1460
+         * bytes when >1460 bytes are buffered, it fails to allocate an IPC packet
+         * large enough to encapsulate it, immediately dropping the command and
+         * starving the STM32 for `total_timeout_ms` (15s). 1000 bytes is safe. */
+        int32_t safe_chunk = (max_len > 1000) ? 1000 : max_len;
 
         /* ENTERPRISE FIX: MIPC timeout must strictly exceed the AT firmware's hardcoded
          * 10000ms (MX_WIFI_CMD_TIMEOUT) blocking time. If we cap this at 1000ms or 2000ms,
