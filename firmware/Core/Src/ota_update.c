@@ -572,11 +572,12 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         }
         LOG_DEBUG(TAG_OTA, "HTTP GET sent (%d bytes) — waiting for response...", header_len);
 
-        /* Wait for response headers — 1500ms lets the EMW3080 complete
-         * the TCP handshake with the remote VPS and start buffering the
-         * HTTP response (headers + initial body) over SPI. 500ms was
-         * insufficient for VPS latency + TCP window negotiation. */
-        _ota_yield_with_watchdog(1500);
+        /* ENTERPRISE FIX: We must NOT yield here. The remote VPS instantly transmits 
+         * up to 128KB of firmware binary at line rate. The EMW3080 AT firmware possesses
+         * an extremely small internal LwIP packet pool (typically 2-4KB max per socket).
+         * If the STM32 delegates 1500ms to an artificial yield, the AT firmware instantly
+         * hits TCP Window Size = 0 and chokes, fatally locking up the SPI IPC command
+         * parser and dropping the socket context before the first recv() is executed! */
 
         /* Dedicated stack buffer for HTTP header reception.
          * MUST NOT overlap ram_buffer — the old placement at
