@@ -763,12 +763,9 @@ int32_t WiFi_TcpConnect(const char *host, uint16_t port)
 
     /* CRITICAL: Set a sane hardware receive and send timeout (4s) so the EMW3080
      * doesn't block the MIPC layer up to 30s (MX_WIFI_CMD_TIMEOUT) and trip the 16s watchdog!
-     * MIPC expects exactly an 8-byte POSIX timeval struct. Passing an int32_t interprets
-     * trailing stack garbage as useconds = huge deadlock! */
-    struct {
-        int32_t tv_sec;
-        int32_t tv_usec;
-    } mx_timeout = {4, 0};
+     * NOTE: MX_WIFI_Socket_setsockopt explicitly expects a 4-byte int32_t representing ms.
+     * Passing an 8-byte POSIX timeval struct corrupts the AT firmware's timeout state. */
+    int32_t mx_timeout = 4000;
     MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &mx_timeout, sizeof(mx_timeout));
     MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_SNDTIMEO, &mx_timeout, sizeof(mx_timeout));
 

@@ -181,12 +181,10 @@ static int32_t _ota_socket_open(void)
          * The EMW3080 AT firmware ignores sub-500ms SO_RCVTIMEO values
          * and falls back to MX_WIFI_CMD_TIMEOUT (10s). 1000ms is reliably
          * honored, preventing recv() from blocking the entire MIPC layer. 
-         * MIPC expects exactly an 8-byte POSIX timeval struct. Passing an int32_t 
-         * interpreted trailing stack garbage as useconds, causing MIPC deadlocks. */
-        struct {
-            int32_t tv_sec;
-            int32_t tv_usec;
-        } rcv_timeout = {1, 0}; /* 1s timeout */
+         * NOTE: MX_WIFI_Socket_setsockopt explicitly expects a 4-byte int32_t
+         * representing milliseconds. Passing an 8-byte POSIX timeval struct
+         * corrupts the AT firmware's parser, causing infinite block deadlocks. */
+        int32_t rcv_timeout = 1000; /* 1s timeout */
         MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcv_timeout, sizeof(rcv_timeout));
     }
     return sock;
