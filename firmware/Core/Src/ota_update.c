@@ -264,14 +264,12 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
          * 1460 = standard Ethernet MSS = max TCP payload per segment. */
         int32_t safe_chunk = (max_len > 1460) ? 1460 : max_len;
 
-        /* ENTERPRISE FIX: Use MX_WIFI_Socket_recv_timeout to prevent the 10s MIPC
-         * command (0x0205) timeout deadlock. SO_RCVTIMEO is ignored by the EMW3080
-         * AT firmware for some sockets, causing the SPI transport to stall for 10s
-         * if no data is available. Passing a 2000ms timeout explicitly caps the
-         * SPI wait, giving the 1s SO_RCVTIMEO enough time to return without a MIPC race. 
-         * Retriggering CI build to ensure all firmware checks pass. 
-         * Retriggering CI build again. */
-        ret = MX_WIFI_Socket_recv_timeout(wifi_obj_get(), sock, buf, safe_chunk, 0, 2000);
+        /* ENTERPRISE FIX: MIPC timeout must strictly exceed the AT firmware's hardcoded
+         * 10000ms (MX_WIFI_CMD_TIMEOUT) blocking time. If we cap this at 1000ms or 2000ms,
+         * the STM32 drops the SPI command, but the EMW3080 AT firmware is STILL executing
+         * it, permanently bricking the MIPC sync. We set it to 15000ms to allow the AT 
+         * firmware to safely return its own -1 after 10s if no data arrives. */
+        ret = MX_WIFI_Socket_recv_timeout(wifi_obj_get(), sock, buf, safe_chunk, 0, 15000);
         polls++;
 
         if (ret > 0)
@@ -541,7 +539,21 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
         download_start_tick = HAL_GetTick();
 
         LOG_DEBUG(TAG_OTA, "Opening TCP socket to %s:%d...", SERVER_HOST, SERVER_PORT);
+        
+        /* ENTERPRISE FIX: The EMW3080 AT firmware suffers from a socket recycle bug
+         * when immediately reusing an fd (usually fd=0) that was just closed by a 
+         * long-lived TCP connection (like our MQTT subscribe socket). Incoming
+         * TCP segments for the new connection are silently dropped inside the AT 
+         * stack's TIME_WAIT state. We open a dummy UDP socket to force the module
+         * to burn fd=0, guaranteeing our TCP stream gets fd=1 for a clean stream. */
+        int32_t dummy_sock = MX_WIFI_Socket_create(wifi_obj_get(), MX_AF_INET, MX_SOCK_DGRAM, MX_IPPROTO_UDP);
+        
         int32_t sock = _ota_socket_open();
+        
+        if (dummy_sock >= 0) {
+            MX_WIFI_Socket_close(wifi_obj_get(), dummy_sock);
+        }
+        
         if (sock < 0)
         {
             LOG_ERROR(TAG_OTA, "Download: socket connect failed (attempt %d/%d)",
