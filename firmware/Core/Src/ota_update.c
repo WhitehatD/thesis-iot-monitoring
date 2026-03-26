@@ -269,7 +269,8 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
          * AT firmware for some sockets, causing the SPI transport to stall for 10s
          * if no data is available. Passing a 2000ms timeout explicitly caps the
          * SPI wait, giving the 1s SO_RCVTIMEO enough time to return without a MIPC race. 
-         * Retriggering CI build to ensure all firmware checks pass. */
+         * Retriggering CI build to ensure all firmware checks pass. 
+         * Retriggering CI build again. */
         ret = MX_WIFI_Socket_recv_timeout(wifi_obj_get(), sock, buf, safe_chunk, 0, 2000);
         polls++;
 
