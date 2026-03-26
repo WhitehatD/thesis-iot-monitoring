@@ -453,11 +453,15 @@ static HAL_StatusTypeDef Receive(SPI_HandleTypeDef *hspi, uint8_t *rxdata, uint1
 #endif
 
 #if (defined(DMA_ON_USE) && (DMA_ON_USE == 1))
-  ret = HAL_SPI_Receive_DMA(hspi, rxdata, datalen);
+  /* ENTERPRISE FIX: STM32U5 HAL_SPI_Receive suspends clock generation when TX FIFO is empty
+   * during full-duplex mode. Use TransmitReceive mapped over the rxdata buffer as a dummy
+   * TX payload to guarantee continuous SCK generation. */
+  ret = HAL_SPI_TransmitReceive_DMA(hspi, rxdata, rxdata, datalen);
   SEM_WAIT(SpiTransferDoneSem, timeout, NULL);
 
 #else
-  ret = HAL_SPI_Receive(hspi, rxdata, datalen, timeout);
+  /* ENTERPRISE FIX: Same for blocking mode. Supply rxdata as dummy txdata. */
+  ret = HAL_SPI_TransmitReceive(hspi, rxdata, rxdata, datalen, timeout);
 #endif /* (DMA_ON_USE == 1) */
 
 #if 0
