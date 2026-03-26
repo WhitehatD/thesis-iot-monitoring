@@ -146,10 +146,23 @@ async def download_firmware():
     if not FIRMWARE_BIN.exists():
         raise HTTPException(status_code=404, detail="No firmware binary available")
 
-    return FileResponse(
-        path=str(FIRMWARE_BIN),
+    import asyncio
+    from fastapi.responses import StreamingResponse
+
+    async def _rate_limited_file_reader(file_path, chunk_size=2048, delay_s=0.01):
+        """
+        Stream file chunks while explicitly yielding to the event loop.
+        2048 bytes every 10ms = ~200 KB/s max throughput.
+        This prevents EMW3080 Wi-Fi module LwIP memory buffer exhaustion on the client.
+        """
+        with open(file_path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                yield chunk
+                await asyncio.sleep(delay_s)
+
+    return StreamingResponse(
+        _rate_limited_file_reader(FIRMWARE_BIN),
         media_type="application/octet-stream",
-        filename="firmware.bin",
         headers={
             "Content-Length": str(FIRMWARE_BIN.stat().st_size),
         },
