@@ -127,7 +127,7 @@ static const char HTML_CONFIG_BODY[] =
     ".fw{text-align:center;margin-top:16px;font-size:11px;color:#484f58}"
     "</style>"
     "</head>"
-    "<body>"
+    "<body onpageshow=\"var b=document.getElementById('btn');if(b){b.innerText='Save &amp; Connect';b.style.opacity='1';b.style.pointerEvents='auto';}\">"
     "<div class='card'>"
     "<div class='logo'>"
     "<svg viewBox='0 0 24 24'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 "
@@ -603,10 +603,23 @@ static void _wifi_test_callback(const char *msg, int percent)
     if (s_current_client_sock >= 0)
     {
         char buf[512];
-        /* Pad with 256 spaces to force iOS Safari to flush its progressive DOM blocks */
-        snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>%*s\n", 
-                 msg, percent, 256, " ");
+        const char *pad256 = 
+            "                                                                "
+            "                                                                "
+            "                                                                "
+            "                                                                "; 
+        
+        /* Use standard %s insertion to avoid newlib-nano %*s parsing drops */
+        snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>%s\n", 
+                 msg, percent, pad256);
+                 
         _portal_send_chunk(s_current_client_sock, buf);
+        
+        /* CRITICAL: Force the EMW3080 AT firmware to physically drain its TX queues 
+         * over the 2.4GHz SoftAP antenna before returning. If we don't yield here, 
+         * the root MX_WIFI_Connect() call will instantly force the Wi-Fi module to 
+         * switch channels and associate with the new AP, dropping this HTTP packet! */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 150);
     }
 }
 
@@ -644,7 +657,7 @@ static int _handle_http_client(int32_t client_sock)
 
     int32_t total_recv = 0;
     uint32_t start = HAL_GetTick();
-    uint32_t max_wait = 400; /* Drop speculative connections after 400ms */
+    uint32_t max_wait = 1200; /* Drop speculative connections after 1200ms */
 
     while ((HAL_GetTick() - start) < max_wait && total_recv < (int32_t)(sizeof(req_buf) - 1))
     {

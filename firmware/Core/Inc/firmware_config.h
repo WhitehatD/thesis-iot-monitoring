@@ -157,7 +157,7 @@
  *  Board polls the server for new versions and auto-flashes if available.
  * ═══════════════════════════════════════════════════════════════════════════*/
 /* Firmware Versioning */
-#define __FW_VERSION_STR            "1.0.163"
+#define __FW_VERSION_STR            "1.0.164"
 #define FW_VERSION                  __FW_VERSION_STR          /* Current firmware version string */
 #define OTA_CHECK_INTERVAL_MS       (1 * 60 * 1000)   /* Check every 1 minute */
 #define OTA_DOWNLOAD_CHUNK_SIZE     2048           /* 2KB chunks — fits in single MIPC frame (2494 payload max) */
