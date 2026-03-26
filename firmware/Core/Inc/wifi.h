@@ -64,7 +64,7 @@ bool WiFi_IsConnected(void);
  * @param  data_len: Length of image data in bytes.
  * @retval WIFI_OK on success.
  */
-WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
+WiFiStatus_t WiFi_HttpPostImage(const char *url, uint32_t task_id,
                                  const uint8_t *data, uint32_t data_len);
 
 /**

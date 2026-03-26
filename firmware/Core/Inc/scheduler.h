@@ -29,7 +29,7 @@ typedef struct {
     uint8_t minute;
     uint8_t second;
     TaskAction_t action;
-    uint16_t task_id;
+    uint32_t task_id;
     char objective[64];
 } ScheduledTask_t;
 

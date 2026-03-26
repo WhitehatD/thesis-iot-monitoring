@@ -167,7 +167,7 @@ int Scheduler_ParseJSON(Schedule_t *schedule, const char *json_str)
         cJSON *id_item = cJSON_GetObjectItemCaseSensitive(task_json, "id");
         if (cJSON_IsNumber(id_item))
         {
-            task->task_id = (uint16_t)id_item->valueint;
+            task->task_id = (uint32_t)id_item->valuedouble;
         }
 
         /* Parse "objective" */

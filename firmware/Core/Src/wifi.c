@@ -382,7 +382,7 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
  *   <binary image data>\r\n
  *   --<boundary>--\r\n
  */
-WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
+WiFiStatus_t WiFi_HttpPostImage(const char *url, uint32_t task_id,
                                  const uint8_t *data, uint32_t data_len)
 {
     (void)url;  /* We construct the request from config constants */
@@ -423,10 +423,10 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
         char part_header[256];
         int part_header_len = snprintf(part_header, sizeof(part_header),
             "--%s\r\n"
-            "Content-Disposition: form-data; name=\"file\"; filename=\"capture_%u.jpg\"\r\n"
+            "Content-Disposition: form-data; name=\"file\"; filename=\"capture_%lu.jpg\"\r\n"
             "Content-Type: image/jpeg\r\n"
             "\r\n",
-            MULTIPART_BOUNDARY, task_id);
+            MULTIPART_BOUNDARY, (unsigned long)task_id);
 
         char part_footer[64];
         int part_footer_len = snprintf(part_footer, sizeof(part_footer),
@@ -437,43 +437,24 @@ WiFiStatus_t WiFi_HttpPostImage(const char *url, uint16_t task_id,
         /* ── 2. Build HTTP request header ───────────────────── */
 
         int header_len = snprintf(s_http_header, HTTP_HEADER_MAX,
-            "POST %s?task_id=%u HTTP/1.1\r\n"
+            "POST %s?task_id=%lu HTTP/1.1\r\n"
             "Host: %s:%d\r\n"
             "Content-Type: multipart/form-data; boundary=%s\r\n"
             "Content-Length: %lu\r\n"
             "Connection: close\r\n"
             "\r\n",
-            SERVER_UPLOAD_PATH, task_id,
+            SERVER_UPLOAD_PATH, (unsigned long)task_id,
             SERVER_HOST, SERVER_PORT,
             MULTIPART_BOUNDARY,
             (unsigned long)body_length);
 
         /* ── 3. Open TCP socket ─────────────────────────────── */
 
-        int32_t sock = MX_WIFI_Socket_create(wifi_obj_get(),
-                                              MX_AF_INET, MX_SOCK_STREAM, MX_IPPROTO_TCP);
+        int32_t sock = WiFi_TcpConnect(SERVER_HOST, SERVER_PORT);
         if (sock < 0)
         {
-            LOG_ERROR(TAG_HTTP, "Socket create failed (err=%ld)", (long)sock);
-            continue;  /* Retry */
-        }
-
-        struct mx_sockaddr_in server_addr = {0};
-        server_addr.sin_len    = (uint8_t)sizeof(server_addr);
-        server_addr.sin_family = MX_AF_INET;
-        server_addr.sin_port   = (uint16_t)((SERVER_PORT >> 8) | ((SERVER_PORT & 0xFF) << 8));
-        server_addr.sin_addr.s_addr = (uint32_t)mx_aton_r(SERVER_HOST);
-
-        int32_t ret = MX_WIFI_Socket_connect(
-            wifi_obj_get(), sock,
-            (struct mx_sockaddr *)&server_addr,
-            (int32_t)sizeof(server_addr));
-
-        if (ret < 0)
-        {
-            LOG_ERROR(TAG_HTTP, "Socket connect to %s:%d failed (err=%ld)",
-                      SERVER_HOST, SERVER_PORT, (long)ret);
-            MX_WIFI_Socket_close(wifi_obj_get(), sock);
+            LOG_ERROR(TAG_HTTP, "Socket connect to %s:%d failed",
+                      SERVER_HOST, SERVER_PORT);
             continue;  /* Retry */
         }
 
@@ -780,10 +761,16 @@ int32_t WiFi_TcpConnect(const char *host, uint16_t port)
         return -1;
     }
 
-    /* CRITICAL: Set a sane hardware receive timeout (4s) so the EMW3080
-     * doesn't block the MIPC layer up to 30s (MX_WIFI_CMD_TIMEOUT) and trip the 16s watchdog! */
-    int32_t timeout_ms = 4000;
-    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &timeout_ms, sizeof(timeout_ms));
+    /* CRITICAL: Set a sane hardware receive and send timeout (4s) so the EMW3080
+     * doesn't block the MIPC layer up to 30s (MX_WIFI_CMD_TIMEOUT) and trip the 16s watchdog!
+     * MIPC expects exactly an 8-byte POSIX timeval struct. Passing an int32_t interprets
+     * trailing stack garbage as useconds = huge deadlock! */
+    struct {
+        int32_t tv_sec;
+        int32_t tv_usec;
+    } mx_timeout = {4, 0};
+    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &mx_timeout, sizeof(mx_timeout));
+    MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_SNDTIMEO, &mx_timeout, sizeof(mx_timeout));
 
     return sock;
 }
