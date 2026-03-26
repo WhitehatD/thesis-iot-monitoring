@@ -529,13 +529,24 @@ static const char HTML_STREAMING_HEADER[] =
 
 static int32_t s_current_client_sock = -1;
 
+static void _portal_send_chunk(int32_t sock, const char *data)
+{
+    int len = strlen(data);
+    if (len == 0 || sock < 0) return;
+    char hex_len[16];
+    int hex_size = snprintf(hex_len, sizeof(hex_len), "%X\r\n", len);
+    _portal_send_all(sock, (const uint8_t*)hex_len, hex_size);
+    _portal_send_all(sock, (const uint8_t*)data, len);
+    _portal_send_all(sock, (const uint8_t*)"\r\n", 2);
+}
+
 static void _wifi_test_callback(const char *msg, int percent)
 {
     if (s_current_client_sock >= 0)
     {
         char buf[256];
-        int len = snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>\n", msg, percent);
-        _portal_send_all(s_current_client_sock, (const uint8_t *)buf, len);
+        snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>\n", msg, percent);
+        _portal_send_chunk(s_current_client_sock, buf);
     }
 }
 
@@ -681,28 +692,29 @@ static int _handle_http_client(int32_t client_sock)
         /* Test credentials in real-time before saving */
         LOG_INFO(TAG_PORT, "Testing WiFi credentials in background...");
 
-        /* Start streaming response: No Content-Length because we stream chunk by chunk */
+        /* Start streaming response: using HTTP/1.1 chunked encoding to bypass Apple buffering */
         const char *stream_hdrs = 
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/html; charset=UTF-8\r\n"
+            "Transfer-Encoding: chunked\r\n"
             "Connection: close\r\n"
             "Cache-Control: no-store, no-cache\r\n"
             "X-Content-Type-Options: nosniff\r\n"
             "\r\n";
         _portal_send_all(client_sock, (const uint8_t *)stream_hdrs, (int32_t)strlen(stream_hdrs));
-        _portal_send_all(client_sock, (const uint8_t *)HTML_STREAMING_HEADER, (int32_t)strlen(HTML_STREAMING_HEADER));
+        _portal_send_chunk(client_sock, HTML_STREAMING_HEADER);
         
         /* 1024 bytes padding for Safari buffer flush */
-        char pad[128]; memset(pad, ' ', sizeof(pad)-1); pad[sizeof(pad)-1]='\0';
-        for(int i=0; i<8; i++) _portal_send_all(client_sock, (const uint8_t *)pad, 127);
+        char pad[129]; memset(pad, ' ', sizeof(pad)-1); pad[sizeof(pad)-1]='\0';
+        for(int i=0; i<8; i++) _portal_send_chunk(client_sock, pad);
 
         s_current_client_sock = client_sock;
         
         if (WiFi_TestConnection(ssid, password, _wifi_test_callback) != WIFI_OK)
         {
             LOG_WARN(TAG_PORT, "Credentials failed test. Serving error streaming tag.");
-            const char *fail_js = "<script>complete(false, 'Check password. Returning to setup...');</script></body></html>\n";
-            _portal_send_all(client_sock, (const uint8_t *)fail_js, (int32_t)strlen(fail_js));
+            _portal_send_chunk(client_sock, "<script>complete(false, 'Check password. Returning to setup...');</script></body></html>\n");
+            _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5); /* End of chunked stream */
             MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
             s_current_client_sock = -1;
             return 0; /* Return 0 to keep portal running and NOT reboot */
@@ -718,8 +730,8 @@ static int _handle_http_client(int32_t client_sock)
         }
 
         /* Send success indication and close HTML */
-        const char *succ_js = "<script>complete(true, 'Credentials saved. Rebooting sensor...');</script></body></html>\n";
-        _portal_send_all(client_sock, (const uint8_t *)succ_js, (int32_t)strlen(succ_js));
+        _portal_send_chunk(client_sock, "<script>complete(true, 'Credentials saved. Rebooting sensor...');</script></body></html>\n");
+        _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5); /* End of chunked stream */
 
         /* Give the client time to receive the response */
         MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
