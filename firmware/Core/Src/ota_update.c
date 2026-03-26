@@ -251,14 +251,14 @@ static int32_t _ota_safe_recv(int32_t sock, uint8_t *buf, int32_t max_len, uint3
 #if WATCHDOG_ENABLED
         IWDG->KR = 0x0000AAAAu;
 #endif
-        /* Yield SPI bus for 200ms BEFORE each poll.
-         * The EMW3080 needs sustained, uninterrupted SPI time to:
-         *   1. Receive TCP ACK + data segments over the radio
-         *   2. Buffer them in its internal PBUF pool
-         *   3. Frame them as MIPC responses for SPI transfer
-         * 200ms matches ~2 TCP round-trips to a remote VPS and gives
-         * the module ample processing time between our recv calls. */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
+        /* Yield SPI bus for 200ms BEFORE subsequent polls.
+         * The first poll MUST NOT yield, as the remote VPS instantly transmits
+         * data which can exhaust the EMW3080's internal LwIP packet pool if we
+         * delay the first read, fatally locking up the SPI IPC command parser. */
+        if (polls > 0)
+        {
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 200);
+        }
 
         /* TCP MSS-aligned chunk size prevents MIPC fragmentation.
          * 1460 = standard Ethernet MSS = max TCP payload per segment. */
@@ -542,18 +542,21 @@ OTAStatus_t OTA_DownloadAndFlash(const OTAVersionInfo_t *info,
 
         LOG_DEBUG(TAG_OTA, "Opening TCP socket to %s:%d...", SERVER_HOST, SERVER_PORT);
         
-        /* ENTERPRISE FIX: The EMW3080 AT firmware suffers from a socket recycle bug
-         * when immediately reusing an fd (usually fd=0) that was just closed by a 
-         * long-lived TCP connection (like our MQTT subscribe socket). Incoming
-         * TCP segments for the new connection are silently dropped inside the AT 
-         * stack's TIME_WAIT state. We open a dummy UDP socket to force the module
-         * to burn fd=0, guaranteeing our TCP stream gets fd=1 for a clean stream. */
-        int32_t dummy_sock = MX_WIFI_Socket_create(wifi_obj_get(), MX_AF_INET, MX_SOCK_DGRAM, MX_IPPROTO_UDP);
+        /* ENTERPRISE FIX: Rotate the dummy sockets based on the attempt number to
+         * prevent EMW3080 socket recycling. By keeping multiple UDP sockets open
+         * temporarily, we force the EMW3080 to give us a different FD on each retry,
+         * avoiding the AT stack's TIME_WAIT packet-drop bug. */
+        int32_t dummies[3] = {-1, -1, -1};
+        for (int i = 0; i < (dl_attempt % 3) + 1; i++) {
+            dummies[i] = MX_WIFI_Socket_create(wifi_obj_get(), MX_AF_INET, MX_SOCK_DGRAM, MX_IPPROTO_UDP);
+        }
         
         int32_t sock = _ota_socket_open();
         
-        if (dummy_sock >= 0) {
-            MX_WIFI_Socket_close(wifi_obj_get(), dummy_sock);
+        for (int i = 0; i < 3; i++) {
+            if (dummies[i] >= 0) {
+                MX_WIFI_Socket_close(wifi_obj_get(), dummies[i]);
+            }
         }
         
         if (sock < 0)

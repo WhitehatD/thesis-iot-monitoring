@@ -216,6 +216,8 @@ Bank 2: 0x08100000 – 0x081FFFFF  (inactive / OTA target)
 
 ### OTA Reliability Hardening
 
+- **Yield-First SPI Receiver Strategy**: Enforces a strict 200ms MIPC yield before subsequent TCP reads, while intentionally blocking on the first chunk to prevent the remote VPS from exhausting the EMW3080's 4KB LwIP buffer.
+- **Dynamic UDP Socket Burner Pipeline**: Bypasses the EMW3080 `TIME_WAIT` socket recycling bug by opening an incremental number of dummy UDP sockets per attempt, forcing the AT firmware to assign a fresh local FD for the OTA HTTP stream.
 - **Non-blocking download**: `MSG_DONTWAIT` polling prevents MIPC layer from blocking CPU for full `SO_RCVTIMEO`, ensuring watchdog refresh every ~50ms
 - **Bus isolation**: MQTT disconnected + Camera DMA stopped before download to eliminate SPI contention
 - **Autonomous polling**: Background daemon checks server every 60s (`OTA_CHECK_INTERVAL_MS`) as fallback if MQTT push is missed
