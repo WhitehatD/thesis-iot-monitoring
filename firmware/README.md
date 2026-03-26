@@ -218,6 +218,8 @@ Bank 2: 0x08100000 – 0x081FFFFF  (inactive / OTA target)
 
 - **Yield-First SPI Receiver Strategy**: Enforces a strict 200ms MIPC yield before subsequent TCP reads, while intentionally blocking on the first chunk to prevent the remote VPS from exhausting the EMW3080's 4KB LwIP buffer.
 - **Dynamic UDP Socket Burner Pipeline**: Bypasses the EMW3080 `TIME_WAIT` socket recycling bug by opening an incremental number of dummy UDP sockets per attempt, forcing the AT firmware to assign a fresh local FD for the OTA HTTP stream.
+- **MIPC MTU Payload Constraint (`safe_chunk=1000`)**: Explicitly limits the requested SPI block size to 1000 bytes (down from 1460 MSS). If the full 1460 bytes are requested while the EMW3080's buffer is saturated by the internet, the AT firmware fails to allocate an internal IPC packet and silently drops the command, stalling the STM32 for 15s.
+- **Server-Side TCP Throttling**: The FastAPI backend explicitly streams the 128KB payload using `StreamingResponse` injected with `asyncio.sleep(0.01)` delays every 2KB. This throttles the egress TCP stream to ~200 KB/s, explicitly preventing the EMW3080's internal LwIP memory pool (PBUFs) from becoming radically exhausted by line-rate server bursts.
 - **Non-blocking download**: `MSG_DONTWAIT` polling prevents MIPC layer from blocking CPU for full `SO_RCVTIMEO`, ensuring watchdog refresh every ~50ms
 - **Bus isolation**: MQTT disconnected + Camera DMA stopped before download to eliminate SPI contention
 - **Autonomous polling**: Background daemon checks server every 60s (`OTA_CHECK_INTERVAL_MS`) as fallback if MQTT push is missed
