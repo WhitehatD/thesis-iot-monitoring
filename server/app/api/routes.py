@@ -22,7 +22,7 @@ from app.planning.engine import generate_plan
 
 router = APIRouter()
 
-_capture_counter = 0
+_capture_counter = int(time.time())
 
 
 @router.get("/time")
@@ -69,7 +69,7 @@ async def capture_now(request: CaptureRequest = CaptureRequest()):
     global _capture_counter
     _capture_counter += 1
 
-    command = {"type": "capture_now"}
+    command = {"type": "capture_now", "task_id": _capture_counter}
     command_json = json.dumps(command)
     await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
 
@@ -115,6 +115,12 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
     Receive a captured image from the STM32 board.
     The board sends raw RGB565 pixel data — we convert to JPEG server-side.
     """
+    global _capture_counter
+    # Intercept board fallback task IDs (from unprompted/button captures) or 0
+    if task_id == 0 or (10000 <= task_id <= 40000):
+        _capture_counter += 1
+        task_id = _capture_counter
+
     import io
     import struct
     import numpy as np

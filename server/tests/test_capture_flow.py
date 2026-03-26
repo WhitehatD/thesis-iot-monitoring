@@ -264,3 +264,5 @@ def test_capture_publishes_to_mqtt(client):
     assert topic == "device/stm32/commands"
     command = json.loads(payload)
     assert command["type"] == "capture_now"
+    assert "task_id" in command
+    assert command["task_id"] >= 1
