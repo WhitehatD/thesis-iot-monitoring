@@ -454,8 +454,11 @@ export default function BoardPage({
 						<h2>Capture History</h2>
 						<div className="filter-controls">
 							<div className="filter-group">
-								<label className="filter-label">Date</label>
+								<label className="filter-label" htmlFor="filter-date">
+									Date
+								</label>
 								<select
+									id="filter-date"
 									className="filter-select"
 									value={filterDate}
 									onChange={(e) => setFilterDate(e.target.value)}
@@ -472,8 +475,11 @@ export default function BoardPage({
 								</select>
 							</div>
 							<div className="filter-group">
-								<label className="filter-label">Sort</label>
+								<label className="filter-label" htmlFor="filter-sort">
+									Sort
+								</label>
 								<select
+									id="filter-sort"
 									className="filter-select"
 									value={sortOrder}
 									onChange={(e) =>
@@ -485,8 +491,11 @@ export default function BoardPage({
 								</select>
 							</div>
 							<div className="filter-group">
-								<label className="filter-label">Task ID</label>
+								<label className="filter-label" htmlFor="filter-taskId">
+									Task ID
+								</label>
 								<input
+									id="filter-taskId"
 									type="text"
 									className="filter-input"
 									placeholder="e.g. 5"
