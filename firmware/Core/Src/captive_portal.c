@@ -992,6 +992,12 @@ PortalStatus_t CaptivePortal_Start(void)
 
         LOG_INFO(TAG_PORT, "HTTP client connected (sock=%ld)", (long)client_sock);
 
+        /* Explicitly set receive timeout to 100ms. EMW3080 accept() creates new sockets 
+         * with the default 10000ms blocking timeout instead of inheriting from the server socket. 
+         * Without this, speculative browser connections cause a 10s deadlock (Command 0x0205 timeout). */
+        int32_t rcv_timeout = 100;
+        MX_WIFI_Socket_setsockopt(wifi, client_sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcv_timeout, sizeof(rcv_timeout));
+
         /* Handle the request */
         int configured = _handle_http_client(client_sock);
 
