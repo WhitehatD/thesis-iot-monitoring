@@ -506,25 +506,83 @@ static const char HTML_STREAMING_HEADER[] =
     "<meta name='viewport' content='width=device-width,initial-scale=1'>"
     "<title>Connecting...</title>"
     "<style>"
-    "body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:linear-gradient(135deg,#0a0e27,#1a1f3a,#0d1117);color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;}"
-    ".card{background:rgba(22,27,52,0.85);backdrop-filter:blur(20px);border:1px solid rgba(99,140,255,0.15);border-radius:20px;padding:40px 36px;text-align:center;width:100%;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,0.4);}"
-    "h1{font-size:22px;font-weight:700;margin-bottom:8px;background:linear-gradient(135deg,#fff,#a8c0ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}"
-    ".prog-bg{background:rgba(99,140,255,0.1);height:8px;border-radius:4px;margin:24px 0;overflow:hidden;}"
-    ".prog-bar{background:linear-gradient(135deg,#638cff,#4f6ef7);height:100%;width:0%;transition:width 0.3s ease,background 0.3s;}"
-    "#status{color:#8b949e;font-size:14px;}"
+    "*{margin:0;padding:0;box-sizing:border-box}"
+    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
+        "background:linear-gradient(135deg,#0a0e27 0%,#1a1f3a 50%,#0d1117 100%);"
+        "color:#e6edf3;display:flex;align-items:center;justify-content:center;"
+        "min-height:100vh;padding:20px}"
+    ".card{background:rgba(22,27,52,0.85);backdrop-filter:blur(20px);"
+        "-webkit-backdrop-filter:blur(20px);"
+        "border:1px solid rgba(99,140,255,0.15);border-radius:20px;"
+        "padding:40px 36px;text-align:center;width:100%;max-width:440px;"
+        "box-shadow:0 8px 40px rgba(0,0,0,0.4),0 0 80px rgba(99,140,255,0.06);"
+        "animation:fadeUp .6s ease-out}"
+    "@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}"
+    "@keyframes spin{to{transform:rotate(360deg)}}"
+    "@keyframes pulse{0%,100%{box-shadow:0 4px 20px rgba(99,140,255,0.2)}50%{box-shadow:0 4px 30px rgba(99,140,255,0.4)}}"
+    ".spinner{width:48px;height:48px;border:3px solid rgba(99,140,255,0.15);"
+        "border-top-color:#638cff;border-radius:50%;margin:0 auto 20px;"
+        "animation:spin 1s linear infinite}"
+    "h1{font-size:22px;font-weight:700;margin-bottom:6px;"
+        "background:linear-gradient(135deg,#fff,#a8c0ff);-webkit-background-clip:text;"
+        "-webkit-text-fill-color:transparent}"
+    ".sub{color:#8b949e;font-size:13px;margin-bottom:24px}"
+    /* Steps row */
+    ".steps{display:flex;gap:8px;margin-bottom:24px;justify-content:center}"
+    ".step{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;"
+        "color:#484f58;letter-spacing:0.3px;transition:color .3s}"
+    ".step .dot{width:8px;height:8px;border-radius:50%;"
+        "background:#2d3348;transition:background .3s,box-shadow .3s}"
+    ".step.active .dot{background:#638cff;box-shadow:0 0 8px rgba(99,140,255,0.5)}"
+    ".step.active{color:#a8c0ff}"
+    ".step.done .dot{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,0.4)}"
+    ".step.done{color:#6ee7b7}"
+    ".step.fail .dot{background:#ff5555;box-shadow:0 0 8px rgba(255,85,85,0.4)}"
+    ".step.fail{color:#fca5a5}"
+    /* Progress bar */
+    ".prog-bg{background:rgba(99,140,255,0.08);height:6px;border-radius:3px;"
+        "margin-bottom:20px;overflow:hidden}"
+    ".prog-bar{background:linear-gradient(90deg,#638cff,#4f6ef7);"
+        "height:100%;width:0%;border-radius:3px;"
+        "transition:width .4s ease,background .3s}"
+    /* Status text */
+    "#status{color:#a8b2c1;font-size:14px;font-weight:500;min-height:20px;"
+        "transition:opacity .2s}"
+    /* Log area */
+    ".log{margin-top:20px;padding:12px;font-size:11px;line-height:1.7;"
+        "background:rgba(0,0,0,0.25);border:1px solid rgba(99,140,255,0.08);"
+        "border-radius:10px;text-align:left;color:#6b7280;"
+        "max-height:140px;overflow-y:auto;font-family:'SF Mono',Consolas,monospace}"
+    ".log .e{color:#8b949e}"
     "</style>"
     "</head>"
     "<body>"
     "<div class='card'>"
+    "<div class='spinner' id='spin'></div>"
     "<h1 id='title'>Configuring Wi-Fi</h1>"
+    "<p class='sub'>Please wait while the sensor connects</p>"
+    /* Step indicators */
+    "<div class='steps'>"
+    "<div class='step active' id='s1'><span class='dot'></span>Validate</div>"
+    "<div class='step' id='s2'><span class='dot'></span>Save</div>"
+    "<div class='step' id='s3'><span class='dot'></span>Reboot</div>"
+    "</div>"
+    /* Progress */
     "<div class='prog-bg'><div class='prog-bar' id='bar'></div></div>"
     "<p id='status'>Initializing...</p>"
+    "<div class='log' id='log'></div>"
     "</div>"
     "<script>"
-    "function updateStatus(msg,pct){document.getElementById('status').innerText=msg;if(pct>0)document.getElementById('bar').style.width=pct+'%';}"
-    "function complete(success,msg){document.getElementById('title').innerText=success?'Connected!':'Connection Failed';updateStatus(msg,100);"
-    "document.getElementById('bar').style.background=success?'#34d399':'#ff5555';"
-    "if(!success)setTimeout(function(){window.history.back();},4000);}"
+    "var logEl=document.getElementById('log');"
+    "function addLog(m){var d=document.createElement('div');d.className='e';var t=new Date();var ts=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0')+':'+t.getSeconds().toString().padStart(2,'0');d.textContent='['+ts+'] '+m;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}"
+    "function updateStatus(msg,pct){document.getElementById('status').innerText=msg;addLog(msg);if(pct>0)document.getElementById('bar').style.width=pct+'%';}"
+    "function setStep(n){for(var i=1;i<=3;i++){var e=document.getElementById('s'+i);e.className='step'+(i<n?' done':(i===n?' active':''));}}"
+    "function complete(ok,msg){document.getElementById('title').innerText=ok?'Connected!':'Connection Failed';"
+    "document.getElementById('spin').style.display='none';"
+    "document.getElementById('status').innerText=msg;addLog(msg);"
+    "document.getElementById('bar').style.width='100%';"
+    "document.getElementById('bar').style.background=ok?'linear-gradient(90deg,#34d399,#10b981)':'linear-gradient(90deg,#ff5555,#ff3333)';"
+    "if(!ok){for(var i=1;i<=3;i++){var e=document.getElementById('s'+i);if(e.className.indexOf('done')<0&&e.className.indexOf('active')>=0)e.className='step fail';}setTimeout(function(){window.history.back();},4000);}}"
     "</script>\n";
 
 static int32_t s_current_client_sock = -1;
@@ -715,11 +773,14 @@ static int _handle_http_client(int32_t client_sock)
         for(int i=0; i<8; i++) _portal_send_chunk(client_sock, pad);
 
         s_current_client_sock = client_sock;
+
+        /* ── Phase 1: Validate Wi-Fi credentials ── */
+        _portal_send_chunk(client_sock, "<script>setStep(1);updateStatus('Credentials received. Starting validation...', 5);</script>\n");
         
         if (WiFi_TestConnection(ssid, password, _wifi_test_callback) != WIFI_OK)
         {
             LOG_WARN(TAG_PORT, "Credentials failed test. Serving error streaming tag.");
-            _portal_send_chunk(client_sock, "<script>complete(false, 'Check password. Returning to setup...');</script></body></html>\n");
+            _portal_send_chunk(client_sock, "<script>complete(false, 'Check password and try again. Returning to setup...');</script></body></html>\n");
             _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5); /* End of chunked stream */
             MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
             s_current_client_sock = -1;
@@ -727,16 +788,25 @@ static int _handle_http_client(int32_t client_sock)
         }
 
         LOG_INFO(TAG_PORT, "Credentials verified!");
+
+        /* ── Phase 2: Save to flash ── */
+        _portal_send_chunk(client_sock, "<script>setStep(2);updateStatus('Wi-Fi verified! Saving credentials to flash...', 92);</script>\n");
         
-        /* Save to flash */
         WiFiCredStatus_t save_ret = WiFiCred_Save(ssid, password);
         if (save_ret != WIFI_CRED_OK)
         {
             LOG_ERROR(TAG_PORT, "FATAL: Failed to save credentials to flash!");
+            _portal_send_chunk(client_sock, "<script>complete(false, 'Flash write failed. Please try again.');</script></body></html>\n");
+            _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5);
+            MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+            s_current_client_sock = -1;
+            return 0;
         }
 
-        /* Send success indication and close HTML */
-        _portal_send_chunk(client_sock, "<script>complete(true, 'Credentials saved. Rebooting sensor...');</script></body></html>\n");
+        _portal_send_chunk(client_sock, "<script>updateStatus('Credentials saved to flash successfully.', 96);</script>\n");
+
+        /* ── Phase 3: Reboot ── */
+        _portal_send_chunk(client_sock, "<script>setStep(3);complete(true, 'All done! Rebooting sensor in 3 seconds...');</script></body></html>\n");
         _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5); /* End of chunked stream */
 
         /* Give the client time to receive the response */

@@ -40,24 +40,9 @@ If Wi-Fi credentials have been saved to internal flash (via captive portal or MQ
 [  5410ms] [INFO] [WIFI] Connected (IP: 192.168.1.42)
 ```
 
-### Tier 2: Compile-Time Credentials (Fallback)
+### Tier 2: Captive Portal (Rescue Mode)
 
-If no flash credentials exist or Tier 1 fails, the firmware falls back to credentials injected at build time via `-D` flags in the Makefile:
-
-```bash
-make -j8 CFLAGS+='-DWIFI_SSID="\"MyNetwork\"" -DWIFI_PASSWORD="\"MyPassword\""'
-```
-
-Or edit `Core/Inc/firmware_config.h` directly (not recommended for production):
-
-```c
-#define WIFI_SSID       "YourNetwork"
-#define WIFI_PASSWORD   "YourPassword"
-```
-
-### Tier 3: Captive Portal (Rescue Mode)
-
-If all connection attempts fail, the board **automatically launches a Captive Portal** — a local Wi-Fi hotspot with an embedded configuration page.
+If no flash credentials exist or Tier 1 connection fails, the board **automatically launches a Captive Portal** — a local Wi-Fi hotspot with an embedded configuration page and real-time connection feedback.
 
 #### How to Connect via Captive Portal
 
@@ -67,12 +52,21 @@ If all connection attempts fail, the board **automatically launches a Captive Po
 3. **A configuration page opens automatically** (captive portal redirect)
    - If it doesn't auto-open, navigate to `http://192.168.10.1` manually
 4. **Enter your WiFi SSID and password** on the configuration page
-5. **Live Connection Progress**: The browser will display a real-time progress bar streaming directly from the board's internal DHCP connection state machine.
+5. **Real-Time 3-Phase Progress Streaming** — After submission, the board streams live state feedback directly to your browser via HTTP chunked encoding:
+
+   | Phase | Step Indicator | States Streamed |
+   |-------|---------------|-----------------|
+   | **1. Validate** | 🔵 Active | Sending association request → WPA2 handshake → DHCP negotiation (attempt X/15) → Link verification → IP assigned |
+   | **2. Save** | 🔵 Active | Writing credentials to flash → CRC32 verification |
+   | **3. Reboot** | 🔵 Active | All done — rebooting in 3s |
+
+   The page shows a glassmorphism card with a spinning loader, an animated progress bar, step indicators (Validate → Save → Reboot), and a timestamped log console. On failure, the step indicator turns red and auto-redirects back to the form after 4 seconds.
+
 6. **The board saves credentials to flash**, reboots, and connects to your network
 
 ```text
-[BOOT] All WiFi connection attempts failed — starting captive portal
-[PORT] SoftAP started: SSID='IoT-Monitor-Setup', IP=192.168.10.1
+[BOOT] No stored WiFi credentials — starting captive portal
+[PORT] SoftAP started: SSID='IoT-Setup-AB12', IP=192.168.10.1
 [PORT] HTTP server listening on port 80
 [PORT] Waiting for WiFi configuration...
 ```
@@ -114,7 +108,7 @@ cd firmware
 make -j8
 ```
 
-Output: `build/thesis-iot-firmware.bin` (~110 KB, <11% of 1MB bank)
+Output: `build/thesis-iot-firmware.bin` (~120 KB, ~11.5% of 1MB bank)
 
 ### Flash (First Time)
 
@@ -239,6 +233,9 @@ Bank 2: 0x08100000 – 0x081FFFFF  (inactive / OTA target)
 | Command Received | 🔴+🟢 50ms flash | MQTT command acknowledged |
 | Capturing | 🔴 Solid | Camera sensor active (recording indicator) |
 | Uploading | 🔴 Solid + 🟢 Flicker | HTTP POST data transfer in progress |
+| Portal Starting | 🔴 5× Rapid Blink | Captive portal launching |
+| Portal Active | 🔴 1s Blink | Waiting for phone to connect + configure |
+| Portal Success | 🟢 6× Rapid Blink | Credentials verified, rebooting |
 | OTA Detected | 🔴+🟢 5× Strobe | Firmware update starting |
 | OTA Flashing | 🔴+🟢 Solid | Flash erase + write (do not power off) |
 | OTA Success | 🟢 Solid 1.5s | Verified — rebooting into new firmware |
