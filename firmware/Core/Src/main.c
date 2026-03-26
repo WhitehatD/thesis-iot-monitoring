@@ -561,9 +561,8 @@ int main(void)
     /* ── Phase 2: Connectivity ──────────────────────── */
 
     /* Wi-Fi — Enterprise credential chain:
-     *   1. Try flash-stored credentials (from captive portal or MQTT set_wifi)
-     *   2. Fall back to compile-time credentials
-     *   3. If all fail → start captive portal (blocks until user configures) */
+     *   1. Try flash-stored credentials (with retries)
+     *   2. If all fail → start captive portal (blocks until user configures) */
     {
         uint8_t wifi_connected = 0;
 
@@ -573,30 +572,11 @@ int main(void)
         {
             LOG_INFO(TAG_BOOT, "Found stored WiFi credentials: SSID='%s'", flash_creds.ssid);
 
-            if (WiFi_Init() == WIFI_OK &&
-                WiFi_Connect(flash_creds.ssid, flash_creds.password) == WIFI_OK)
-            {
-                wifi_connected = 1;
-                LOG_INFO(TAG_BOOT, "Connected using stored credentials");
-            }
-            else
-            {
-                LOG_WARN(TAG_BOOT, "Stored credentials failed — trying compile-time defaults...");
-            }
-        }
-        else
-        {
-            LOG_INFO(TAG_BOOT, "No stored WiFi credentials — trying compile-time defaults...");
-        }
-
-        /* ── Step 2: Try compile-time credentials ── */
-        if (!wifi_connected)
-        {
             int wifi_retries = 0;
             while (wifi_retries < WIFI_CONNECT_RETRIES)
             {
                 /* Re-init WiFi module if first attempt failed */
-                if (wifi_retries > 0 || WiFiCred_HasValid())
+                if (wifi_retries > 0)
                 {
                     WiFi_DeInit();
                     HAL_Delay(1000);
@@ -612,10 +592,17 @@ int main(void)
                     continue;
                 }
 
-                if (WiFi_Connect(WIFI_SSID, WIFI_PASSWORD) == WIFI_OK)
+                if (WiFi_Connect(flash_creds.ssid, flash_creds.password) == WIFI_OK)
                 {
                     wifi_connected = 1;
-                    LOG_INFO(TAG_BOOT, "Connected using compile-time credentials");
+                    LOG_INFO(TAG_BOOT, "Connected using stored credentials");
+
+                    /* Populate runtime creds for automatic reconnects (e.g. sleep wake-up) */
+                    strncpy(s_runtime_ssid, flash_creds.ssid, sizeof(s_runtime_ssid) - 1);
+                    s_runtime_ssid[sizeof(s_runtime_ssid) - 1] = '\0';
+                    strncpy(s_runtime_password, flash_creds.password, sizeof(s_runtime_password) - 1);
+                    s_runtime_password[sizeof(s_runtime_password) - 1] = '\0';
+                    s_has_runtime_wifi = 1;
                     break;
                 }
 
@@ -628,8 +615,12 @@ int main(void)
 #endif
             }
         }
+        else
+        {
+            LOG_INFO(TAG_BOOT, "No stored WiFi credentials found in flash.");
+        }
 
-        /* ── Step 3: All failed → start captive portal ── */
+        /* ── Step 2: All failed → start captive portal ── */
         if (!wifi_connected)
         {
             LOG_WARN(TAG_BOOT, "All WiFi connection attempts failed — starting captive portal");
@@ -1084,11 +1075,9 @@ int main(void)
                     Camera_DeInit();  /* Power down camera for sleep */
                     Scheduler_EnterLowPower();
 
-                    /* Woke up — reconnect everything (use runtime creds if set) */
+                    /* Woke up — reconnect everything using runtime creds */
                     WiFi_Init();
-                    WiFi_Connect(
-                        s_has_runtime_wifi ? s_runtime_ssid : WIFI_SSID,
-                        s_has_runtime_wifi ? s_runtime_password : WIFI_PASSWORD);
+                    WiFi_Connect(s_runtime_ssid, s_runtime_password);
                     MQTT_Init(&mqtt_cfg);
                     MQTT_SubscribeCommands(on_command_received);
                     last_ping = HAL_GetTick();
@@ -1904,17 +1893,8 @@ static void _do_wifi_reconfig(void)
 
     if (ret != WIFI_OK)
     {
-        LOG_ERROR(TAG_WIFI, "WiFi reconnect FAILED with new creds, reverting to compile-time defaults");
-
-        /* Fallback: try original compile-time credentials */
-        ret = WiFi_Connect(WIFI_SSID, WIFI_PASSWORD);
-        if (ret != WIFI_OK)
-        {
-            LOG_ERROR(TAG_WIFI, "FATAL: Cannot connect to any WiFi network");
-            LED_SignalError();
-            return;
-        }
-        s_has_runtime_wifi = 0;  /* Clear runtime creds on failure */
+        LOG_ERROR(TAG_WIFI, "WiFi reconnect FAILED with new creds. Rebooting to retry or open portal...");
+        NVIC_SystemReset();
     }
 
 #if WATCHDOG_ENABLED

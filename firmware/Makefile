@@ -85,11 +85,6 @@ C_INCLUDES = \
 -IDrivers/CMSIS/Include \
 -IDrivers/CMSIS/Device/ST/STM32U5xx/Include
 
-# ── Wi-Fi Credentials (SEC-01: injected at build time) ─
-# Override on command line: make WIFI_SSID='"OtherNet"' WIFI_PASSWORD='"secret"'
-WIFI_SSID     ?= "A I 2.4"
-WIFI_PASSWORD ?= "alex1234"
-
 # ── Defines ───────────────────────────────────────────
 GIT_COMMIT_COUNT := $(shell git rev-list --count HEAD)
 GIT_HASH := $(shell git rev-parse --short HEAD)
@@ -97,9 +92,7 @@ GIT_HASH := $(shell git rev-parse --short HEAD)
 C_DEFS = \
 -DSTM32U585xx \
 -DUSE_HAL_DRIVER \
--DFW_VERSION=\"1.0.$(GIT_COMMIT_COUNT)\" \
--DWIFI_SSID=\"$(WIFI_SSID)\" \
--DWIFI_PASSWORD=\"$(WIFI_PASSWORD)\"
+-DFW_VERSION=\"1.0.$(GIT_COMMIT_COUNT)\"
 
 # ── Compiler Flags ────────────────────────────────────
 OPT = -O2

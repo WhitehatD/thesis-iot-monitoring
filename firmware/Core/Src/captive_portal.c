@@ -48,12 +48,7 @@ static int32_t s_dns_sock = -1;
  *  smooth animations. Inline CSS — no external dependencies.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static const char HTML_CONFIG_PAGE[] =
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Type: text/html; charset=UTF-8\r\n"
-    "Connection: close\r\n"
-    "Cache-Control: no-store\r\n"
-    "\r\n"
+static const char HTML_CONFIG_BODY[] =
     "<!DOCTYPE html>"
     "<html lang='en'>"
     "<head>"
@@ -143,7 +138,7 @@ static const char HTML_CONFIG_PAGE[] =
     "</div>"
     "<h1>WiFi Configuration</h1>"
     "<p class='sub'>IoT Visual Monitoring Sensor</p>"
-    "<form method='POST' action='/configure'>"
+    "<form method='POST' action='/configure' onsubmit=\"var b=document.getElementById('btn');b.innerText='Connecting...';b.style.opacity='0.8';b.style.pointerEvents='none';\">"
     "<div class='field'>"
     "<label for='ssid'>Network Name (SSID)</label>"
     "<input type='text' id='ssid' name='ssid' placeholder='Enter WiFi name' required maxlength='32' autocomplete='off'>"
@@ -154,7 +149,7 @@ static const char HTML_CONFIG_PAGE[] =
     "<label class='toggle'><input type='checkbox' onclick=\"var p=document.getElementById('password');"
     "p.type=p.type==='password'?'text':'password'\">Show password</label>"
     "</div>"
-    "<button type='submit'>Save &amp; Connect</button>"
+    "<button id='btn' type='submit'>Save &amp; Connect</button>"
     "</form>"
     "<div class='info'>"
     "The sensor will reboot and connect to your WiFi network. "
@@ -168,11 +163,7 @@ static const char HTML_CONFIG_PAGE[] =
  *  Success Response Page
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static const char HTML_SUCCESS_PAGE[] =
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Type: text/html; charset=UTF-8\r\n"
-    "Connection: close\r\n"
-    "\r\n"
+static const char HTML_SUCCESS_BODY[] =
     "<!DOCTYPE html>"
     "<html lang='en'>"
     "<head>"
@@ -224,11 +215,7 @@ static const char HTML_SUCCESS_PAGE[] =
  *  Error Page — Validation Failed
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-static const char HTML_ERROR_PAGE[] =
-    "HTTP/1.1 200 OK\r\n"
-    "Content-Type: text/html; charset=UTF-8\r\n"
-    "Connection: close\r\n"
-    "\r\n"
+static const char HTML_ERROR_BODY[] =
     "<!DOCTYPE html>"
     "<html lang='en'>"
     "<head>"
@@ -506,6 +493,25 @@ static void _dns_process_query(void)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
+ * @brief  Send HTTP headers with dynamic Content-Length, followed by the body.
+ */
+static void _send_html_page(int32_t sock, const char *body)
+{
+    char headers[256];
+    snprintf(headers, sizeof(headers),
+             "HTTP/1.1 200 OK\r\n"
+             "Content-Type: text/html; charset=UTF-8\r\n"
+             "Connection: close\r\n"
+             "Cache-Control: no-store, no-cache, must-revalidate\r\n"
+             "Content-Length: %d\r\n"
+             "\r\n",
+             (int)strlen(body));
+
+    _portal_send_all(sock, (const uint8_t *)headers, (int32_t)strlen(headers));
+    _portal_send_all(sock, (const uint8_t *)body, (int32_t)strlen(body));
+}
+
+/**
  * @brief  Handle a single HTTP client connection.
  * @retval 1 if credentials were submitted (reboot needed), 0 otherwise.
  */
@@ -533,8 +539,34 @@ static int _handle_http_client(int32_t client_sock)
             req_buf[total_recv] = '\0';
 
             /* Check if we have the full request (double CRLF) */
-            if (strstr((char *)req_buf, "\r\n\r\n") != NULL)
-                break;
+            char *hdr_end = strstr((char *)req_buf, "\r\n\r\n");
+            if (hdr_end != NULL)
+            {
+                int complete = 1;
+
+                /* If it's a POST, we need the body payload */
+                if (strncmp((char *)req_buf, "POST", 4) == 0)
+                {
+                    char *cl_str = strstr((char *)req_buf, "Content-Length:");
+                    if (!cl_str) cl_str = strstr((char *)req_buf, "content-length:");
+                    if (!cl_str) cl_str = strstr((char *)req_buf, "Content-length:");
+
+                    if (cl_str && cl_str < hdr_end)
+                    {
+                        int content_len = atoi(cl_str + 15);
+                        int header_len = (hdr_end + 4) - (char *)req_buf;
+                        if (total_recv < header_len + content_len)
+                        {
+                            complete = 0; /* Keep reading body */
+                        }
+                    }
+                }
+
+                if (complete)
+                {
+                    break;
+                }
+            }
         }
     }
 
@@ -552,9 +584,7 @@ static int _handle_http_client(int32_t client_sock)
         strncmp(request, "GET /index", 10) == 0)
     {
         LOG_INFO(TAG_PORT, "Serving config page");
-        _portal_send_all(client_sock,
-                         (const uint8_t *)HTML_CONFIG_PAGE,
-                         (int32_t)strlen(HTML_CONFIG_PAGE));
+        _send_html_page(client_sock, HTML_CONFIG_BODY);
         return 0;
     }
 
@@ -604,9 +634,7 @@ static int _handle_http_client(int32_t client_sock)
         if (WiFi_TestConnection(ssid, password) != WIFI_OK)
         {
             LOG_WARN(TAG_PORT, "Credentials failed test. Serving error page.");
-            _portal_send_all(client_sock,
-                             (const uint8_t *)HTML_ERROR_PAGE,
-                             (int32_t)strlen(HTML_ERROR_PAGE));
+            _send_html_page(client_sock, HTML_ERROR_BODY);
             MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
             return 0; /* Return 0 to keep portal running and NOT reboot */
         }
@@ -622,9 +650,7 @@ static int _handle_http_client(int32_t client_sock)
         }
 
         /* Send success page */
-        _portal_send_all(client_sock,
-                         (const uint8_t *)HTML_SUCCESS_PAGE,
-                         (int32_t)strlen(HTML_SUCCESS_PAGE));
+        _send_html_page(client_sock, HTML_SUCCESS_BODY);
 
         /* Give the client time to receive the response */
         MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
@@ -645,10 +671,10 @@ static int _handle_http_client(int32_t client_sock)
         strstr(request, "GET /favicon.ico") != NULL)
     {
         LOG_DEBUG(TAG_PORT, "Captive portal detection → redirect");
-        /* For Apple specifically, serving a non-"Success" page triggers the portal */
+        /* Explicitly return 302 Found to funnel devices to the Config URL */
         _portal_send_all(client_sock,
-                         (const uint8_t *)HTML_CONFIG_PAGE,
-                         (int32_t)strlen(HTML_CONFIG_PAGE));
+                         (const uint8_t *)HTTP_REDIRECT_RESPONSE,
+                         (int32_t)strlen(HTTP_REDIRECT_RESPONSE));
         return 0;
     }
 
@@ -812,6 +838,16 @@ PortalStatus_t CaptivePortal_Start(void)
     LOG_INFO(TAG_PORT, "╚══════════════════════════════════════════╝");
 
     s_portal_active = 1;
+
+    /* ── Step 0: Ensure WiFi driver is initialized ────────────── */
+    /* Since we removed the compile-time fallback, a fresh board with no
+     * stored flash credentials jumps straight to the portal without ever
+     * powering on the Wi-Fi module in main.c's connection loop. */
+    if (WiFi_Init() != WIFI_OK)
+    {
+        LOG_ERROR(TAG_PORT, "FATAL: WiFi module initialization failed. Cannot start portal.");
+        return PORTAL_ERROR_AP;
+    }
 
     /* ── Rapid RED blink to indicate portal mode ── */
     for (int i = 0; i < 5; i++)

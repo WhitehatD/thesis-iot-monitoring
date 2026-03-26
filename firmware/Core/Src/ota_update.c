@@ -178,12 +178,10 @@ static int32_t _ota_socket_open(void)
     if (sock >= 0)
     {
         /* ENTERPRISE FIX: Override receive timeout to 100ms.
-         * The AT firmware expects a POSIX `struct mx_timeval` (8 bytes) for MX_SO_RCVTIMEO.
-         * Passing an int (4 bytes) caused memory misalignment and 100-second stalls! */
-        struct mx_timeval tv;
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000; /* 100ms */
-        MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &tv, sizeof(tv));
+         * The AT firmware expects an int32_t timeout in milliseconds, 
+         * unlike standard lwIP which expects a struct timeval. */
+        int32_t rcv_timeout = 100; /* 100ms */
+        MX_WIFI_Socket_setsockopt(wifi_obj_get(), sock, MX_SOL_SOCKET, MX_SO_RCVTIMEO, &rcv_timeout, sizeof(rcv_timeout));
     }
     return sock;
 }

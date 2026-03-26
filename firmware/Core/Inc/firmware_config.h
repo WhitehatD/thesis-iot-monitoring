@@ -22,12 +22,7 @@
  *  Example:  make WIFI_SSID='"MyNet"' WIFI_PASSWORD='"secret"'
  *  Never commit plaintext credentials to source control.
  * ═══════════════════════════════════════════════════════════════════════════ */
-#ifndef WIFI_SSID
-  #error "WIFI_SSID not defined — inject via build flags: make CFLAGS+='-DWIFI_SSID=\"MyNet\"'"
-#endif
-#ifndef WIFI_PASSWORD
-  #error "WIFI_PASSWORD not defined — inject via build flags"
-#endif
+
 #define WIFI_CONNECT_RETRIES        3
 #define WIFI_CONNECT_TIMEOUT_MS     10000
 
