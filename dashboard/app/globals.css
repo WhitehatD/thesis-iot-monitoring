@@ -114,6 +114,7 @@ body {
 	font-weight: 700;
 	letter-spacing: -0.02em;
 	background: linear-gradient(135deg, #fff 0%, #a0a5b8 100%);
+	background-clip: text;
 	-webkit-background-clip: text;
 	-webkit-text-fill-color: transparent;
 }
@@ -625,7 +626,7 @@ body {
 	grid-template-areas:
 		"header header"
 		"sidebar main";
-	grid-template-columns: 350px 1fr;
+	grid-template-columns: 420px 1fr;
 	gap: 24px;
 	align-items: flex-start;
 }
@@ -772,4 +773,79 @@ body {
 .btn-secondary:hover:not(:disabled) {
 	background: rgba(255, 255, 255, 0.1);
 	border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* ── Capture History Filters ── */
+.gallery-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 16px;
+	margin-bottom: 20px;
+	flex-wrap: wrap;
+}
+
+.filter-controls {
+	display: flex;
+	gap: 12px;
+	align-items: flex-end;
+	flex-wrap: wrap;
+}
+
+.filter-group {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.filter-label {
+	font-size: 0.65rem;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--text-tertiary);
+	font-weight: 600;
+}
+
+.filter-select {
+	background: rgba(255, 255, 255, 0.03);
+	border: 1px solid var(--border-highlight);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 6px 10px;
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	cursor: pointer;
+	transition: border-color 0.2s;
+	min-width: 120px;
+}
+
+.filter-select:focus {
+	outline: none;
+	border-color: var(--accent-cyan);
+}
+
+.filter-select option {
+	background: var(--bg-secondary);
+	color: var(--text-primary);
+}
+
+.filter-input {
+	background: rgba(255, 255, 255, 0.03);
+	border: 1px solid var(--border-highlight);
+	border-radius: var(--radius-sm);
+	color: var(--text-primary);
+	padding: 6px 10px;
+	font-family: var(--font-mono);
+	font-size: 0.78rem;
+	width: 80px;
+	transition: border-color 0.2s;
+}
+
+.filter-input:focus {
+	outline: none;
+	border-color: var(--accent-cyan);
+}
+
+.filter-input::placeholder {
+	color: var(--text-tertiary);
 }

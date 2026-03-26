@@ -54,7 +54,9 @@ export default function BoardPage({
 	const [scheduleInput, setScheduleInput] = useState("");
 	const [isScheduling, setIsScheduling] = useState(false);
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
-	const [activeFilter, setActiveFilter] = useState("filter-normal");
+	const [filterDate, setFilterDate] = useState("all");
+	const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+	const [searchTaskId, setSearchTaskId] = useState("");
 	const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
 
 	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
@@ -451,26 +453,72 @@ export default function BoardPage({
 					<div className="gallery-header">
 						<h2>Capture History</h2>
 						<div className="filter-controls">
-							<span className="filter-label">Lens Filter:</span>
-							<select
-								className="filter-select"
-								value={activeFilter}
-								onChange={(e) => setActiveFilter(e.target.value)}
-							>
-								<option value="filter-normal">Normal (Raw)</option>
-								<option value="filter-hdr">Ultra HDR</option>
-								<option value="filter-noir">Cinematic Noir</option>
-								<option value="filter-vintage">1998 Vintage</option>
-							</select>
+							<div className="filter-group">
+								<label className="filter-label">Date</label>
+								<select
+									className="filter-select"
+									value={filterDate}
+									onChange={(e) => setFilterDate(e.target.value)}
+								>
+									<option value="all">All Dates</option>
+									{[...new Set(images.map((img) => img.date))]
+										.sort()
+										.reverse()
+										.map((date) => (
+											<option key={date} value={date}>
+												{date}
+											</option>
+										))}
+								</select>
+							</div>
+							<div className="filter-group">
+								<label className="filter-label">Sort</label>
+								<select
+									className="filter-select"
+									value={sortOrder}
+									onChange={(e) =>
+										setSortOrder(e.target.value as "newest" | "oldest")
+									}
+								>
+									<option value="newest">Newest First</option>
+									<option value="oldest">Oldest First</option>
+								</select>
+							</div>
+							<div className="filter-group">
+								<label className="filter-label">Task ID</label>
+								<input
+									type="text"
+									className="filter-input"
+									placeholder="e.g. 5"
+									value={searchTaskId}
+									onChange={(e) => setSearchTaskId(e.target.value)}
+								/>
+							</div>
 						</div>
 					</div>
-					<div className={`gallery-grid ${activeFilter}`}>
-						{images.length === 0 ? (
-							<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
-								No captures received yet.
-							</div>
-						) : (
-							images.map((img) => (
+					<div className="gallery-grid">
+						{(() => {
+							let filtered = images;
+							if (filterDate !== "all")
+								filtered = filtered.filter((img) => img.date === filterDate);
+							if (searchTaskId.trim())
+								filtered = filtered.filter(
+									(img) => String(img.taskId) === searchTaskId.trim(),
+								);
+							filtered = [...filtered].sort((a, b) =>
+								sortOrder === "newest"
+									? b.timestamp - a.timestamp
+									: a.timestamp - b.timestamp,
+							);
+							if (filtered.length === 0)
+								return (
+									<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
+										{images.length === 0
+											? "No captures received yet."
+											: "No captures match the current filters."}
+									</div>
+								);
+							return filtered.map((img) => (
 								<div
 									key={img.filename}
 									className="image-card"
@@ -501,8 +549,8 @@ export default function BoardPage({
 										🗑️
 									</button>
 								</div>
-							))
-						)}
+							));
+						})()}
 					</div>
 				</section>
 			</main>
@@ -526,7 +574,7 @@ export default function BoardPage({
 						<img
 							src={selectedImage.url}
 							alt="Full Size Export"
-							className={`lightbox-image ${activeFilter}`}
+							className="lightbox-image"
 						/>
 						<div className="lightbox-footer">
 							<div>
