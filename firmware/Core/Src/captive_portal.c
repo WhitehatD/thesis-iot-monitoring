@@ -585,14 +585,20 @@ static int _handle_http_client(int32_t client_sock)
     int32_t total_recv = 0;
     uint32_t start = HAL_GetTick();
 
-    while ((HAL_GetTick() - start) < 500 && total_recv < (int32_t)(sizeof(req_buf) - 1))
+    while ((HAL_GetTick() - start) < 3000 && total_recv < (int32_t)(sizeof(req_buf) - 1))
     {
         MX_WIFI_IO_YIELD(wifi_obj_get(), 50);
 
-        int32_t n = MX_WIFI_Socket_recv(
+        /* ENTERPRISE FIX: Use recv_timeout with 500ms MIPC transport ceiling.
+         * The standard MX_WIFI_Socket_recv uses MX_WIFI_CMD_TIMEOUT (10000ms) as the
+         * mipc_request timeout — this blocks the ENTIRE SPI bus for 10s when a mobile 
+         * browser opens a speculative TCP connection without sending HTTP data.
+         * SO_RCVTIMEO and application-level loops cannot interrupt mipc_request. */
+        int32_t n = MX_WIFI_Socket_recv_timeout(
             wifi_obj_get(), client_sock,
             &req_buf[total_recv],
-            (int32_t)(sizeof(req_buf) - 1 - (uint32_t)total_recv), 0);
+            (int32_t)(sizeof(req_buf) - 1 - (uint32_t)total_recv), 0,
+            500);  /* 500ms MIPC timeout */
 
         if (n > 0)
         {
