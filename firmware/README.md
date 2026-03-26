@@ -67,7 +67,8 @@ If all connection attempts fail, the board **automatically launches a Captive Po
 3. **A configuration page opens automatically** (captive portal redirect)
    - If it doesn't auto-open, navigate to `http://192.168.10.1` manually
 4. **Enter your WiFi SSID and password** on the configuration page
-5. **The board saves credentials to flash**, reboots, and connects to your network
+5. **Live Connection Progress**: The browser will display a real-time progress bar streaming directly from the board's internal DHCP connection state machine.
+6. **The board saves credentials to flash**, reboots, and connects to your network
 
 ```text
 [BOOT] All WiFi connection attempts failed — starting captive portal

@@ -211,15 +211,17 @@ bool WiFi_IsConnected(void)
     return (s_connected != 0);
 }
 
-WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password)
+WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password, WiFiTest_Callback_t cb)
 {
     if (!s_initialized)
     {
         LOG_ERROR(TAG_WIFI, "Cannot test — module not initialized");
+        if (cb) cb("Error: Wi-Fi module not initialized", 0);
         return WIFI_ERROR_INIT;
     }
 
     LOG_INFO(TAG_WIFI, "Testing connection to '%s' (fast fail)...", ssid);
+    if (cb) cb("Associating with Wi-Fi network...", 10);
 
     /* Enable DHCP */
     wifi_obj_get()->NetSettings.DHCP_IsEnabled = 1;
@@ -233,8 +235,9 @@ WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password)
 
     if (ret == MX_WIFI_STATUS_OK)
     {
+        if (cb) cb("Associated! Waiting for DHCP...", 30);
         /* connected, wait for DHCP */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 2000);
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 4000);
 
         uint8_t ip[4] = {0};
         bool got_ip = false;
@@ -242,7 +245,15 @@ WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password)
         /* 15 * 1000 = 15s wait max (faster than 35s in WiFi_Connect) */
         for (int dhcp_wait = 0; dhcp_wait < 15; dhcp_wait++)
         {
-            if (MX_WIFI_IsConnected(wifi_obj_get()) <= 0)
+            if (cb) {
+                char msg[64];
+                snprintf(msg, sizeof(msg), "Requesting IP address (attempt %d/15)...", dhcp_wait + 1);
+                cb(msg, 30 + (dhcp_wait * 4));
+            }
+
+            /* Ignore temporary link drops for the first 4 seconds of the loop 
+             * to allow WPA 4-way handshake and DHCP state machine to settle. */
+            if (dhcp_wait >= 3 && MX_WIFI_IsConnected(wifi_obj_get()) <= 0)
             {
                 LOG_ERROR(TAG_WIFI, "Test: Link dropped during DHCP (wrong password or AP reject)");
                 break;
@@ -260,12 +271,14 @@ WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password)
         if (got_ip)
         {
             LOG_INFO(TAG_WIFI, "Test SUCCESS. IP: %d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+            if (cb) cb("Success! IP assigned.", 100);
             /* We leave the station connected. Captive portal will reboot the board anyway. */
             return WIFI_OK;
         }
         else
         {
             LOG_ERROR(TAG_WIFI, "Test FAILED — no IP assigned (timeout)");
+            if (cb) cb("Failed: No IP assigned (timeout or dropped)", 100);
             /* Tear down the failed connection so the module is ready for next attempt */
             MX_WIFI_Disconnect(wifi_obj_get());
             MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
@@ -274,6 +287,7 @@ WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password)
     }
 
     LOG_ERROR(TAG_WIFI, "Test FAILED — association rejected");
+    if (cb) cb("Failed: Association rejected (wrong password?)", 100);
     return WIFI_ERROR_CONNECT;
 }
 

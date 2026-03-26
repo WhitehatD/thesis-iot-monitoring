@@ -39,13 +39,16 @@ WiFiStatus_t WiFi_Init(void);
  */
 WiFiStatus_t WiFi_Connect(const char *ssid, const char *password);
 
+typedef void (*WiFiTest_Callback_t)(const char *msg, int percent);
+
 /**
  * @brief  Test WiFi credentials with a single fast attempt and short DHCP timeout.
  * @param  ssid: Network SSID.
  * @param  password: Network password.
+ * @param  cb: Optional callback to report connection progress.
  * @retval WIFI_OK if connected and acquired IP.
  */
-WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password);
+WiFiStatus_t WiFi_TestConnection(const char *ssid, const char *password, WiFiTest_Callback_t cb);
 
 /**
  * @brief  Check if Wi-Fi is currently connected.

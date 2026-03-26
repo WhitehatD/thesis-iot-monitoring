@@ -376,7 +376,9 @@ static int _portal_send_all(int32_t sock, const uint8_t *data, int32_t len)
         else
         {
             retries++;
-            if (retries >= 3) return -1;
+            /* Give TCP ACKs time to arrive. Apple Delayed ACK is 200ms.
+             * 100 retries * 50ms = 5000ms maximum wait for socket buffer to drain. */
+            if (retries >= 100) return -1;
             MX_WIFI_IO_YIELD(wifi_obj_get(), 50);
         }
     }
@@ -492,6 +494,51 @@ static void _dns_process_query(void)
  *  HTTP Request Handler
  * ═══════════════════════════════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ *  Streaming Interactive Feedback UI
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+static const char HTML_STREAMING_HEADER[] =
+    "<!DOCTYPE html>"
+    "<html lang='en'>"
+    "<head>"
+    "<meta charset='UTF-8'>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<title>Connecting...</title>"
+    "<style>"
+    "body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:linear-gradient(135deg,#0a0e27,#1a1f3a,#0d1117);color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:20px;box-sizing:border-box;}"
+    ".card{background:rgba(22,27,52,0.85);backdrop-filter:blur(20px);border:1px solid rgba(99,140,255,0.15);border-radius:20px;padding:40px 36px;text-align:center;width:100%;max-width:420px;box-shadow:0 8px 40px rgba(0,0,0,0.4);}"
+    "h1{font-size:22px;font-weight:700;margin-bottom:8px;background:linear-gradient(135deg,#fff,#a8c0ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}"
+    ".prog-bg{background:rgba(99,140,255,0.1);height:8px;border-radius:4px;margin:24px 0;overflow:hidden;}"
+    ".prog-bar{background:linear-gradient(135deg,#638cff,#4f6ef7);height:100%;width:0%;transition:width 0.3s ease,background 0.3s;}"
+    "#status{color:#8b949e;font-size:14px;}"
+    "</style>"
+    "</head>"
+    "<body>"
+    "<div class='card'>"
+    "<h1 id='title'>Configuring Wi-Fi</h1>"
+    "<div class='prog-bg'><div class='prog-bar' id='bar'></div></div>"
+    "<p id='status'>Initializing...</p>"
+    "</div>"
+    "<script>"
+    "function updateStatus(msg,pct){document.getElementById('status').innerText=msg;if(pct>0)document.getElementById('bar').style.width=pct+'%';}"
+    "function complete(success,msg){document.getElementById('title').innerText=success?'Connected!':'Connection Failed';updateStatus(msg,100);"
+    "document.getElementById('bar').style.background=success?'#34d399':'#ff5555';"
+    "if(!success)setTimeout(function(){window.history.back();},4000);}"
+    "</script>\n";
+
+static int32_t s_current_client_sock = -1;
+
+static void _wifi_test_callback(const char *msg, int percent)
+{
+    if (s_current_client_sock >= 0)
+    {
+        char buf[256];
+        int len = snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>\n", msg, percent);
+        _portal_send_all(s_current_client_sock, (const uint8_t *)buf, len);
+    }
+}
+
 /**
  * @brief  Send HTTP headers with dynamic Content-Length, followed by the body.
  */
@@ -517,14 +564,17 @@ static void _send_html_page(int32_t sock, const char *body)
  */
 static int _handle_http_client(int32_t client_sock)
 {
-    /* Read HTTP request with polling */
+    /* Read HTTP request with polling. 
+     * IMPORTANT: Max 500ms timeout! Mobile browsers open 4-5 speculative TCP 
+     * connections. If we block for 3000ms on an idle socket, the legitimate 
+     * GET request socket gets backlogged and the browser signals a timeout! */
     uint8_t req_buf[1024];
     memset(req_buf, 0, sizeof(req_buf));
 
     int32_t total_recv = 0;
     uint32_t start = HAL_GetTick();
 
-    while ((HAL_GetTick() - start) < 3000 && total_recv < (int32_t)(sizeof(req_buf) - 1))
+    while ((HAL_GetTick() - start) < 500 && total_recv < (int32_t)(sizeof(req_buf) - 1))
     {
         MX_WIFI_IO_YIELD(wifi_obj_get(), 50);
 
@@ -630,32 +680,52 @@ static int _handle_http_client(int32_t client_sock)
 
         /* Test credentials in real-time before saving */
         LOG_INFO(TAG_PORT, "Testing WiFi credentials in background...");
+
+        /* Start streaming response: No Content-Length because we stream chunk by chunk */
+        const char *stream_hdrs = 
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: text/html; charset=UTF-8\r\n"
+            "Connection: close\r\n"
+            "Cache-Control: no-store, no-cache\r\n"
+            "X-Content-Type-Options: nosniff\r\n"
+            "\r\n";
+        _portal_send_all(client_sock, (const uint8_t *)stream_hdrs, (int32_t)strlen(stream_hdrs));
+        _portal_send_all(client_sock, (const uint8_t *)HTML_STREAMING_HEADER, (int32_t)strlen(HTML_STREAMING_HEADER));
         
-        if (WiFi_TestConnection(ssid, password) != WIFI_OK)
+        /* 1024 bytes padding for Safari buffer flush */
+        char pad[128]; memset(pad, ' ', sizeof(pad)-1); pad[sizeof(pad)-1]='\0';
+        for(int i=0; i<8; i++) _portal_send_all(client_sock, (const uint8_t *)pad, 127);
+
+        s_current_client_sock = client_sock;
+        
+        if (WiFi_TestConnection(ssid, password, _wifi_test_callback) != WIFI_OK)
         {
-            LOG_WARN(TAG_PORT, "Credentials failed test. Serving error page.");
-            _send_html_page(client_sock, HTML_ERROR_BODY);
+            LOG_WARN(TAG_PORT, "Credentials failed test. Serving error streaming tag.");
+            const char *fail_js = "<script>complete(false, 'Check password. Returning to setup...');</script></body></html>\n";
+            _portal_send_all(client_sock, (const uint8_t *)fail_js, (int32_t)strlen(fail_js));
             MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
+            s_current_client_sock = -1;
             return 0; /* Return 0 to keep portal running and NOT reboot */
         }
 
         LOG_INFO(TAG_PORT, "Credentials verified!");
-
+        
         /* Save to flash */
         WiFiCredStatus_t save_ret = WiFiCred_Save(ssid, password);
         if (save_ret != WIFI_CRED_OK)
         {
             LOG_ERROR(TAG_PORT, "FATAL: Failed to save credentials to flash!");
-            /* Still send success page — user can retry */
         }
 
-        /* Send success page */
-        _send_html_page(client_sock, HTML_SUCCESS_BODY);
+        /* Send success indication and close HTML */
+        const char *succ_js = "<script>complete(true, 'Credentials saved. Rebooting sensor...');</script></body></html>\n";
+        _portal_send_all(client_sock, (const uint8_t *)succ_js, (int32_t)strlen(succ_js));
 
         /* Give the client time to receive the response */
         MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
-
+        s_current_client_sock = -1;
         return 1;  /* Signal reboot needed */
+
     }
 
     /* ── Captive Portal Detection URLs ───────────────── */
@@ -670,11 +740,9 @@ static int _handle_http_client(int32_t client_sock)
         strstr(request, "GET /redirect") != NULL ||
         strstr(request, "GET /favicon.ico") != NULL)
     {
-        LOG_DEBUG(TAG_PORT, "Captive portal detection → redirect");
-        /* Explicitly return 302 Found to funnel devices to the Config URL */
-        _portal_send_all(client_sock,
-                         (const uint8_t *)HTTP_REDIRECT_RESPONSE,
-                         (int32_t)strlen(HTTP_REDIRECT_RESPONSE));
+        LOG_INFO(TAG_PORT, "Captive portal detection → serving config directly");
+        /* Apple/Android captive portal probes expect a direct 200 OK + HTML body */
+        _send_html_page(client_sock, HTML_CONFIG_BODY);
         return 0;
     }
 
