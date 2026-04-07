@@ -229,8 +229,8 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
 
         print(f"[AI] Analyzing task {task_id}: objective='{objective}'")
 
-        # Choose model — prefer Gemini if API key is configured, else try vLLM
-        model_key = "gemini-3" if settings.gemini_api_key else "qwen3-vl"
+        # Choose model — prefer Claude Sonnet, fall back to vLLM
+        model_key = "claude-sonnet" if settings.anthropic_api_key else "qwen3-vl"
 
         analysis = await analyze_image(image_path, objective, model_key)
 

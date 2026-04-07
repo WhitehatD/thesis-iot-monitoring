@@ -140,7 +140,7 @@ async def _handle_schedule(message: str, session_id: str):
         "label": "Generating monitoring schedule with AI...",
     })
 
-    model_key = "gemini-3" if settings.gemini_api_key else "qwen3-vl"
+    model_key = "claude-sonnet" if settings.anthropic_api_key else "qwen3-vl"
 
     try:
         plan = await generate_plan(message, model_key)

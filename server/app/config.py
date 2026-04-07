@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/thesis.db"
 
     # ── AI Backends ─────────────────────────────────────
+    anthropic_api_key: str = ""
+    claude_sonnet_model: str = "claude-sonnet-4-6"
+    claude_haiku_model: str = "claude-haiku-4-5-20251001"
+
+    # Legacy backends (kept for benchmarking in thesis evaluation)
     vllm_base_url: str = "http://localhost:8001/v1"
     vllm_model: str = "Qwen/Qwen3-VL-30B-A3B"
     gemini_api_key: str = ""

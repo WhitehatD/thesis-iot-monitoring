@@ -2,16 +2,16 @@
 Thesis IoT Server — AI Planning Engine
 Core innovation: Natural Language → JSON Hardware Schedule.
 
-Supports three backends:
+Primary backend: Claude Sonnet (Anthropic API)
+Legacy backends (for thesis benchmarking):
   - Qwen3-VL-30B-A3B (via vLLM, OpenAI-compatible)
-  - Qwen2.5-VL-3B (via vLLM, lightweight baseline)
   - Gemini 3 Flash (via Google GenAI API)
 """
 
 import json
 from datetime import datetime
 
-from openai import AsyncOpenAI
+import anthropic
 
 from app.config import settings
 from app.api.schemas import PlanResponse, ScheduledTask
@@ -56,7 +56,7 @@ Rules:
 _plan_counter = 0
 
 
-async def generate_plan(prompt: str, model_key: str = "qwen3-vl") -> PlanResponse:
+async def generate_plan(prompt: str, model_key: str = "claude-sonnet") -> PlanResponse:
     """
     Generate a task schedule from a natural language prompt.
 
@@ -70,7 +70,11 @@ async def generate_plan(prompt: str, model_key: str = "qwen3-vl") -> PlanRespons
     global _plan_counter
     _plan_counter += 1
 
-    if model_key in ("qwen3-vl", "qwen2.5-vl"):
+    if model_key == "claude-sonnet":
+        schedule = await _plan_with_claude(prompt, settings.claude_sonnet_model)
+    elif model_key == "claude-haiku":
+        schedule = await _plan_with_claude(prompt, settings.claude_haiku_model)
+    elif model_key in ("qwen3-vl", "qwen2.5-vl"):
         schedule = await _plan_with_vllm(prompt, model_key)
     elif model_key == "gemini-3":
         schedule = await _plan_with_gemini(prompt)
@@ -86,8 +90,25 @@ async def generate_plan(prompt: str, model_key: str = "qwen3-vl") -> PlanRespons
     )
 
 
+async def _plan_with_claude(prompt: str, model: str) -> list[ScheduledTask]:
+    """Generate schedule using Claude (Anthropic API)."""
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    response = await client.messages.create(
+        model=model,
+        max_tokens=2048,
+        system=PLANNING_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+    )
+
+    return _parse_schedule(response.content[0].text)
+
+
 async def _plan_with_vllm(prompt: str, model_key: str) -> list[ScheduledTask]:
     """Generate schedule using local vLLM (OpenAI-compatible API)."""
+    from openai import AsyncOpenAI
+
     model_name = (
         settings.vllm_model
         if model_key == "qwen3-vl"
@@ -96,7 +117,7 @@ async def _plan_with_vllm(prompt: str, model_key: str) -> list[ScheduledTask]:
 
     client = AsyncOpenAI(
         base_url=settings.vllm_base_url,
-        api_key="not-needed",  # vLLM doesn't require an API key
+        api_key="not-needed",
     )
 
     response = await client.chat.completions.create(
@@ -128,7 +149,6 @@ async def _plan_with_gemini(prompt: str) -> list[ScheduledTask]:
 
 def _parse_schedule(raw_output: str) -> list[ScheduledTask]:
     """Parse LLM output into a list of ScheduledTask objects."""
-    # Strip markdown code fences if present
     text = raw_output.strip()
     if text.startswith("```"):
         text = text.split("\n", 1)[1]

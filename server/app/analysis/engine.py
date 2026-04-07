@@ -4,17 +4,18 @@ Thesis IoT Server — Multimodal Visual Analysis Engine
 Core agentic layer: takes a captured image + the original monitoring objective
 and produces a structured analysis with actionable recommendations.
 
-Supports three backends:
-  - Qwen3-VL-30B-A3B (via vLLM, OpenAI-compatible)
-  - Qwen2.5-VL-3B (via vLLM, lightweight baseline)
+Primary backend: Claude Sonnet (Anthropic API — native vision)
+Legacy backends (for thesis benchmarking):
+  - Qwen3-VL-30B-A3B (via vLLM)
   - Gemini 3 Flash (via Google GenAI API)
 """
 
 import base64
+import json
 import time
 from pathlib import Path
 
-from openai import AsyncOpenAI
+import anthropic
 
 from app.config import settings
 
@@ -43,7 +44,7 @@ Rules:
 async def analyze_image(
     image_path: str,
     objective: str,
-    model_key: str = "gemini-3",
+    model_key: str = "claude-sonnet",
 ) -> dict:
     """
     Analyze a captured image against a monitoring objective.
@@ -58,7 +59,14 @@ async def analyze_image(
     """
     start = time.monotonic()
 
-    if model_key in ("qwen3-vl", "qwen2.5-vl"):
+    if model_key in ("claude-sonnet", "claude-haiku"):
+        model = (
+            settings.claude_sonnet_model
+            if model_key == "claude-sonnet"
+            else settings.claude_haiku_model
+        )
+        result = await _analyze_with_claude(image_path, objective, model)
+    elif model_key in ("qwen3-vl", "qwen2.5-vl"):
         result = await _analyze_with_vllm(image_path, objective, model_key)
     elif model_key == "gemini-3":
         result = await _analyze_with_gemini(image_path, objective)
@@ -71,10 +79,49 @@ async def analyze_image(
     return result
 
 
+async def _analyze_with_claude(
+    image_path: str, objective: str, model: str
+) -> dict:
+    """Analyze image using Claude (Anthropic API — native vision)."""
+    image_b64 = _load_image_b64(image_path)
+
+    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    response = await client.messages.create(
+        model=model,
+        max_tokens=1024,
+        system=ANALYSIS_SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": image_b64,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": f"Monitoring objective: {objective}",
+                    },
+                ],
+            }
+        ],
+        temperature=0.1,
+    )
+
+    return _parse_analysis(response.content[0].text)
+
+
 async def _analyze_with_vllm(
     image_path: str, objective: str, model_key: str
 ) -> dict:
     """Analyze image using local vLLM (OpenAI-compatible vision API)."""
+    from openai import AsyncOpenAI
+
     model_name = (
         settings.vllm_model
         if model_key == "qwen3-vl"
@@ -141,10 +188,7 @@ async def _analyze_with_gemini(image_path: str, objective: str) -> dict:
 
 def _parse_analysis(raw_output: str) -> dict:
     """Parse LLM output into a structured analysis dict."""
-    import json
-
     text = raw_output.strip()
-    # Strip markdown code fences if present
     if text.startswith("```"):
         text = text.split("\n", 1)[1]
         text = text.rsplit("```", 1)[0].strip()
@@ -152,7 +196,6 @@ def _parse_analysis(raw_output: str) -> dict:
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        # LLM returned unstructured text — wrap it
         return {
             "description": text[:500],
             "objective_met": False,
