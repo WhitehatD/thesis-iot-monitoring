@@ -1,55 +1,165 @@
 """
 Thesis IoT Server — Agentic Chat Endpoint (SSE)
 
-Server-Sent Events endpoint that runs an agentic loop:
-  1. Accepts a natural language monitoring request
-  2. Streams thinking/planning steps as SSE events
-  3. Calls the AI planning engine to generate a schedule
-  4. Publishes the schedule to the STM32 board via MQTT
-  5. Streams the final result back to the dashboard
+Uses Claude Haiku with tool_use for reliable intent dispatch.
+The LLM decides which tool to call based on the user's message,
+then the server executes the tool and streams results.
 
-SSE event types (matching faa-agent pattern):
+Available tools:
+  - create_schedule: NL → JSON schedule → MQTT to board
+  - capture_now: Single immediate camera capture
+  - capture_sequence: Multiple captures with ms-precision timing
+  - ping_board: LED heartbeat sequence on the physical board
+  - analyze_latest: Fetch and display the most recent AI analysis
+  - get_board_status: Report board telemetry
+  - erase_wifi: Factory reset WiFi credentials (destructive)
+
+SSE event types:
   - thinking: AI reasoning text
-  - tool_call: Agent is executing a tool (with spinner on frontend)
-  - tool_result: Tool execution result (spinner → checkmark)
+  - tool_call: Agent is executing a tool (spinner on frontend)
+  - tool_result: Tool execution complete (spinner → checkmark)
   - reply: Final markdown response
   - error: Something went wrong
   - done: Stream complete
 """
 
 import json
+import re
 import time
-import uuid
-from datetime import datetime
 
+import anthropic
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
 from app.mqtt.client import mqtt_client
-from app.planning.engine import generate_plan, _parse_schedule, PLANNING_SYSTEM_PROMPT
+from app.planning.engine import generate_plan
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
-# Server-side session history (keyed by session_id)
+# Server-side session history
 _sessions: dict[str, list[dict]] = {}
-_SESSION_MAX = 50  # Max messages per session
+
+# ── Tool Definitions (Claude tool_use format) ────────────
+
+AGENT_TOOLS = [
+    {
+        "name": "create_schedule",
+        "description": (
+            "Generate a monitoring schedule from a natural language request. "
+            "Translates time ranges and frequencies into a JSON task list and "
+            "publishes it to the STM32 board via MQTT. Use this when the user "
+            "wants periodic or scheduled image captures over a time window."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "The user's natural language monitoring request, forwarded to the planning LLM.",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
+    {
+        "name": "capture_now",
+        "description": (
+            "Take a single picture immediately. Sends a capture_now command "
+            "to the STM32 board. The board captures one image, uploads it, "
+            "and the server runs AI analysis on it. Use for single snapshots."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "capture_sequence",
+        "description": (
+            "Take multiple pictures in rapid succession with precise timing. "
+            "Sends a single MQTT message with an array of millisecond delays. "
+            "The board executes all captures without needing additional MQTT "
+            "messages. Use when the user wants 2+ captures close together "
+            "(e.g. 'take 3 pictures 2 seconds apart', 'burst of 5 shots')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer",
+                    "description": "Number of pictures to take (2-16).",
+                },
+                "interval_ms": {
+                    "type": "integer",
+                    "description": "Milliseconds between each capture (minimum 500).",
+                },
+            },
+            "required": ["count", "interval_ms"],
+        },
+    },
+    {
+        "name": "ping_board",
+        "description": (
+            "Send a ping command to the board. The board flashes its LEDs "
+            "in a distinctive pattern to confirm it's alive and responsive. "
+            "Use when the user wants to verify the board is reachable."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "analyze_latest",
+        "description": (
+            "Retrieve the most recent AI visual analysis from the database. "
+            "Shows the objective, findings, and recommendation from the last "
+            "image that was analyzed by the multimodal LLM."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
+        "name": "get_board_status",
+        "description": (
+            "Get the current board status including online/offline state, "
+            "firmware version, uptime, and capture count."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+]
+
+AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent controlling an STM32 camera board.
+
+You have tools to control the board. Use them based on the user's request:
+- For scheduled/periodic monitoring → create_schedule
+- For a single immediate photo → capture_now
+- For multiple rapid photos (burst, sequence) → capture_sequence
+- To check if the board is alive → ping_board
+- To see what the camera last saw → analyze_latest
+- To check board health → get_board_status
+
+Always use a tool when the user's request maps to one. Be concise in your responses.
+When you use a tool, briefly explain what you did and the result.
+For capture_sequence, derive count and interval_ms from the user's request (default: 2s interval).
+"""
 
 
 def _sse_event(event: str, data: dict) -> str:
-    """Format a Server-Sent Event."""
     return f"data: {json.dumps({'event': event, **data})}\n\n"
 
 
 @router.post("/chat")
 async def agent_chat(request: Request):
-    """
-    Agentic chat endpoint — accepts a user message and streams
-    the AI planning/analysis response as Server-Sent Events.
-    """
     body = await request.json()
     message = body.get("message", "").strip()
-    session_id = body.get("sessionId", str(uuid.uuid4()))
+    session_id = body.get("sessionId", "default")
 
     if not message:
         return StreamingResponse(
@@ -59,266 +169,274 @@ async def agent_chat(request: Request):
 
     async def event_stream():
         try:
-            # Initialize or retrieve session
             if session_id not in _sessions:
                 _sessions[session_id] = []
             history = _sessions[session_id]
-
-            # Add user message to history
             history.append({"role": "user", "content": message})
 
-            # ── Step 1: Classify intent ──
-            yield _sse_event("thinking", {
-                "text": f"Understanding request: \"{message}\""
-            })
+            # Trim history to last 20 messages
+            if len(history) > 20:
+                _sessions[session_id] = history[-20:]
+                history = _sessions[session_id]
 
-            intent = _classify_intent(message)
+            yield _sse_event("thinking", {"text": f"Processing: \"{message}\""})
 
-            if intent == "schedule":
-                async for event in _handle_schedule(message, session_id):
-                    yield event
-            elif intent == "capture":
-                async for event in _handle_capture(message, session_id):
-                    yield event
-            elif intent == "analyze":
-                async for event in _handle_analyze(message, session_id):
-                    yield event
-            elif intent == "status":
-                async for event in _handle_status(message, session_id):
-                    yield event
-            else:
-                async for event in _handle_general(message, session_id):
-                    yield event
+            # ── Call Claude with tools ──
+            if not settings.anthropic_api_key:
+                # Fallback: rule-based dispatch without LLM
+                async for ev in _fallback_dispatch(message, session_id):
+                    yield ev
+                yield _sse_event("done", {})
+                return
+
+            client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+            response = await client.messages.create(
+                model=settings.claude_haiku_model,
+                max_tokens=1024,
+                system=AGENT_SYSTEM_PROMPT,
+                tools=AGENT_TOOLS,
+                messages=history,
+                temperature=0.1,
+            )
+
+            # Process response blocks
+            reply_parts = []
+            for block in response.content:
+                if block.type == "text":
+                    reply_parts.append(block.text)
+
+                elif block.type == "tool_use":
+                    tool_name = block.name
+                    tool_input = block.input
+
+                    yield _sse_event("tool_call", {
+                        "id": tool_name,
+                        "label": _tool_label(tool_name, tool_input),
+                    })
+
+                    result = await _execute_tool(tool_name, tool_input, session_id)
+
+                    yield _sse_event("tool_result", {
+                        "id": tool_name,
+                        "success": result["success"],
+                        "summary": result["summary"],
+                    })
+
+                    reply_parts.append(result.get("detail", ""))
+
+            full_reply = "\n\n".join(p for p in reply_parts if p)
+            if full_reply:
+                history.append({"role": "assistant", "content": full_reply})
+                yield _sse_event("reply", {"text": full_reply})
 
             yield _sse_event("done", {})
 
+        except anthropic.APIError as e:
+            yield _sse_event("error", {"text": f"Claude API error: {e.message}"})
         except Exception as e:
             yield _sse_event("error", {"text": str(e)})
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-def _classify_intent(message: str) -> str:
-    """Quick rule-based intent classification."""
-    msg = message.lower()
-
-    schedule_words = ["monitor", "schedule", "every", "between", "from", "until",
-                      "watch", "check", "observe", "capture every", "take picture",
-                      "photograph", "survey", "track"]
-    capture_words = ["take a picture", "capture now", "snap", "photo now",
-                     "take photo", "shoot"]
-    analyze_words = ["analyze", "analysis", "what do you see", "describe",
-                     "look at", "examine", "interpret", "last image",
-                     "latest capture"]
-    status_words = ["status", "online", "battery", "uptime", "health",
-                    "how is", "is the board"]
-
-    if any(w in msg for w in capture_words):
-        return "capture"
-    if any(w in msg for w in analyze_words):
-        return "analyze"
-    if any(w in msg for w in status_words):
-        return "status"
-    if any(w in msg for w in schedule_words):
-        return "schedule"
-    return "general"
+def _tool_label(name: str, inp: dict) -> str:
+    labels = {
+        "create_schedule": f"Generating schedule: \"{inp.get('prompt', '')[:60]}\"",
+        "capture_now": "Sending capture command to board...",
+        "capture_sequence": f"Sending {inp.get('count', '?')}-shot sequence...",
+        "ping_board": "Pinging board...",
+        "analyze_latest": "Fetching latest AI analysis...",
+        "get_board_status": "Checking board status...",
+    }
+    return labels.get(name, f"Executing {name}...")
 
 
-async def _handle_schedule(message: str, session_id: str):
-    """Generate a monitoring schedule from natural language."""
+async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
+    """Execute a tool and return {success, summary, detail}."""
 
-    # Step: Planning
-    yield _sse_event("tool_call", {
-        "id": "plan",
-        "label": "Generating monitoring schedule with AI...",
-    })
+    if name == "create_schedule":
+        return await _tool_create_schedule(inp)
+    elif name == "capture_now":
+        return await _tool_capture_now()
+    elif name == "capture_sequence":
+        return await _tool_capture_sequence(inp)
+    elif name == "ping_board":
+        return await _tool_ping()
+    elif name == "analyze_latest":
+        return await _tool_analyze_latest()
+    elif name == "get_board_status":
+        return await _tool_board_status()
+    else:
+        return {"success": False, "summary": f"Unknown tool: {name}", "detail": ""}
 
+
+async def _tool_create_schedule(inp: dict) -> dict:
+    prompt = inp.get("prompt", "")
     model_key = "claude-sonnet" if settings.anthropic_api_key else "qwen3-vl"
 
     try:
-        plan = await generate_plan(message, model_key)
+        plan = await generate_plan(prompt, model_key)
     except Exception as e:
-        yield _sse_event("tool_result", {
-            "id": "plan",
-            "success": False,
-            "summary": f"Planning failed: {e}",
-        })
-        yield _sse_event("reply", {
-            "text": f"I couldn't generate a schedule. The AI backend returned an error: {e}\n\nPlease check that the AI model is configured and running.",
-        })
-        return
+        return {"success": False, "summary": f"Planning failed: {e}", "detail": ""}
 
     task_count = len(plan.tasks)
     times = [t.time for t in plan.tasks]
-
-    yield _sse_event("tool_result", {
-        "id": "plan",
-        "success": True,
-        "summary": f"Generated {task_count} tasks ({times[0]}–{times[-1]})" if times else "No tasks",
-    })
-
-    # Step: Publish to board
-    yield _sse_event("tool_call", {
-        "id": "mqtt",
-        "label": "Publishing schedule to STM32 board via MQTT...",
-    })
 
     schedule_payload = {
         "type": "schedule",
         "tasks": [t.model_dump() for t in plan.tasks],
     }
-    schedule_json = json.dumps(schedule_payload)
+    await mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(schedule_payload))
 
-    try:
-        await mqtt_client.publish(settings.mqtt_topic_commands, schedule_json)
-        yield _sse_event("tool_result", {
-            "id": "mqtt",
-            "success": True,
-            "summary": f"Schedule sent to board ({task_count} tasks)",
-        })
-    except Exception as e:
-        yield _sse_event("tool_result", {
-            "id": "mqtt",
-            "success": False,
-            "summary": f"MQTT publish failed: {e}",
-        })
-
-    # Build reply
     task_list = "\n".join(
         f"| {t.id} | {t.time} | {t.action} | {t.objective} |"
         for t in plan.tasks
     )
-
-    reply = (
-        f"**Schedule created** — {task_count} capture tasks from {times[0]} to {times[-1]}.\n\n"
-        f"| ID | Time | Action | Objective |\n"
-        f"|---|---|---|---|\n"
-        f"{task_list}\n\n"
-        f"The schedule has been sent to the board. "
-        f"It will capture images at the specified times and upload them for AI analysis.\n\n"
-        f"*Model: {model_key}*"
+    detail = (
+        f"**Schedule created** ({task_count} tasks, {times[0]}–{times[-1]})\n\n"
+        f"| ID | Time | Action | Objective |\n|---|---|---|---|\n{task_list}"
     )
 
-    # Store in session
-    _sessions[session_id].append({"role": "assistant", "content": reply})
+    return {
+        "success": True,
+        "summary": f"{task_count} tasks scheduled ({times[0]}–{times[-1]})",
+        "detail": detail,
+    }
 
-    yield _sse_event("reply", {"text": reply})
 
-
-async def _handle_capture(message: str, session_id: str):
-    """Send an immediate capture command."""
-
-    yield _sse_event("tool_call", {
-        "id": "capture",
-        "label": "Sending capture command to STM32 board...",
-    })
-
+async def _tool_capture_now() -> dict:
     task_id = int(time.time())
     command = json.dumps({"type": "capture_now", "task_id": task_id})
-
-    try:
-        await mqtt_client.publish(settings.mqtt_topic_commands, command)
-        yield _sse_event("tool_result", {
-            "id": "capture",
-            "success": True,
-            "summary": f"Capture command sent (task #{task_id})",
-        })
-    except Exception as e:
-        yield _sse_event("tool_result", {
-            "id": "capture",
-            "success": False,
-            "summary": f"Failed: {e}",
-        })
-        yield _sse_event("reply", {"text": f"Failed to send capture command: {e}"})
-        return
-
-    reply = (
-        f"**Capture triggered** (task #{task_id})\n\n"
-        f"The board will capture an image and upload it. "
-        f"You'll see it appear in the gallery once uploaded and analyzed by the AI."
-    )
-    _sessions[session_id].append({"role": "assistant", "content": reply})
-    yield _sse_event("reply", {"text": reply})
+    await mqtt_client.publish(settings.mqtt_topic_commands, command)
+    return {
+        "success": True,
+        "summary": f"Capture sent (task #{task_id})",
+        "detail": f"**Capture triggered** (task #{task_id}). The image will appear in the gallery after upload + AI analysis.",
+    }
 
 
-async def _handle_analyze(message: str, session_id: str):
-    """Analyze the latest captured image."""
+async def _tool_capture_sequence(inp: dict) -> dict:
+    count = max(2, min(inp.get("count", 3), 16))
+    interval = max(500, inp.get("interval_ms", 2000))
+
+    delays = [i * interval for i in range(count)]
+    task_id = int(time.time())
+
+    command = json.dumps({
+        "type": "capture_sequence",
+        "task_id": task_id,
+        "delays_ms": delays,
+    })
+    await mqtt_client.publish(settings.mqtt_topic_commands, command)
+
+    return {
+        "success": True,
+        "summary": f"{count} captures queued ({interval}ms apart)",
+        "detail": (
+            f"**Capture sequence started** — {count} images, {interval}ms intervals.\n\n"
+            f"Delays: {delays}\n\n"
+            f"All captures are batched in a single MQTT message for reliability."
+        ),
+    }
+
+
+async def _tool_ping() -> dict:
+    command = json.dumps({"type": "ping"})
+    await mqtt_client.publish(settings.mqtt_topic_commands, command)
+    return {
+        "success": True,
+        "summary": "Ping sent — board LEDs will flash",
+        "detail": "**Ping sent.** The board's LEDs will flash to confirm it's alive.",
+    }
+
+
+async def _tool_analyze_latest() -> dict:
     from sqlalchemy import select
     from app.analysis.models import AnalysisResult
     from app.db.database import async_session
 
-    yield _sse_event("tool_call", {
-        "id": "fetch",
-        "label": "Fetching latest analysis from database...",
-    })
-
     async with async_session() as db:
         result = await db.execute(
-            select(AnalysisResult)
-            .order_by(AnalysisResult.created_at.desc())
-            .limit(1)
+            select(AnalysisResult).order_by(AnalysisResult.created_at.desc()).limit(1)
         )
         analysis = result.scalar_one_or_none()
 
     if not analysis:
-        yield _sse_event("tool_result", {
-            "id": "fetch",
+        return {
             "success": False,
             "summary": "No analyses found",
-        })
-        reply = "No image analyses found yet. Try capturing an image first."
-        _sessions[session_id].append({"role": "assistant", "content": reply})
-        yield _sse_event("reply", {"text": reply})
-        return
+            "detail": "No image analyses found yet. Try capturing an image first.",
+        }
 
-    yield _sse_event("tool_result", {
-        "id": "fetch",
+    return {
         "success": True,
-        "summary": f"Found analysis for task #{analysis.task_id}",
+        "summary": f"Analysis for task #{analysis.task_id}",
+        "detail": (
+            f"**Latest Analysis** (task #{analysis.task_id})\n\n"
+            f"**Objective:** {analysis.objective}\n\n"
+            f"**Findings:** {analysis.analysis}\n\n"
+            f"**Recommendation:** {analysis.recommendation}\n\n"
+            f"*{analysis.model_used} | {analysis.inference_time_ms:.0f}ms*"
+        ),
+    }
+
+
+async def _tool_board_status() -> dict:
+    return {
+        "success": True,
+        "summary": "Status displayed in telemetry panel",
+        "detail": (
+            "**Board Status**\n\n"
+            "Live telemetry is shown in the left panel:\n"
+            "- **Online/Offline** — MQTT heartbeats every 5s\n"
+            "- **Firmware** — current version (auto-updated via OTA)\n"
+            "- **Captures** — total images this session\n\n"
+            "Use **Ping Node** button to verify responsiveness."
+        ),
+    }
+
+
+# ── Fallback: rule-based dispatch when no API key ────────
+
+async def _fallback_dispatch(message: str, session_id: str):
+    """Simple keyword matching when Claude API is not available."""
+    msg = message.lower()
+
+    if any(w in msg for w in ["take a picture", "capture now", "snap", "photo now"]):
+        result = await _tool_capture_now()
+    elif any(w in msg for w in ["burst", "sequence", "multiple", "several pictures"]):
+        count = 3
+        for m in re.findall(r"(\d+)", message):
+            count = int(m)
+            break
+        result = await _tool_capture_sequence({"count": count, "interval_ms": 2000})
+    elif any(w in msg for w in ["analyze", "what do you see", "latest image", "last capture"]):
+        result = await _tool_analyze_latest()
+    elif any(w in msg for w in ["ping", "alive", "responsive"]):
+        result = await _tool_ping()
+    elif any(w in msg for w in ["status", "online", "health", "uptime"]):
+        result = await _tool_board_status()
+    elif any(w in msg for w in ["monitor", "schedule", "every", "between", "watch"]):
+        result = await _tool_create_schedule({"prompt": message})
+    else:
+        result = {
+            "success": True,
+            "summary": "Help",
+            "detail": (
+                "I can: **schedule monitoring**, **capture images**, **analyze captures**, "
+                "**ping the board**, or **check status**. Try a natural language request!"
+            ),
+        }
+
+    yield _sse_event("tool_call", {"id": "action", "label": "Processing..."})
+    yield _sse_event("tool_result", {
+        "id": "action",
+        "success": result["success"],
+        "summary": result["summary"],
     })
-
-    reply = (
-        f"**Latest Analysis** (task #{analysis.task_id})\n\n"
-        f"**Objective:** {analysis.objective}\n\n"
-        f"**Findings:** {analysis.analysis}\n\n"
-        f"**Recommendation:** {analysis.recommendation}\n\n"
-        f"*Model: {analysis.model_used} | Inference: {analysis.inference_time_ms:.0f}ms*"
-    )
-    _sessions[session_id].append({"role": "assistant", "content": reply})
-    yield _sse_event("reply", {"text": reply})
-
-
-async def _handle_status(message: str, session_id: str):
-    """Report board status from recent MQTT telemetry."""
-    reply = (
-        "**Board Status**\n\n"
-        "The board's live status is shown in the telemetry panel on the left. "
-        "Key indicators:\n\n"
-        "- **Online/Offline** — based on MQTT heartbeats (every 5s)\n"
-        "- **Firmware version** — current deployed version\n"
-        "- **Total captures** — images captured this session\n\n"
-        "You can also click **Ping Node** to verify the board is responsive."
-    )
-    _sessions[session_id].append({"role": "assistant", "content": reply})
-    yield _sse_event("reply", {"text": reply})
-
-
-async def _handle_general(message: str, session_id: str):
-    """Handle general questions about the system."""
-    reply = (
-        "I'm the IoT Visual Monitoring Agent. I can help you with:\n\n"
-        "- **Schedule monitoring** — *\"Monitor the room every 15 minutes from 9 AM to 5 PM\"*\n"
-        "- **Capture images** — *\"Take a picture now\"*\n"
-        "- **Analyze captures** — *\"What does the latest image show?\"*\n"
-        "- **Check status** — *\"Is the board online?\"*\n\n"
-        "Try giving me a natural language monitoring request!"
-    )
-    _sessions[session_id].append({"role": "assistant", "content": reply})
-    yield _sse_event("reply", {"text": reply})
+    yield _sse_event("reply", {"text": result.get("detail", "")})
