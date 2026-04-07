@@ -4,6 +4,7 @@ import mqtt from "mqtt";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useRef, useState } from "react";
+import AgentChat from "../../components/AgentChat";
 
 interface BoardTelemetry {
 	id: string;
@@ -60,8 +61,6 @@ export default function BoardPage({
 
 	const [images, setImages] = useState<ImageCapture[]>([]);
 	const [globalStatus, setGlobalStatus] = useState("connecting");
-	const [scheduleInput, setScheduleInput] = useState("");
-	const [isScheduling, setIsScheduling] = useState(false);
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
 	const [filterDate, setFilterDate] = useState("all");
 	const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
@@ -299,36 +298,6 @@ export default function BoardPage({
 		}
 	};
 
-	const createSchedule = async (e: React.FormEvent) => {
-		e.preventDefault();
-		if (!scheduleInput.trim()) return;
-
-		setIsScheduling(true);
-		try {
-			// Submitting natural language prompt to AI scheduler
-			await fetch(`${apiBase}/api/plan`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ prompt: scheduleInput, board_id: boardId }),
-			});
-
-			const logEntry = {
-				time: new Date().toLocaleTimeString(),
-				level: "info",
-				text: `📅 Schedule created: "${scheduleInput}"`,
-			};
-			setBoard((prev) => ({
-				...prev,
-				logs: [logEntry, ...prev.logs].slice(0, 500),
-			}));
-			setScheduleInput("");
-		} catch (err) {
-			console.error("Schedule failed:", err);
-		} finally {
-			setIsScheduling(false);
-		}
-	};
-
 	const deleteImage = async (img: any) => {
 		if (!confirm("Are you sure you want to delete this capture?")) return;
 		try {
@@ -446,28 +415,7 @@ export default function BoardPage({
 						</button>
 					</div>
 
-					<div className="schedule-section mt-4">
-						<div className="section-title">Create Schedule</div>
-						<form onSubmit={createSchedule} className="schedule-form">
-							<input
-								type="text"
-								placeholder="e.g. 'Take a picture every 5 seconds for 1 min'"
-								value={scheduleInput}
-								onChange={(e) => setScheduleInput(e.target.value)}
-								className="schedule-input"
-								disabled={!board.isOnline || isScheduling}
-							/>
-							<button
-								type="submit"
-								className="btn btn-secondary"
-								disabled={
-									!board.isOnline || isScheduling || !scheduleInput.trim()
-								}
-							>
-								{isScheduling ? "Generating..." : "Apply"}
-							</button>
-						</form>
-					</div>
+					<AgentChat boardId={boardId} apiBase={apiBase} />
 
 					<div className="terminal-window">
 						<div className="terminal-header">
