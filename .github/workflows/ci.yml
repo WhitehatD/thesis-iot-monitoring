@@ -247,11 +247,12 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: ANTHROPIC_API_KEY,FIRMWARE_UPLOAD_TOKEN
           script: |
             # Find the deployment directory containing our docker-compose.prod.yml
             # We search in /root, /home, /opt, /var/www to handle different deployment users natively
             FILE_PATH=$(find /root /home /opt /var/www -maxdepth 4 -type f -name "docker-compose.prod.yml" 2>/dev/null | head -n 1)
-            
+
             if [ -z "$FILE_PATH" ]; then
               echo "Deployment directory not found on VPS! Attempting to clone from GitHub..."
               cd ~
@@ -263,14 +264,32 @@ jobs:
               cd "$DEPLOY_DIR"
               git pull origin main
             fi
-            
+
+            # ── Inject secrets into persistent VPS env file ──
+            # Secrets are passed via SSH envs and written to .env.prod
+            # with restrictive permissions (owner-only read).
+            ENV_FILE="$(pwd)/.env.prod"
+            cat > "$ENV_FILE" <<ENVEOF
+            ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+            FIRMWARE_UPLOAD_TOKEN=${FIRMWARE_UPLOAD_TOKEN}
+            ENVEOF
+            chmod 600 "$ENV_FILE"
+
+            # Export secrets so docker compose variable substitution picks them up
+            set -a
+            source "$ENV_FILE"
+            set +a
+
             # Ensure Docker config exists as a FILE, resolving the directory conflict
             mkdir -p ~/.docker
             if [ -d "~/.docker/config.json" ]; then
               rm -rf ~/.docker/config.json
             fi
             touch ~/.docker/config.json
-            
+
             # Force pull the newly pushed images so updates are immediate
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}

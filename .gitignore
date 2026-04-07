@@ -35,6 +35,7 @@ build/
 server/.venv/
 server/venv/
 .env
+.env.prod
 !server/.env
 !server/.env.example
 
