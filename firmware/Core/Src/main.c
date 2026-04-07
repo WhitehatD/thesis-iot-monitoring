@@ -85,7 +85,25 @@ static volatile uint8_t s_schedule_received = 0;
 static volatile uint8_t s_button_capture_requested = 0;
 static uint32_t s_button_task_id = 10000;  /* Start at high IDs to avoid schedule collision */
 
-/* ── Capture Now (MQTT command) ───────────────────────────── */
+/* ── Capture Now Queue (MQTT command) ────────────────────── */
+/* Ring buffer so rapid-fire agent commands never drop requests.
+ * MQTT callback enqueues, main loop dequeues one per iteration. */
+#define CAPTURE_QUEUE_SIZE 16
+static volatile uint32_t s_capture_queue[CAPTURE_QUEUE_SIZE];
+static volatile uint8_t  s_capture_queue_head = 0;  /* Next write slot (producer: MQTT callback) */
+static volatile uint8_t  s_capture_queue_tail = 0;  /* Next read slot  (consumer: main loop) */
+
+static inline uint8_t _capture_queue_count(void) {
+    return (uint8_t)((s_capture_queue_head - s_capture_queue_tail) % CAPTURE_QUEUE_SIZE);
+}
+static inline int _capture_queue_full(void) {
+    return _capture_queue_count() == (CAPTURE_QUEUE_SIZE - 1);
+}
+static inline int _capture_queue_empty(void) {
+    return s_capture_queue_head == s_capture_queue_tail;
+}
+
+/* Legacy aliases for code that still uses the old flag pattern */
 static volatile uint8_t  s_capture_now_requested = 0;
 static volatile uint32_t s_capture_now_task_id   = 20000;
 
@@ -339,26 +357,27 @@ static void on_command_received(const char *json_str, uint32_t length)
 
     if (type_str != NULL && strcmp(type_str, "capture_now") == 0)
     {
-        /* ── SEC-07: Rate Limiting ── */
-        static uint32_t s_last_capture_now = 0;
-        if ((HAL_GetTick() - s_last_capture_now) < CMD_RATE_LIMIT_MS)
-        {
-            LOG_WARN(TAG_MQTT, ">> CAPTURE_NOW rate limited (cooldown %dms)", CMD_RATE_LIMIT_MS);
-            MQTT_PublishStatus("{\"status\":\"error\",\"error_code\":429,\"reason\":\"rate_limited\"}");
-            cJSON_Delete(root);
-            return;
-        }
-        s_last_capture_now = HAL_GetTick();
+        /* Rate limiting is handled by the queue depth (max 16 pending).
+         * No time-based throttle — the agent must be able to queue
+         * multiple captures in rapid succession. */
 
-        /* ── Instant capture ── execute in main loop, no scheduler ── */
-        s_capture_now_requested = 1;
+        /* ── Enqueue capture request (ring buffer — never drops) ── */
         if (has_server_task_id) {
             s_capture_now_task_id = server_task_id;
         } else {
             s_capture_now_task_id++;
         }
-        LOG_INFO(TAG_MQTT, ">> CAPTURE_NOW command (task_id=%lu)",
-                 (unsigned long)s_capture_now_task_id);
+
+        if (_capture_queue_full()) {
+            LOG_WARN(TAG_MQTT, ">> CAPTURE_NOW queue full (%d pending), dropping oldest",
+                     CAPTURE_QUEUE_SIZE - 1);
+            s_capture_queue_tail = (s_capture_queue_tail + 1) % CAPTURE_QUEUE_SIZE;
+        }
+        s_capture_queue[s_capture_queue_head] = s_capture_now_task_id;
+        s_capture_queue_head = (s_capture_queue_head + 1) % CAPTURE_QUEUE_SIZE;
+
+        LOG_INFO(TAG_MQTT, ">> CAPTURE_NOW enqueued (task_id=%lu, queue=%d)",
+                 (unsigned long)s_capture_now_task_id, _capture_queue_count());
     }
     else if (type_str != NULL && strcmp(type_str, "capture_sequence") == 0)
     {
@@ -845,10 +864,17 @@ int main(void)
         }
         HAL_Delay(SCHEDULER_MQTT_POLL_MS);
 
-        /* ── Handle: Capture Now (MQTT command) ── */
-        if (s_capture_now_requested)
+        /* ── Handle: Capture Queue (MQTT commands) ── */
+        /* Dequeue one capture per loop iteration. Each capture+upload takes ~7s,
+         * so queued requests execute sequentially without dropping any. */
+        if (!_capture_queue_empty())
         {
-            s_capture_now_requested = 0;
+            uint32_t queued_task_id = s_capture_queue[s_capture_queue_tail];
+            s_capture_queue_tail = (s_capture_queue_tail + 1) % CAPTURE_QUEUE_SIZE;
+
+            s_capture_now_task_id = queued_task_id;
+            LOG_INFO(TAG_BOOT, "Dequeuing capture task_id=%lu (%d remaining)",
+                     (unsigned long)queued_task_id, _capture_queue_count());
             _do_capture_now();
             poll_start = HAL_GetTick();
         }

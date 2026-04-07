@@ -350,11 +350,15 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
             }
 
             /* Keep MQTT alive during long uploads.
-             * Process the MQTT event loop every 2 seconds to prevent
-             * the broker from timing out our keepalive (60s). */
-            if ((HAL_GetTick() - last_mqtt_tick) > 2000)
+             * Send PINGREQ every 5s to prevent broker keepalive timeout (60s).
+             * We intentionally do NOT call MQTT_ProcessLoop() here — its 1s
+             * recv timeout stalls the upload, and the SPI bus contention during
+             * heavy HTTP traffic causes incoming MQTT messages to be dropped
+             * by the EMW3080's limited buffer. Commands are processed naturally
+             * after the upload completes. */
+            if ((HAL_GetTick() - last_mqtt_tick) > 5000)
             {
-                MQTT_ProcessLoop();
+                MQTT_SendPing();
                 last_mqtt_tick = HAL_GetTick();
             }
         }
