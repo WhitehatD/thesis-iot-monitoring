@@ -1,1 +1,1 @@
-# Visual analysis module
+# Visual analysis module — multimodal LLM image analysis + recommendations

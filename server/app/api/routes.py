@@ -1,24 +1,31 @@
 """
 Thesis IoT Server — API Routes
-REST endpoints for planning, image upload, and result retrieval.
+REST endpoints for planning, image upload, visual analysis, and result retrieval.
 """
 
+import asyncio
 import json
 import os
 import time
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
 from fastapi.responses import FileResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.api.schemas import (
     PlanRequest, PlanResponse, UploadResponse,
     CaptureRequest, CaptureResponse,
 )
+from app.analysis.engine import analyze_image
+from app.analysis.models import AnalysisResult
+from app.db.database import get_db, async_session
 from app.mqtt.client import mqtt_client
 from app.planning.engine import generate_plan
+from app.scheduler.models import ScheduleTask
 
 router = APIRouter()
 
@@ -196,12 +203,76 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
     except Exception as e:
         print(f"[WARN] Failed to publish MQTT message for dashboard: {e}")
 
+    # ── Agentic Layer: trigger async visual analysis ──
+    asyncio.create_task(_run_analysis(task_id, filepath, date_dir, filename))
+
     return UploadResponse(
         task_id=task_id,
         filename=filename,
         analysis=None,
         recommendation=None,
     )
+
+
+async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: str):
+    """Background task: analyze a captured image with the multimodal LLM."""
+    try:
+        # Look up the monitoring objective from the schedule task
+        objective = "General visual inspection"
+        async with async_session() as db:
+            result = await db.execute(
+                select(ScheduleTask).where(ScheduleTask.id == task_id)
+            )
+            task = result.scalar_one_or_none()
+            if task and task.objective:
+                objective = task.objective
+
+        print(f"[AI] Analyzing task {task_id}: objective='{objective}'")
+
+        # Choose model — prefer Gemini if API key is configured, else try vLLM
+        model_key = "gemini-3" if settings.gemini_api_key else "qwen3-vl"
+
+        analysis = await analyze_image(image_path, objective, model_key)
+
+        # Persist to database
+        async with async_session() as db:
+            db_result = AnalysisResult(
+                task_id=task_id,
+                image_path=image_path,
+                objective=objective,
+                analysis=analysis.get("findings", ""),
+                recommendation=analysis.get("recommendation", ""),
+                model_used=analysis.get("model_used", model_key),
+                inference_time_ms=analysis.get("inference_time_ms", 0),
+            )
+            db.add(db_result)
+            await db.commit()
+
+        # Publish analysis result to dashboard via MQTT
+        analysis_msg = {
+            "task_id": task_id,
+            "filename": filename,
+            "date": date_dir,
+            "url": f"/api/images/{date_dir}/{filename}",
+            "objective": objective,
+            "objective_met": analysis.get("objective_met", False),
+            "description": analysis.get("description", ""),
+            "findings": analysis.get("findings", ""),
+            "recommendation": analysis.get("recommendation", ""),
+            "model": analysis.get("model_used", model_key),
+            "inference_ms": analysis.get("inference_time_ms", 0),
+            "timestamp": int(time.time()),
+        }
+        await mqtt_client.publish(settings.mqtt_topic_dashboard_analysis, json.dumps(analysis_msg))
+
+        print(
+            f"[AI] Analysis complete for task {task_id} "
+            f"({analysis.get('inference_time_ms', 0):.0f}ms, {model_key}): "
+            f"objective_met={analysis.get('objective_met')}"
+        )
+
+    except Exception as e:
+        print(f"[ERR] Analysis failed for task {task_id}: {e}")
 
 
 # ── Image Serving ────────────────────────────────────────
@@ -264,23 +335,54 @@ async def delete_image(date: str, filename: str):
 
 # ── Plans & Results ──────────────────────────────────────
 
-@router.get("/results/{plan_id}")
-async def get_results(plan_id: int):
+@router.get("/analysis/{task_id}")
+async def get_analysis(task_id: int, db: AsyncSession = Depends(get_db)):
     """
-    Retrieve analysis results for all tasks in a plan.
+    Retrieve the latest analysis result for a specific task.
     """
-    # TODO: Query database for results
+    result = await db.execute(
+        select(AnalysisResult)
+        .where(AnalysisResult.task_id == task_id)
+        .order_by(AnalysisResult.created_at.desc())
+    )
+    analysis = result.scalar_one_or_none()
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No analysis found for this task")
     return {
-        "plan_id": plan_id,
-        "status": "pending",
-        "results": [],
+        "task_id": analysis.task_id,
+        "objective": analysis.objective,
+        "analysis": analysis.analysis,
+        "recommendation": analysis.recommendation,
+        "model_used": analysis.model_used,
+        "inference_time_ms": analysis.inference_time_ms,
+        "created_at": analysis.created_at.isoformat() if analysis.created_at else None,
     }
 
 
-@router.get("/plans")
-async def list_plans():
+@router.get("/analyses")
+async def list_analyses(limit: int = 50, db: AsyncSession = Depends(get_db)):
     """
-    List all created plans.
+    List recent analysis results, newest first.
     """
-    # TODO: Query database for plans
-    return {"plans": []}
+    result = await db.execute(
+        select(AnalysisResult)
+        .order_by(AnalysisResult.created_at.desc())
+        .limit(limit)
+    )
+    analyses = result.scalars().all()
+    return {
+        "analyses": [
+            {
+                "id": a.id,
+                "task_id": a.task_id,
+                "objective": a.objective,
+                "analysis": a.analysis,
+                "recommendation": a.recommendation,
+                "model_used": a.model_used,
+                "inference_time_ms": a.inference_time_ms,
+                "image_path": a.image_path,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in analyses
+        ]
+    }

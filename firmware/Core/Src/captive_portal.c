@@ -494,135 +494,6 @@ static void _dns_process_query(void)
  *  HTTP Request Handler
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ═══════════════════════════════════════════════════════════════════════════
- *  Streaming Interactive Feedback UI
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-static const char HTML_STREAMING_HEADER[] =
-    "<!DOCTYPE html>"
-    "<html lang='en'>"
-    "<head>"
-    "<meta charset='UTF-8'>"
-    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
-    "<title>Connecting...</title>"
-    "<style>"
-    "*{margin:0;padding:0;box-sizing:border-box}"
-    "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"
-        "background:linear-gradient(135deg,#0a0e27 0%,#1a1f3a 50%,#0d1117 100%);"
-        "color:#e6edf3;display:flex;align-items:center;justify-content:center;"
-        "min-height:100vh;padding:20px}"
-    ".card{background:rgba(22,27,52,0.85);backdrop-filter:blur(20px);"
-        "-webkit-backdrop-filter:blur(20px);"
-        "border:1px solid rgba(99,140,255,0.15);border-radius:20px;"
-        "padding:40px 36px;text-align:center;width:100%;max-width:440px;"
-        "box-shadow:0 8px 40px rgba(0,0,0,0.4),0 0 80px rgba(99,140,255,0.06);"
-        "animation:fadeUp .6s ease-out}"
-    "@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}"
-    "@keyframes spin{to{transform:rotate(360deg)}}"
-    "@keyframes pulse{0%,100%{box-shadow:0 4px 20px rgba(99,140,255,0.2)}50%{box-shadow:0 4px 30px rgba(99,140,255,0.4)}}"
-    ".spinner{width:48px;height:48px;border:3px solid rgba(99,140,255,0.15);"
-        "border-top-color:#638cff;border-radius:50%;margin:0 auto 20px;"
-        "animation:spin 1s linear infinite}"
-    "h1{font-size:22px;font-weight:700;margin-bottom:6px;"
-        "background:linear-gradient(135deg,#fff,#a8c0ff);-webkit-background-clip:text;"
-        "-webkit-text-fill-color:transparent}"
-    ".sub{color:#8b949e;font-size:13px;margin-bottom:24px}"
-    /* Steps row */
-    ".steps{display:flex;gap:8px;margin-bottom:24px;justify-content:center}"
-    ".step{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;"
-        "color:#484f58;letter-spacing:0.3px;transition:color .3s}"
-    ".step .dot{width:8px;height:8px;border-radius:50%;"
-        "background:#2d3348;transition:background .3s,box-shadow .3s}"
-    ".step.active .dot{background:#638cff;box-shadow:0 0 8px rgba(99,140,255,0.5)}"
-    ".step.active{color:#a8c0ff}"
-    ".step.done .dot{background:#34d399;box-shadow:0 0 8px rgba(52,211,153,0.4)}"
-    ".step.done{color:#6ee7b7}"
-    ".step.fail .dot{background:#ff5555;box-shadow:0 0 8px rgba(255,85,85,0.4)}"
-    ".step.fail{color:#fca5a5}"
-    /* Progress bar */
-    ".prog-bg{background:rgba(99,140,255,0.08);height:6px;border-radius:3px;"
-        "margin-bottom:20px;overflow:hidden}"
-    ".prog-bar{background:linear-gradient(90deg,#638cff,#4f6ef7);"
-        "height:100%;width:0%;border-radius:3px;"
-        "transition:width .4s ease,background .3s}"
-    /* Status text */
-    "#status{color:#a8b2c1;font-size:14px;font-weight:500;min-height:20px;"
-        "transition:opacity .2s}"
-    /* Log area */
-    ".log{margin-top:20px;padding:12px;font-size:11px;line-height:1.7;"
-        "background:rgba(0,0,0,0.25);border:1px solid rgba(99,140,255,0.08);"
-        "border-radius:10px;text-align:left;color:#6b7280;"
-        "max-height:140px;overflow-y:auto;font-family:'SF Mono',Consolas,monospace}"
-    ".log .e{color:#8b949e}"
-    "</style>"
-    "</head>"
-    "<body>"
-    "<div class='card'>"
-    "<div class='spinner' id='spin'></div>"
-    "<h1 id='title'>Configuring Wi-Fi</h1>"
-    "<p class='sub'>Please wait while the sensor connects</p>"
-    /* Step indicators */
-    "<div class='steps'>"
-    "<div class='step active' id='s1'><span class='dot'></span>Validate</div>"
-    "<div class='step' id='s2'><span class='dot'></span>Save</div>"
-    "<div class='step' id='s3'><span class='dot'></span>Reboot</div>"
-    "</div>"
-    /* Progress */
-    "<div class='prog-bg'><div class='prog-bar' id='bar'></div></div>"
-    "<p id='status'>Initializing...</p>"
-    "<div class='log' id='log'></div>"
-    "</div>"
-    "<script>"
-    "var logEl=document.getElementById('log');"
-    "function addLog(m){var d=document.createElement('div');d.className='e';var t=new Date();var ts=t.getHours().toString().padStart(2,'0')+':'+t.getMinutes().toString().padStart(2,'0')+':'+t.getSeconds().toString().padStart(2,'0');d.textContent='['+ts+'] '+m;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}"
-    "function updateStatus(msg,pct){document.getElementById('status').innerText=msg;addLog(msg);if(pct>0)document.getElementById('bar').style.width=pct+'%';}"
-    "function setStep(n){for(var i=1;i<=3;i++){var e=document.getElementById('s'+i);e.className='step'+(i<n?' done':(i===n?' active':''));}}"
-    "function complete(ok,msg){document.getElementById('title').innerText=ok?'Connected!':'Connection Failed';"
-    "document.getElementById('spin').style.display='none';"
-    "document.getElementById('status').innerText=msg;addLog(msg);"
-    "document.getElementById('bar').style.width='100%';"
-    "document.getElementById('bar').style.background=ok?'linear-gradient(90deg,#34d399,#10b981)':'linear-gradient(90deg,#ff5555,#ff3333)';"
-    "if(!ok){for(var i=1;i<=3;i++){var e=document.getElementById('s'+i);if(e.className.indexOf('done')<0&&e.className.indexOf('active')>=0)e.className='step fail';}setTimeout(function(){window.history.back();},4000);}}"
-    "</script>\n";
-
-static int32_t s_current_client_sock = -1;
-
-static void _portal_send_chunk(int32_t sock, const char *data)
-{
-    int len = strlen(data);
-    if (len == 0 || sock < 0) return;
-    char hex_len[16];
-    int hex_size = snprintf(hex_len, sizeof(hex_len), "%X\r\n", len);
-    _portal_send_all(sock, (const uint8_t*)hex_len, hex_size);
-    _portal_send_all(sock, (const uint8_t*)data, len);
-    _portal_send_all(sock, (const uint8_t*)"\r\n", 2);
-}
-
-static void _wifi_test_callback(const char *msg, int percent)
-{
-    if (s_current_client_sock >= 0)
-    {
-        char buf[512];
-        const char *pad256 = 
-            "                                                                "
-            "                                                                "
-            "                                                                "
-            "                                                                "; 
-        
-        /* Use standard %s insertion to avoid newlib-nano %*s parsing drops */
-        snprintf(buf, sizeof(buf), "<script>updateStatus('%s', %d);</script>%s\n", 
-                 msg, percent, pad256);
-                 
-        _portal_send_chunk(s_current_client_sock, buf);
-        
-        /* CRITICAL: Force the EMW3080 AT firmware to physically drain its TX queues 
-         * over the 2.4GHz SoftAP antenna before returning. If we don't yield here, 
-         * the root MX_WIFI_Connect() call will instantly force the Wi-Fi module to 
-         * switch channels and associate with the new AP, dropping this HTTP packet! */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 150);
-    }
-}
-
 /**
  * @brief  Send HTTP headers with dynamic Content-Length, followed by the body.
  */
@@ -769,65 +640,34 @@ static int _handle_http_client(int32_t client_sock)
         LOG_INFO(TAG_PORT, "Received credentials: SSID='%s' PWD=(%u chars)",
                  ssid, (unsigned)strlen(password));
 
-        /* Test credentials in real-time before saving */
-        LOG_INFO(TAG_PORT, "Testing WiFi credentials in background...");
+        /* ── Deferred Validation Architecture ──
+         * Save credentials to flash immediately, then reboot.
+         * The boot flow in main.c will test the connection:
+         *   - Success → normal operation
+         *   - Failure → re-enters captive portal automatically
+         *
+         * Why not test-before-save? The EMW3080 cannot reliably serve
+         * the SoftAP HTTP connection while simultaneously performing
+         * a STA connect (radio channel switch kills the TCP socket).
+         * Every IoT provisioning system (ESP-IDF, Arduino WiFiManager)
+         * uses this deferred approach for the same reason. */
 
-        /* Start streaming response: using HTTP/1.1 chunked encoding to bypass Apple buffering */
-        const char *stream_hdrs = 
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/html; charset=UTF-8\r\n"
-            "Transfer-Encoding: chunked\r\n"
-            "Connection: close\r\n"
-            "Cache-Control: no-store, no-cache\r\n"
-            "X-Content-Type-Options: nosniff\r\n"
-            "\r\n";
-        _portal_send_all(client_sock, (const uint8_t *)stream_hdrs, (int32_t)strlen(stream_hdrs));
-        _portal_send_chunk(client_sock, HTML_STREAMING_HEADER);
-        
-        /* 1024 bytes padding for Safari buffer flush */
-        char pad[129]; memset(pad, ' ', sizeof(pad)-1); pad[sizeof(pad)-1]='\0';
-        for(int i=0; i<8; i++) _portal_send_chunk(client_sock, pad);
-
-        s_current_client_sock = client_sock;
-
-        /* ── Phase 1: Validate Wi-Fi credentials ── */
-        _portal_send_chunk(client_sock, "<script>setStep(1);updateStatus('Credentials received. Starting validation...', 5);</script>\n");
-        
-        if (WiFi_TestConnection(ssid, password, _wifi_test_callback) != WIFI_OK)
-        {
-            LOG_WARN(TAG_PORT, "Credentials failed test. Serving error streaming tag.");
-            _portal_send_chunk(client_sock, "<script>complete(false, 'Check password and try again. Returning to setup...');</script></body></html>\n");
-            _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5); /* End of chunked stream */
-            MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
-            s_current_client_sock = -1;
-            return 0; /* Return 0 to keep portal running and NOT reboot */
-        }
-
-        LOG_INFO(TAG_PORT, "Credentials verified!");
-
-        /* ── Phase 2: Save to flash ── */
-        _portal_send_chunk(client_sock, "<script>setStep(2);updateStatus('Wi-Fi verified! Saving credentials to flash...', 92);</script>\n");
-        
+        /* ── Step 1: Save to flash ── */
         WiFiCredStatus_t save_ret = WiFiCred_Save(ssid, password);
         if (save_ret != WIFI_CRED_OK)
         {
             LOG_ERROR(TAG_PORT, "FATAL: Failed to save credentials to flash!");
-            _portal_send_chunk(client_sock, "<script>complete(false, 'Flash write failed. Please try again.');</script></body></html>\n");
-            _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5);
-            MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
-            s_current_client_sock = -1;
+            _send_html_page(client_sock, HTML_ERROR_BODY);
             return 0;
         }
 
-        _portal_send_chunk(client_sock, "<script>updateStatus('Credentials saved to flash successfully.', 96);</script>\n");
+        LOG_INFO(TAG_PORT, "Credentials saved to flash OK");
 
-        /* ── Phase 3: Reboot ── */
-        _portal_send_chunk(client_sock, "<script>setStep(3);complete(true, 'All done! Rebooting sensor in 3 seconds...');</script></body></html>\n");
-        _portal_send_all(client_sock, (const uint8_t *)"0\r\n\r\n", 5); /* End of chunked stream */
+        /* ── Step 2: Send success page ── */
+        _send_html_page(client_sock, HTML_SUCCESS_BODY);
 
-        /* Give the client time to receive the response */
-        MX_WIFI_IO_YIELD(wifi_obj_get(), 1000);
-        s_current_client_sock = -1;
+        /* Give the client time to receive the full response */
+        MX_WIFI_IO_YIELD(wifi_obj_get(), 500);
         return 1;  /* Signal reboot needed */
 
     }

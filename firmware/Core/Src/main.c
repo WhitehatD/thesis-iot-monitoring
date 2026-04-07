@@ -33,6 +33,7 @@
 #include "ota_update.h"
 #include "wifi_credentials.h"
 #include "captive_portal.h"
+#include "upload_async.h"
 #include "mx_wifi.h"
 
 #include "cJSON.h"
@@ -113,6 +114,9 @@ static volatile uint8_t s_wifi_reconfig_requested = 0;
 static char s_runtime_ssid[33]     = {0};  /* Max 32-char SSID + null */
 static char s_runtime_password[64] = {0};  /* Max 63-char WPA2 + null */
 static uint8_t s_has_runtime_wifi  = 0;    /* 1 = runtime creds set   */
+
+/* ── Async Upload Context ───────────────────────────── */
+static UploadCtx_t s_upload_ctx = {0};
 
 /* OBS-02: Global Telemetry */
 typedef struct {
@@ -775,6 +779,40 @@ int main(void)
     while (1)
     {
         MQTT_ProcessLoop();
+
+        /* ── Async Upload: drive the cooperative state machine ── */
+        if (Upload_IsBusy(&s_upload_ctx))
+        {
+            UploadState_t ustate = Upload_Poll(&s_upload_ctx);
+            if (ustate == UPLOAD_COMPLETE)
+            {
+                uint32_t total_ms = HAL_GetTick() - s_upload_ctx.start_tick;
+                char status_msg[256];
+                snprintf(status_msg, sizeof(status_msg),
+                         "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,"
+                         "\"latency_ms\":%lu,\"trigger\":\"async\"}",
+                         (unsigned long)s_upload_ctx.task_id,
+                         (unsigned long)s_upload_ctx.data_len,
+                         (unsigned long)total_ms);
+                MQTT_PublishStatus(status_msg);
+                BSP_LED_Off(LED_RED);
+                BSP_LED_Off(LED_GREEN);
+                secure_erase(s_image_buffer, s_upload_ctx.data_len);
+                LOG_INFO(TAG_HTTP, "[PERF] Async upload complete: %lums", (unsigned long)total_ms);
+            }
+            else if (ustate == UPLOAD_FAILED)
+            {
+                char status_msg[128];
+                snprintf(status_msg, sizeof(status_msg),
+                         "{\"status\":\"error\",\"task_id\":%lu,\"reason\":\"upload_failed\"}",
+                         (unsigned long)s_upload_ctx.task_id);
+                MQTT_PublishStatus(status_msg);
+                BSP_LED_Off(LED_RED);
+                BSP_LED_Off(LED_GREEN);
+                LOG_ERROR(TAG_HTTP, "Async upload failed for task %lu",
+                          (unsigned long)s_upload_ctx.task_id);
+            }
+        }
 
         /* SEC-07: Refresh watchdog every loop iteration */
 #if WATCHDOG_ENABLED
@@ -1466,6 +1504,13 @@ static void _do_capture_now(void)
         return;
     }
 
+    if (Upload_IsBusy(&s_upload_ctx))
+    {
+        LOG_WARN(TAG_BOOT, "Capture now aborted — async upload in progress (buffer busy)");
+        MQTT_PublishStatus("{\"status\":\"error\",\"reason\":\"upload_in_progress\"}");
+        return;
+    }
+
     char status_msg[256];
     snprintf(status_msg, sizeof(status_msg), "{\"status\":\"job_received\",\"task_id\":%lu}", (unsigned long)task_id);
     MQTT_PublishStatus(status_msg);
@@ -1531,49 +1576,41 @@ static void _do_capture_now(void)
         return;
     }
 
-    LOG_INFO(TAG_BOOT, "Captured %lu bytes — uploading...",
+    LOG_INFO(TAG_BOOT, "Captured %lu bytes — starting async upload...",
              (unsigned long)captured_size);
 
-    /* Notify UI that upload is starting */
-    snprintf(status_msg, sizeof(status_msg), "{\"status\":\"uploading\",\"task_id\":%lu}", (unsigned long)task_id);
+    /* Start non-blocking upload — main loop drives progress via Upload_Poll() */
+    snprintf(status_msg, sizeof(status_msg),
+             "{\"status\":\"uploading\",\"task_id\":%lu,\"size\":%lu}",
+             (unsigned long)task_id, (unsigned long)captured_size);
     MQTT_PublishStatus(status_msg);
 
-    /* Upload via HTTP POST */
-    WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
-        SERVER_UPLOAD_URL, (uint16_t)task_id,
-        s_image_buffer, captured_size);
-
-    uint32_t total_ms = HAL_GetTick() - perf_start;
-
-    if (wifi_ret == WIFI_OK)
+    if (Upload_Start(&s_upload_ctx, task_id, s_image_buffer, captured_size) != 0)
     {
-        snprintf(status_msg, sizeof(status_msg),
-                 "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,\"trigger\":\"mqtt_capture_now\",\"latency_ms\":%lu}",
-                 (unsigned long)task_id,
-                 (unsigned long)captured_size,
-                 (unsigned long)total_ms);
-        LOG_INFO(TAG_BOOT, "[PERF] Capture now complete: %lums total",
-                 (unsigned long)total_ms);
+        /* Upload busy — fall back to blocking upload */
+        LOG_WARN(TAG_HTTP, "Async busy — falling back to blocking upload");
+        WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
+            SERVER_UPLOAD_URL, (uint16_t)task_id,
+            s_image_buffer, captured_size);
+
+        uint32_t total_ms = HAL_GetTick() - perf_start;
+        if (wifi_ret == WIFI_OK)
+        {
+            snprintf(status_msg, sizeof(status_msg),
+                     "{\"status\":\"captured\",\"task_id\":%lu,\"size\":%lu,\"latency_ms\":%lu}",
+                     (unsigned long)task_id, (unsigned long)captured_size, (unsigned long)total_ms);
+        }
+        else
+        {
+            snprintf(status_msg, sizeof(status_msg),
+                     "{\"status\":\"error\",\"task_id\":%lu,\"reason\":\"upload_failed\"}",
+                     (unsigned long)task_id);
+        }
+        MQTT_PublishStatus(status_msg);
+        BSP_LED_Off(LED_RED);
+        secure_erase(s_image_buffer, captured_size);
     }
-    else
-    {
-        snprintf(status_msg, sizeof(status_msg),
-                 "{\"status\":\"error\",\"task_id\":%lu,\"reason\":\"upload_failed\",\"trigger\":\"mqtt_capture_now\"}",
-                 (unsigned long)task_id);
-        LOG_ERROR(TAG_BOOT, "Upload FAILED");
-    }
-
-    MQTT_PublishStatus(status_msg);
-
-    /* Turn off RED LED after capture cycle completes */
-    BSP_LED_Off(LED_RED);
-
-    /* SEC-10: Cryptographic Sanitization */
-    secure_erase(s_image_buffer, captured_size);
-
-#if STACK_WATERMARK_ENABLED
-    RAM_CheckStackHighWater();
-#endif
+    /* else: async upload started — main loop handles completion via Upload_Poll() */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

@@ -849,3 +849,94 @@ body {
 .filter-input::placeholder {
 	color: var(--text-tertiary);
 }
+
+/* ── Analysis Panel (Lightbox) ── */
+
+.analysis-panel {
+	margin-top: 16px;
+	padding: 20px;
+	background: rgba(0, 0, 0, 0.3);
+	border: 1px solid var(--border-color);
+	border-radius: var(--radius-md);
+	text-align: left;
+}
+
+.analysis-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+
+.analysis-badge {
+	padding: 4px 12px;
+	border-radius: 20px;
+	font-size: 0.78rem;
+	font-weight: 600;
+	letter-spacing: 0.3px;
+}
+
+.badge-met {
+	background: rgba(16, 185, 129, 0.15);
+	color: var(--accent-emerald);
+	border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.badge-unmet {
+	background: rgba(244, 63, 94, 0.15);
+	color: var(--accent-rose);
+	border: 1px solid rgba(244, 63, 94, 0.3);
+}
+
+.analysis-meta {
+	font-size: 0.72rem;
+	color: var(--text-tertiary);
+	font-family: var(--font-mono);
+}
+
+.analysis-row {
+	margin-bottom: 12px;
+}
+
+.analysis-row:last-child {
+	margin-bottom: 0;
+}
+
+.analysis-label {
+	display: block;
+	font-size: 0.72rem;
+	font-weight: 600;
+	color: var(--text-tertiary);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 4px;
+}
+
+.analysis-row p {
+	font-size: 0.88rem;
+	color: var(--text-secondary);
+	line-height: 1.5;
+	margin: 0;
+}
+
+/* ── Image card analysis indicator ── */
+
+.image-card .analysis-indicator {
+	position: absolute;
+	top: 8px;
+	right: 8px;
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	z-index: 2;
+}
+
+.analysis-indicator.met {
+	background: var(--accent-emerald);
+	box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+
+.analysis-indicator.unmet {
+	background: var(--accent-rose);
+	box-shadow: 0 0 8px rgba(244, 63, 94, 0.4);
+}

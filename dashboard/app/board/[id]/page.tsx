@@ -25,6 +25,15 @@ interface ImageCapture {
 	date: string;
 	timestamp: number;
 	isNew: boolean;
+	analysis?: {
+		objective: string;
+		objectiveMet: boolean;
+		description: string;
+		findings: string;
+		recommendation: string;
+		model: string;
+		inferenceMs: number;
+	};
 }
 
 export default function BoardPage({
@@ -100,6 +109,7 @@ export default function BoardPage({
 			client.subscribe(`device/${boardId}/status`, { qos: 0 });
 			client.subscribe("device/stm32/status", { qos: 0 }); // Fallback
 			client.subscribe("dashboard/images/new", { qos: 0 });
+			client.subscribe("dashboard/analysis/new", { qos: 0 });
 			client.subscribe("dashboard/logs", { qos: 0 });
 		});
 
@@ -120,8 +130,40 @@ export default function BoardPage({
 				}
 
 				if (topic === "dashboard/images/new") {
-					// Immediately trigger a refetch of all images from the backend to ensure consistency
 					fetchImages();
+					return;
+				}
+
+				if (topic === "dashboard/analysis/new") {
+					// Attach analysis result to the matching image
+					setImages((prev) =>
+						prev.map((img) =>
+							img.filename === data.filename
+								? {
+										...img,
+										analysis: {
+											objective: data.objective || "",
+											objectiveMet: data.objective_met || false,
+											description: data.description || "",
+											findings: data.findings || "",
+											recommendation: data.recommendation || "",
+											model: data.model || "",
+											inferenceMs: data.inference_ms || 0,
+										},
+									}
+								: img,
+						),
+					);
+
+					const logEntry = {
+						time: new Date().toLocaleTimeString(),
+						level: "info",
+						text: `AI analysis complete for task #${data.task_id}: ${data.objective_met ? "Objective MET" : "Objective NOT met"}`,
+					};
+					setBoard((prev) => ({
+						...prev,
+						logs: [logEntry, ...prev.logs].slice(0, 500),
+					}));
 					return;
 				}
 
@@ -534,6 +576,16 @@ export default function BoardPage({
 									onClick={() => setSelectedImage(img)}
 								>
 									{img.isNew && <div className="badge-new">NEW</div>}
+									{img.analysis && (
+										<div
+											className={`analysis-indicator ${img.analysis.objectiveMet ? "met" : "unmet"}`}
+											title={
+												img.analysis.objectiveMet
+													? "Objective met"
+													: "Objective not met"
+											}
+										/>
+									)}
 									<div className="image-wrapper">
 										<img
 											src={img.url}
@@ -608,6 +660,37 @@ export default function BoardPage({
 								</button>
 							</div>
 						</div>
+						{selectedImage.analysis && (
+							<div className="analysis-panel">
+								<div className="analysis-header">
+									<span
+										className={`analysis-badge ${selectedImage.analysis.objectiveMet ? "badge-met" : "badge-unmet"}`}
+									>
+										{selectedImage.analysis.objectiveMet
+											? "Objective Met"
+											: "Objective Not Met"}
+									</span>
+									<span className="analysis-meta">
+										{selectedImage.analysis.model} &middot;{" "}
+										{selectedImage.analysis.inferenceMs.toFixed(0)}ms
+									</span>
+								</div>
+								{selectedImage.analysis.objective && (
+									<div className="analysis-row">
+										<span className="analysis-label">Objective</span>
+										<p>{selectedImage.analysis.objective}</p>
+									</div>
+								)}
+								<div className="analysis-row">
+									<span className="analysis-label">Findings</span>
+									<p>{selectedImage.analysis.findings}</p>
+								</div>
+								<div className="analysis-row">
+									<span className="analysis-label">Recommendation</span>
+									<p>{selectedImage.analysis.recommendation}</p>
+								</div>
+							</div>
+						)}
 					</div>
 				</div>
 			)}
