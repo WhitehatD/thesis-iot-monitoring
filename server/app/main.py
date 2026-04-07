@@ -46,7 +46,7 @@ app = FastAPI(
         "Cloud server for Autonomous IoT Visual Monitoring. "
         "Handles AI planning, MQTT command dispatch, image upload, and visual analysis."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
