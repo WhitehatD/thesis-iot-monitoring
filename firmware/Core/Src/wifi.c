@@ -315,6 +315,7 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
 {
     int32_t offset = 0;
     int retries = 0;
+    uint32_t last_mqtt_tick = HAL_GetTick();
 
     while (offset < len)
     {
@@ -346,6 +347,15 @@ static int _socket_send_all(int32_t sock, const uint8_t *data, int32_t len)
             if (offset < len)
             {
                 MX_WIFI_IO_YIELD(wifi_obj_get(), 2);
+            }
+
+            /* Keep MQTT alive during long uploads.
+             * Process the MQTT event loop every 2 seconds to prevent
+             * the broker from timing out our keepalive (60s). */
+            if ((HAL_GetTick() - last_mqtt_tick) > 2000)
+            {
+                MQTT_ProcessLoop();
+                last_mqtt_tick = HAL_GetTick();
             }
         }
         else

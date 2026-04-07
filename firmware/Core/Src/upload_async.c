@@ -51,9 +51,14 @@
 /* ── Internal Helpers ──────────────────────────────── */
 
 /**
- * @brief  Send up to `max_bytes` from a buffer, non-blocking style.
+ * @brief  Send up to `max_bytes` from a buffer.
  *         Returns number of bytes actually sent (may be less than max_bytes).
- *         Returns -1 on fatal socket error.
+ *
+ * NOTE: MX_WIFI_Socket_send's last parameter is declared as `flags` in the
+ * header but the ST MIPC implementation uses it as a send timeout in ms.
+ * Passing 0 causes immediate return when the SPI buffer is full (= no progress).
+ * We use a short timeout (200ms) to allow the EMW3080 to drain its TX buffer
+ * while keeping each call bounded for cooperative scheduling.
  */
 static int32_t _send_partial(int32_t sock, const uint8_t *buf, int32_t len, int32_t max_bytes)
 {
@@ -63,18 +68,16 @@ static int32_t _send_partial(int32_t sock, const uint8_t *buf, int32_t len, int3
     int32_t sent = MX_WIFI_Socket_send(
         wifi_obj_get(), sock,
         (uint8_t *)buf, to_send,
-        0 /* flags */);
+        HTTP_RESPONSE_TIMEOUT_MS /* timeout_ms — NOT flags; see note above */);
 
     if (sent > 0)
     {
-        /* Small yield for SPI pipeline drain */
         MX_WIFI_IO_YIELD(wifi_obj_get(), 2);
         return sent;
     }
 
-    /* Send failed — yield and let caller retry */
     MX_WIFI_IO_YIELD(wifi_obj_get(), 10);
-    return 0;  /* 0 = no progress this call, not fatal */
+    return 0;
 }
 
 /* ── Public API ────────────────────────────────────── */
@@ -228,11 +231,20 @@ UploadState_t Upload_Poll(UploadCtx_t *ctx)
         return ctx->state;
     }
 
-    /* ── SEND_DATA: Image payload in chunks ────────── */
+    /* ── SEND_DATA: Image payload — send as much as possible per poll ── */
     case UPLOAD_SEND_DATA:
     {
-        if (ctx->offset < ctx->data_len)
+        /* Send multiple chunks per poll call to maximize throughput.
+         * Each MX_WIFI_Socket_send takes ~2-10ms (SPI transfer).
+         * Budget: up to 200ms of sends per poll, then yield. */
+        uint32_t poll_start_tick = HAL_GetTick();
+        int stall_count = 0;
+
+        while (ctx->offset < ctx->data_len)
         {
+#if WATCHDOG_ENABLED
+            IWDG->KR = 0x0000AAAAu;
+#endif
             int32_t remaining = (int32_t)(ctx->data_len - ctx->offset);
             int32_t sent = _send_partial(
                 ctx->sock,
@@ -240,18 +252,22 @@ UploadState_t Upload_Poll(UploadCtx_t *ctx)
                 remaining,
                 UPLOAD_CHUNK_PER_POLL);
 
-            if (sent < 0)
+            if (sent > 0)
             {
-                Upload_Abort(ctx);
-                ctx->state = UPLOAD_FAILED;
-                return UPLOAD_FAILED;
+                ctx->offset += (uint32_t)sent;
+                stall_count = 0;
+                BSP_LED_Toggle(LED_GREEN);
+            }
+            else
+            {
+                stall_count++;
+                if (stall_count > 50)  /* 50 * 10ms = 500ms stall → give up this poll */
+                    break;
             }
 
-            ctx->offset += (uint32_t)sent;
-
-            /* Toggle LED to show data transfer progress */
-            if (sent > 0)
-                BSP_LED_Toggle(LED_GREEN);
+            /* Yield back to main loop every 200ms for MQTT keepalive */
+            if ((HAL_GetTick() - poll_start_tick) > 200)
+                break;
         }
 
         if (ctx->offset >= ctx->data_len)
