@@ -2,11 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-/* ── Block-based message model ─────────────────────────────
-   Every SSE event becomes a Block. Blocks render in order,
-   giving the Claude-Code-like chained feel. Nothing is
-   overwritten — each event adds or updates a block.
-*/
+/* ── Block-based message model ───────────────────────────── */
 
 type Block =
 	| { type: "thinking"; text: string }
@@ -22,9 +18,16 @@ type Block =
 
 interface Message {
 	role: "user" | "assistant";
-	text?: string; // user messages
-	blocks: Block[]; // assistant messages
+	text?: string;
+	blocks: Block[];
 	streaming?: boolean;
+}
+
+interface ChatSession {
+	id: string;
+	name: string;
+	messages: Message[];
+	createdAt: number;
 }
 
 interface AgentChatProps {
@@ -35,24 +38,64 @@ interface AgentChatProps {
 
 const QUICK_ACTIONS = [
 	"Take a picture now",
-	"Monitor every 15 min",
+	"Monitor for 5 minutes",
 	"What does the camera see?",
-	"Board status?",
+	"Summarize findings",
 ];
+
+const STORAGE_KEY = (boardId: string) => `agent-sessions-${boardId}`;
+
+function loadSessions(boardId: string): ChatSession[] {
+	if (typeof window === "undefined") return [];
+	try {
+		const raw = localStorage.getItem(STORAGE_KEY(boardId));
+		return raw ? JSON.parse(raw) : [];
+	} catch {
+		return [];
+	}
+}
+
+function saveSessions(boardId: string, sessions: ChatSession[]) {
+	if (typeof window === "undefined") return;
+	try {
+		localStorage.setItem(STORAGE_KEY(boardId), JSON.stringify(sessions));
+	} catch {
+		// localStorage full or unavailable
+	}
+}
+
+function newSession(): ChatSession {
+	const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+	return {
+		id,
+		name: `Session ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+		messages: [],
+		createdAt: Date.now(),
+	};
+}
 
 export default function AgentChat({
 	boardId,
 	apiBase,
 	fullSize,
 }: AgentChatProps) {
-	const [messages, setMessages] = useState<Message[]>([]);
+	const [sessions, setSessions] = useState<ChatSession[]>(() => {
+		const loaded = loadSessions(boardId);
+		return loaded.length > 0 ? loaded : [newSession()];
+	});
+	const [activeIdx, setActiveIdx] = useState(0);
 	const [input, setInput] = useState("");
 	const [isStreaming, setIsStreaming] = useState(false);
-	const [sessionId] = useState(
-		() => `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-	);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+	const active = sessions[activeIdx] || sessions[0];
+	const messages = active?.messages || [];
+
+	// Persist sessions to localStorage
+	useEffect(() => {
+		saveSessions(boardId, sessions);
+	}, [sessions, boardId]);
 
 	const scrollToBottom = useCallback(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -63,9 +106,27 @@ export default function AgentChat({
 		scrollToBottom();
 	}, [messages, scrollToBottom]);
 
+	const updateActiveMessages = useCallback(
+		(updater: (msgs: Message[]) => Message[]) => {
+			setSessions((prev) =>
+				prev.map((s, i) =>
+					i === activeIdx ? { ...s, messages: updater(s.messages) } : s,
+				),
+			);
+		},
+		[activeIdx],
+	);
+
 	const handleSend = async (override?: string) => {
 		const msg = (override || input).trim();
 		if (!msg || isStreaming) return;
+
+		// Handle slash commands
+		if (msg === "/clear") {
+			setInput("");
+			updateActiveMessages(() => []);
+			return;
+		}
 
 		setInput("");
 		setIsStreaming(true);
@@ -76,13 +137,13 @@ export default function AgentChat({
 			blocks: [],
 			streaming: true,
 		};
-		setMessages((prev) => [...prev, userMsg, botMsg]);
+		updateActiveMessages((prev) => [...prev, userMsg, botMsg]);
 
 		try {
 			const res = await fetch(`${apiBase}/api/agent/chat`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: msg, sessionId }),
+				body: JSON.stringify({ message: msg, sessionId: active.id }),
 			});
 
 			if (!res.ok || !res.body) {
@@ -110,7 +171,7 @@ export default function AgentChat({
 						const data = JSON.parse(jsonStr);
 						const event = data.event;
 
-						setMessages((prev) => {
+						updateActiveMessages((prev) => {
 							const updated = [...prev];
 							const bot = {
 								...updated[updated.length - 1],
@@ -118,7 +179,6 @@ export default function AgentChat({
 							};
 
 							if (event === "thinking") {
-								// Replace existing thinking block or add new one
 								const thinkIdx = bot.blocks.findIndex(
 									(b) => b.type === "thinking",
 								);
@@ -141,7 +201,6 @@ export default function AgentChat({
 									status: "running",
 								});
 							} else if (event === "tool_result") {
-								// Find the step block and update it
 								const idx = bot.blocks.findIndex(
 									(b) =>
 										b.type === "step" &&
@@ -168,7 +227,6 @@ export default function AgentChat({
 								bot.streaming = false;
 							} else if (event === "done") {
 								bot.streaming = false;
-								// Remove thinking block once done
 								bot.blocks = bot.blocks.filter((b) => b.type !== "thinking");
 							}
 
@@ -180,8 +238,18 @@ export default function AgentChat({
 					}
 				}
 			}
+
+			// Mark streaming done after reader finishes
+			updateActiveMessages((prev) => {
+				const updated = [...prev];
+				const last = updated[updated.length - 1];
+				if (last?.streaming) {
+					updated[updated.length - 1] = { ...last, streaming: false };
+				}
+				return updated;
+			});
 		} catch (err) {
-			setMessages((prev) => {
+			updateActiveMessages((prev) => {
 				const updated = [...prev];
 				const bot = updated[updated.length - 1];
 				if (bot) {
@@ -191,7 +259,7 @@ export default function AgentChat({
 							...bot.blocks,
 							{
 								type: "error",
-								text: `Connection error: ${err}`,
+								text: `${err instanceof Error ? err.message : err}`,
 							},
 						],
 						streaming: false,
@@ -211,33 +279,52 @@ export default function AgentChat({
 		}
 	};
 
+	const addSession = () => {
+		const s = newSession();
+		setSessions((prev) => [...prev, s]);
+		setActiveIdx(sessions.length);
+	};
+
+	const removeSession = (idx: number) => {
+		if (sessions.length <= 1) return;
+		setSessions((prev) => prev.filter((_, i) => i !== idx));
+		setActiveIdx((prev) => (prev >= idx ? Math.max(0, prev - 1) : prev));
+	};
+
 	return (
 		<div className={`agent-chat ${fullSize ? "agent-chat-full" : ""}`}>
-			<div className="agent-header">
-				<div className="agent-icon">
-					<svg
-						width="16"
-						height="16"
-						viewBox="0 0 24 24"
-						fill="none"
-						stroke="currentColor"
-						strokeWidth="2"
-						strokeLinecap="round"
-						strokeLinejoin="round"
-						style={{ color: "var(--accent)" }}
-						aria-hidden="true"
+			{/* Session tabs */}
+			<div className="session-tabs">
+				{sessions.map((s, i) => (
+					<button
+						key={s.id}
+						className={`session-tab ${i === activeIdx ? "active" : ""}`}
+						onClick={() => setActiveIdx(i)}
 					>
-						<path d="M12 8V4H8" />
-						<rect width="16" height="12" x="4" y="8" rx="2" />
-						<path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
-					</svg>
-				</div>
-				<div>
-					<div className="agent-title">Monitoring Agent</div>
-					<div className="agent-subtitle">Natural language control</div>
-				</div>
+						<span className="session-tab-name">{s.name}</span>
+						{sessions.length > 1 && (
+							<span
+								className="session-tab-close"
+								onClick={(e) => {
+									e.stopPropagation();
+									removeSession(i);
+								}}
+							>
+								&times;
+							</span>
+						)}
+					</button>
+				))}
+				<button
+					className="session-tab session-tab-add"
+					onClick={addSession}
+					title="New session"
+				>
+					+
+				</button>
 			</div>
 
+			{/* Messages */}
 			<div className="agent-messages">
 				{messages.length === 0 && (
 					<div className="agent-welcome">
@@ -279,11 +366,12 @@ export default function AgentChat({
 				<div ref={messagesEndRef} />
 			</div>
 
+			{/* Input */}
 			<div className="agent-input-area">
 				<textarea
 					ref={textareaRef}
 					className="agent-textarea"
-					placeholder="Ask the agent..."
+					placeholder="Ask the agent... (/clear to reset)"
 					value={input}
 					onChange={(e) => setInput(e.target.value)}
 					onKeyDown={handleKeyDown}
@@ -341,7 +429,6 @@ function BlockRenderer({ block }: { block: Block }) {
 		);
 	}
 
-	// type === "text"
 	return (
 		<div className="block-text">
 			<MarkdownContent text={block.text} />

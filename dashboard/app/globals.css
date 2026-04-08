@@ -965,16 +965,17 @@ body {
 .log-entry {
 	display: flex;
 	align-items: baseline;
-	gap: 6px;
-	padding: 3px 6px;
+	gap: 8px;
+	padding: 5px 8px;
 	border-left: 2px solid transparent;
 	border-radius: 0 2px 2px 0;
-	line-height: 1.5;
+	line-height: 1.6;
+	font-size: 0.75rem;
 	animation: fade-in 0.15s ease-out;
 }
 
 .log-entry + .log-entry {
-	border-top: 1px solid rgba(255, 255, 255, 0.02);
+	border-top: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .log-time {
@@ -1118,6 +1119,82 @@ body {
 	background: var(--bg-primary);
 	overflow: hidden;
 	max-height: 460px;
+}
+
+/* ── Session Tabs ── */
+.session-tabs {
+	display: flex;
+	background: var(--bg-elevated);
+	border-bottom: 1px solid var(--border);
+	overflow-x: auto;
+	flex-shrink: 0;
+}
+
+.session-tabs::-webkit-scrollbar {
+	height: 0;
+}
+
+.session-tab {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 12px;
+	background: none;
+	border: none;
+	border-bottom: 2px solid transparent;
+	border-right: 1px solid var(--border);
+	color: var(--text-tertiary);
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	cursor: pointer;
+	transition: all var(--transition-fast);
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.session-tab:hover {
+	color: var(--text-secondary);
+	background: var(--bg-surface);
+}
+
+.session-tab.active {
+	color: var(--text-primary);
+	border-bottom-color: var(--accent);
+	background: var(--bg-primary);
+}
+
+.session-tab-name {
+	max-width: 100px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.session-tab-close {
+	font-size: 0.82rem;
+	color: var(--text-muted);
+	cursor: pointer;
+	padding: 0 2px;
+	line-height: 1;
+}
+
+.session-tab-close:hover {
+	color: var(--rose);
+}
+
+.session-tab-add {
+	padding: 6px 10px;
+	font-size: 0.85rem;
+	color: var(--text-muted);
+	border-right: none;
+}
+
+.session-tab-add:hover {
+	color: var(--accent);
+}
+
+/* Full-size session tabs */
+.agent-chat-full .session-tabs {
+	padding: 0 4px;
 }
 
 .agent-header {
@@ -1565,7 +1642,7 @@ body {
 	grid-template-areas:
 		"header header"
 		"main   sidebar";
-	grid-template-columns: 1fr 340px;
+	grid-template-columns: 1fr 440px;
 	grid-template-rows: auto 1fr;
 	gap: 0;
 	height: 100vh;
