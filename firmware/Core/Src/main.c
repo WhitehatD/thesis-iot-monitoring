@@ -81,8 +81,11 @@ static Schedule_t s_schedule;
 /* Flag: set when a new schedule is received via MQTT */
 static volatile uint8_t s_schedule_received = 0;
 
-/* Flag: set by B3 USER button press (EXTI) for instant capture */
-static volatile uint8_t s_button_capture_requested = 0;
+/* B3 USER button — short press = capture, long press (≥3s) = portal mode.
+ * ISR records press timestamp; main loop polls pin to detect release. */
+static volatile uint32_t s_button_press_tick = 0;
+static volatile uint8_t  s_button_held = 0;       /* 1 = button currently held */
+static uint8_t           s_button_led_on = 0;      /* Tracks LED feedback state */
 static uint32_t s_button_task_id = 10000;  /* Start at high IDs to avoid schedule collision */
 
 /* ── Capture Now Queue (MQTT command) ────────────────────── */
@@ -566,7 +569,7 @@ int main(void)
 
     /* B3 USER button — instant capture trigger */
     BSP_PB_Init(BUTTON_USER, BUTTON_MODE_EXTI);
-    LOG_INFO(TAG_BOOT, "B3 USER button initialized (press for instant capture)");
+    LOG_INFO(TAG_BOOT, "B3 USER button initialized (short=capture, hold 3s=portal)");
 
     /* Stack canary painting — must happen early before deep calls */
 #if STACK_WATERMARK_ENABLED
@@ -887,12 +890,53 @@ int main(void)
             poll_start = HAL_GetTick();
         }
 
-        /* ── Handle: B3 button press ── */
-        if (s_button_capture_requested)
+        /* ── Handle: B3 button (short = capture, long ≥3s = portal) ── */
+        if (s_button_held)
         {
-            s_button_capture_requested = 0;
-            _do_button_capture();
-            poll_start = HAL_GetTick();
+            uint32_t held_ms = HAL_GetTick() - s_button_press_tick;
+            int still_pressed = (BSP_PB_GetState(BUTTON_USER) != 0);
+
+            /* LED feedback: RED on after 1s to signal "keep holding for portal" */
+            if (held_ms >= 1000 && still_pressed && !s_button_led_on)
+            {
+                BSP_LED_On(LED_RED);
+                s_button_led_on = 1;
+            }
+
+            if (held_ms >= BUTTON_LONG_PRESS_MS && still_pressed)
+            {
+                /* ── Long press confirmed → enter portal mode ── */
+                s_button_held = 0;
+                s_button_led_on = 0;
+                BSP_LED_Off(LED_RED);
+
+                /* Confirmation flash: 5× rapid green blinks */
+                for (int i = 0; i < 5; i++) {
+                    BSP_LED_On(LED_GREEN);
+                    HAL_Delay(100);
+                    BSP_LED_Off(LED_GREEN);
+                    HAL_Delay(100);
+                }
+
+                LOG_INFO(TAG_BOOT, "=== LONG PRESS — entering WiFi setup portal ===");
+                MQTT_PublishStatus("{\"status\":\"portal_button\"}");
+                s_portal_requested = 1;
+            }
+            else if (!still_pressed)
+            {
+                /* ── Button released → short press = capture ── */
+                s_button_held = 0;
+                if (s_button_led_on) {
+                    BSP_LED_Off(LED_RED);
+                    s_button_led_on = 0;
+                }
+
+                if (held_ms >= BUTTON_DEBOUNCE_MS)
+                {
+                    _do_button_capture();
+                }
+                poll_start = HAL_GetTick();
+            }
         }
 
         /* ── Handle: OTA firmware update (MQTT command) ── */
@@ -1342,21 +1386,22 @@ static void Watchdog_Init(void)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * BSP button callback — called from EXTI ISR when B3 is pressed.
- * We just set a flag; the actual capture happens in the main loop context
- * to avoid doing heavy I/O in ISR context.
+ * BSP button callback — called from EXTI ISR on B3 rising edge (press).
+ * Records the press timestamp; the main loop handles release detection
+ * and distinguishes short press (capture) from long press (portal).
  */
 void BSP_PB_Callback(Button_TypeDef Button)
 {
     if (Button == BUTTON_USER)
     {
-        s_button_capture_requested = 1;
+        s_button_press_tick = HAL_GetTick();
+        s_button_held = 1;
     }
 }
 
 /**
  * Perform a single camera capture + HTTP upload cycle.
- * Called from the main loop when B3 button is pressed.
+ * Called from the main loop on B3 short press (< 3s).
  */
 static void _do_button_capture(void)
 {

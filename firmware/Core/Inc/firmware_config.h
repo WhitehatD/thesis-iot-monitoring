@@ -125,6 +125,12 @@
 #define SCHEDULE_TIME_WINDOW_S        5     /* Seconds of tolerance for task time matching */
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  B3 USER Button — Short Press / Long Press
+ * ═══════════════════════════════════════════════════════════════════════════ */
+#define BUTTON_LONG_PRESS_MS          3000  /* Hold ≥3s = enter captive portal mode */
+#define BUTTON_DEBOUNCE_MS            50    /* Ignore presses shorter than 50ms */
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  SEC-07: Command Rate-Limiting
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define CMD_RATE_LIMIT_MS             500   /* Min ms between capture_now commands */
