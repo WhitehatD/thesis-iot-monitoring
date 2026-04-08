@@ -80,6 +80,9 @@ export default function BoardPage({
 		"gallery",
 	);
 	const [schedules, setSchedules] = useState<any[]>([]);
+	const [taskStatuses, setTaskStatuses] = useState<
+		Record<number, { status: string; updatedAt: number }>
+	>({});
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
 
 	const logIdRef = useRef(0);
@@ -223,6 +226,17 @@ export default function BoardPage({
 
 			// Board telemetry — filter by board ID
 			if (sourceBoardId !== boardId) return;
+
+			// Track per-task execution status for schedule display
+			if (data.task_id && data.status) {
+				setTaskStatuses((prev) => ({
+					...prev,
+					[data.task_id]: {
+						status: data.status,
+						updatedAt: Date.now(),
+					},
+				}));
+			}
 
 			setBoard((prev) => {
 				const update = {
@@ -582,6 +596,18 @@ export default function BoardPage({
 										const done = tasks.filter(
 											(t: any) => t.completed_at,
 										).length;
+										const running = tasks.filter(
+											(t: any) =>
+												!t.completed_at &&
+												taskStatuses[t.id] &&
+												[
+													"executing",
+													"camera_init",
+													"capturing",
+													"captured",
+													"uploading",
+												].includes(taskStatuses[t.id].status),
+										).length;
 										const allDone = tasks.length > 0 && done === tasks.length;
 										return (
 											<div
@@ -593,6 +619,10 @@ export default function BoardPage({
 													{allDone ? (
 														<span className="schedule-badge done">
 															Completed
+														</span>
+													) : running > 0 ? (
+														<span className="schedule-badge running">
+															Running
 														</span>
 													) : sched.is_active ? (
 														<span className="schedule-badge">Active</span>
@@ -613,20 +643,56 @@ export default function BoardPage({
 													/>
 												</div>
 												<div className="schedule-tasks">
-													{tasks.map((task: any) => (
-														<div
-															key={task.id}
-															className={`schedule-task ${task.completed_at ? "task-done" : ""}`}
-														>
-															<span className="schedule-check">
-																{task.completed_at ? "\u2713" : "\u25CB"}
-															</span>
-															<span className="schedule-time">{task.time}</span>
-															<span className="schedule-obj">
-																{task.objective || task.action}
-															</span>
-														</div>
-													))}
+													{tasks.map((task: any) => {
+														const live = taskStatuses[task.id];
+														const isRunning =
+															!task.completed_at &&
+															live &&
+															[
+																"executing",
+																"camera_init",
+																"capturing",
+																"captured",
+																"uploading",
+															].includes(live.status);
+														const isFailed =
+															!task.completed_at &&
+															live &&
+															(live.status.includes("error") ||
+																live.status.includes("fail"));
+														return (
+															<div
+																key={task.id}
+																className={`schedule-task ${task.completed_at ? "task-done" : ""} ${isRunning ? "task-running" : ""} ${isFailed ? "task-failed" : ""}`}
+															>
+																<span className="schedule-check">
+																	{task.completed_at ? (
+																		"\u2713"
+																	) : isRunning ? (
+																		<span
+																			className="task-spinner"
+																			title={live.status}
+																		/>
+																	) : isFailed ? (
+																		"\u2717"
+																	) : (
+																		"\u25CB"
+																	)}
+																</span>
+																<span className="schedule-time">
+																	{task.time}
+																</span>
+																<span className="schedule-obj">
+																	{task.objective || task.action}
+																</span>
+																{isRunning && (
+																	<span className="task-status-label">
+																		{live.status.replace("_", " ")}
+																	</span>
+																)}
+															</div>
+														);
+													})}
 												</div>
 											</div>
 										);

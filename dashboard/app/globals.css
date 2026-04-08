@@ -2088,6 +2088,23 @@ body {
 	border: 1px solid var(--border);
 }
 
+.schedule-badge.running {
+	background: rgba(245, 158, 11, 0.1);
+	color: #f59e0b;
+	border: 1px solid rgba(245, 158, 11, 0.3);
+	animation: badge-pulse 2s ease-in-out infinite;
+}
+
+@keyframes badge-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.7;
+	}
+}
+
 .schedule-badge.inactive {
 	background: var(--bg-surface);
 	color: var(--text-muted);
@@ -2168,15 +2185,65 @@ body {
 	text-decoration: line-through;
 }
 
+.schedule-task.task-running {
+	background: rgba(245, 158, 11, 0.05);
+	border-radius: 4px;
+	padding: 3px 4px;
+	margin: 0 -4px;
+}
+
+.schedule-task.task-failed {
+	background: rgba(239, 68, 68, 0.05);
+	border-radius: 4px;
+	padding: 3px 4px;
+	margin: 0 -4px;
+}
+
 .schedule-check {
 	font-size: 0.68rem;
 	flex-shrink: 0;
 	width: 14px;
 	text-align: center;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .task-done .schedule-check {
 	color: var(--emerald);
+}
+
+.task-running .schedule-check {
+	color: #f59e0b;
+}
+
+.task-failed .schedule-check {
+	color: #ef4444;
+}
+
+.task-spinner {
+	display: inline-block;
+	width: 10px;
+	height: 10px;
+	border: 2px solid rgba(245, 158, 11, 0.3);
+	border-top-color: #f59e0b;
+	border-radius: 50%;
+	animation: task-spin 0.8s linear infinite;
+}
+
+@keyframes task-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.task-status-label {
+	font-size: 0.62rem;
+	color: #f59e0b;
+	text-transform: capitalize;
+	flex-shrink: 0;
+	margin-left: auto;
+	font-family: var(--font-mono);
 }
 
 .schedule-time {
@@ -2184,11 +2251,16 @@ body {
 	font-weight: 600;
 	color: var(--accent);
 	flex-shrink: 0;
-	min-width: 40px;
+	min-width: 42px;
 }
 
 .schedule-obj {
 	color: var(--text-secondary);
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 /* ── Responsive ── */

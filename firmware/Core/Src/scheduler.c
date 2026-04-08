@@ -211,7 +211,8 @@ int Scheduler_SetNextAlarm(Schedule_t *schedule)
     /* ── Skip past tasks ──
      * When a schedule arrives late (network delay, boot time), some tasks
      * may already be in the past.  Advance current_index past any task
-     * that is more than 30 s ago so the board doesn't sleep until tomorrow. */
+     * that is more than 30 s ago so the board doesn't sleep until tomorrow.
+     * Uses raw (unwrapped) diff to correctly distinguish past from future. */
     RTC_TimeTypeDef now_time;
     RTC_DateTypeDef now_date;
     HAL_RTC_GetTime(&hrtc, &now_time, RTC_FORMAT_BIN);
@@ -227,17 +228,20 @@ int Scheduler_SetNextAlarm(Schedule_t *schedule)
         int32_t t_secs = (int32_t)t->hour * 3600
                        + (int32_t)t->minute * 60
                        + (int32_t)t->second;
-        int32_t d = t_secs - now_secs;
-        if (d < 0) d += 86400;
+        int32_t raw_diff = t_secs - now_secs;
 
-        /* Task is in the future or within a 30-second recent window — keep it */
-        if (d <= 30 || d >= 86370)
+        /* Midnight crossing: now=23:59, task=00:05 → raw_diff=-86340 → +86400 = 360 */
+        if (raw_diff < -43200)
+            raw_diff += 86400;
+
+        /* Keep tasks in the future or recently missed (≤30 s ago) */
+        if (raw_diff >= -30)
             break;
 
         /* Task is stale (> 30 s in the past) — skip */
-        LOG_WARN(TAG_SCHED, "Skipping past task %u at %02u:%02u:%02u (-%ld s ago)",
+        LOG_WARN(TAG_SCHED, "Skipping past task %u at %02u:%02u:%02u (%ld s ago)",
                  t->task_id, t->hour, t->minute, t->second,
-                 (long)(86400 - d));
+                 (long)(-raw_diff));
         schedule->current_index++;
     }
 

@@ -44,7 +44,7 @@ class ScheduleTask(Base):
     schedule_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("schedules.id", ondelete="CASCADE"), nullable=False
     )
-    time: Mapped[str] = mapped_column(String(5), nullable=False)  # "HH:MM"
+    time: Mapped[str] = mapped_column(String(8), nullable=False)  # "HH:MM" or "HH:MM:SS"
     action: Mapped[str] = mapped_column(String(32), default="CAPTURE_IMAGE")
     objective: Mapped[str] = mapped_column(Text, default="")
     order: Mapped[int] = mapped_column(Integer, default=0)
