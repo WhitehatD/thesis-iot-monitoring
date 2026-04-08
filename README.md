@@ -39,32 +39,47 @@ A `git push` compiles ARM firmware, runs 43 backend tests, builds Docker images,
 
 A natural language prompt becomes autonomous hardware behavior:
 
-```
-User: "Monitor the parking lot every 30 minutes for the next 2 hours"
-  |
-  v
-AI Planning Engine (Claude/Qwen) -----> Schedule: 4 tasks at :00, :30, :00, :30
-  |
-  v
-MQTT Command -----> STM32 Board stores schedule in RAM, sets RTC alarms
-  |
-  v
-Board wakes from STOP2 sleep -----> OV5640 captures RGB565 frame (83ms)
-  |
-  v
-HTTP POST (614KB, 16KB chunks) -----> Server converts RGB565 to JPEG
-  |
-  v
-Multimodal LLM (Gemini 3 Flash / Qwen3-VL) -----> Visual analysis
-  |
-  v
-Dashboard: real-time results streamed via SSE + MQTT WebSocket
+```mermaid
+flowchart LR
+    subgraph Input
+        User["User prompt\n'Monitor the parking lot\nevery 30 min for 2 hours'"]
+    end
+
+    subgraph Planning ["Cloud — AI Planning"]
+        Planner["Planning Engine\nClaude / Qwen"]
+        Schedule["Schedule\n09:00, 09:30, 10:00, 10:30"]
+        Planner --> Schedule
+    end
+
+    subgraph Edge ["STM32 Board"]
+        MQTT_RX["MQTT\nReceive"]
+        RTC["RTC Alarm\nWake from STOP2"]
+        CAM["OV5640\nCapture RGB565"]
+        Upload["HTTP POST\n614KB in 16KB chunks"]
+        MQTT_RX --> RTC --> CAM --> Upload
+    end
+
+    subgraph Analysis ["Cloud — Vision Analysis"]
+        Convert["RGB565 → JPEG"]
+        LLM["Multimodal LLM\nGemini 3 / Qwen3-VL"]
+        Result["Findings +\nRecommendation"]
+        Convert --> LLM --> Result
+    end
+
+    subgraph Output
+        Dashboard["Dashboard\nSSE + MQTT WebSocket"]
+    end
+
+    User --> Planner
+    Schedule -- "MQTT command" --> MQTT_RX
+    Upload --> Convert
+    Result --> Dashboard
 ```
 
-Three LLM backends are compared for the thesis evaluation:
-- **Qwen3-VL-30B-A3B** via vLLM (open-weight, self-hosted)
-- **Qwen2.5-VL-3B** via vLLM (lightweight edge candidate)
-- **Gemini 3 Flash** via API (commercial baseline)
+Three LLM backends are compared for thesis evaluation:
+- **Qwen3-VL-30B-A3B** via vLLM — open-weight, self-hosted
+- **Qwen2.5-VL-3B** via vLLM — lightweight edge candidate
+- **Gemini 3 Flash** via API — commercial baseline
 
 ---
 
@@ -72,41 +87,39 @@ Three LLM backends are compared for the thesis evaluation:
 
 ```mermaid
 graph TD
-    classDef hw fill:#1a1a2e,color:#e0e0e0,stroke:#3b82f6,stroke-width:2px
-    classDef cloud fill:#0f1923,color:#e0e0e0,stroke:#10b981,stroke-width:2px
-    classDef ui fill:#0f1923,color:#e0e0e0,stroke:#f59e0b,stroke-width:2px
+    subgraph Edge ["Edge Device — STM32 B-U585I-IOT02A"]
+        direction TB
+        CAM["OV5640 Camera\nVGA RGB565"]
+        MCU["Cortex-M33 160MHz\nBare-Metal C"]
+        WIFI["EMW3080 WiFi\nSPI Transport"]
+        FLASH["Dual-Bank Flash\nOTA + Credentials"]
 
-    subgraph Edge ["STM32 B-U585I-IOT02A"]
-        CAM[OV5640 Camera<br/>VGA RGB565]:::hw
-        MCU[Cortex-M33 160MHz<br/>Bare-Metal C]:::hw
-        WIFI[EMW3080 WiFi<br/>SPI Transport]:::hw
-        FLASH[Dual-Bank Flash<br/>OTA + Credentials]:::hw
-
-        CAM -- DCMI/DMA --> MCU
-        MCU -- SPI --> WIFI
-        MCU --> FLASH
+        CAM -- "DCMI / DMA" --> MCU
+        MCU -- "SPI" --> WIFI
+        MCU -- "HAL Flash" --> FLASH
     end
 
-    subgraph Cloud ["VPS (Docker Compose)"]
-        MQTT[Mosquitto<br/>MQTT 3.1.1]:::cloud
-        API[FastAPI<br/>+ AI Planner]:::cloud
-        DB[(SQLite<br/>Async)]:::cloud
-        LLM[Multimodal LLMs<br/>Gemini / Qwen]:::cloud
+    subgraph Cloud ["Cloud VPS — Docker Compose"]
+        direction TB
+        MQTT["Mosquitto\nMQTT 3.1.1"]
+        API["FastAPI\nAI Planner · Image Pipeline"]
+        DB[("SQLite\nAsync")]
+        LLM["Multimodal LLMs\nGemini 3 · Qwen3-VL"]
 
-        MQTT <--> API
+        MQTT <-- "Pub/Sub" --> API
         API <--> DB
-        API <--> LLM
+        API -- "Inference API" --> LLM
     end
 
-    subgraph UI ["Dashboard"]
-        DASH[Next.js 16<br/>Agent Chat + Console]:::ui
+    subgraph UI ["User Interface"]
+        DASH["Next.js 16 Dashboard\nAgent Chat · Gallery · Console"]
     end
 
-    WIFI == "MQTT telemetry + commands" ==> MQTT
-    WIFI == "HTTP POST images" ==> API
-    API == "OTA binary" ==> WIFI
-    API -- REST + SSE --> DASH
-    MQTT -- WebSocket --> DASH
+    WIFI -- "MQTT telemetry + commands" --> MQTT
+    WIFI -- "HTTP POST images" --> API
+    API -. "OTA firmware binary" .-> WIFI
+    API -- "REST + SSE" --> DASH
+    MQTT -- "WebSocket" --> DASH
 ```
 
 ---
