@@ -27,7 +27,7 @@ import asyncio
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import anthropic
 from fastapi import APIRouter, Request
@@ -644,26 +644,50 @@ async def _tool_capture_now() -> dict:
 
 
 async def _tool_capture_sequence(inp: dict) -> dict:
+    from app.db.database import async_session
+    from app.scheduler.service import create_schedule, activate_schedule
+
     count = max(2, min(inp.get("count", 3), 16))
     interval = max(500, inp.get("interval_ms", 2000))
+    total_s = (count - 1) * interval / 1000
 
+    # Build schedule tasks — use current time offset for display
+    now = datetime.now()
+    tasks = []
+    for i in range(count):
+        offset_s = i * interval / 1000
+        task_time = now + timedelta(seconds=offset_s)
+        tasks.append({
+            "time": task_time.strftime("%H:%M:%S"),
+            "action": "CAPTURE_IMAGE",
+            "objective": inp.get("objective", "Quick monitoring sequence"),
+        })
+
+    # Persist as a real schedule
+    async with async_session() as db:
+        schedule = await create_schedule(
+            db,
+            name=f"Quick: {count} shots over {total_s:.0f}s",
+            description=f"Automated {count}-capture sequence at {interval}ms intervals",
+            tasks=tasks,
+        )
+        await activate_schedule(db, schedule.id)
+
+    # Send the capture_sequence MQTT command (ms-precision timing)
     delays = [i * interval for i in range(count)]
-    task_id = int(time.time())
-
     command = json.dumps({
         "type": "capture_sequence",
-        "task_id": task_id,
+        "task_id": schedule.tasks[0].id,
         "delays_ms": delays,
     })
     mqtt_client.publish(settings.mqtt_topic_commands, command)
 
-    total_s = delays[-1] / 1000
     return {
         "success": True,
-        "summary": f"{count} captures dispatched ({total_s:.0f}s sequence)",
+        "summary": f"{count} captures scheduled ({total_s:.0f}s sequence)",
         "detail": (
             f"**Monitoring started** — {count} captures over {total_s:.0f}s, running in the background.\n\n"
-            f"Images will appear in the Gallery as each capture completes."
+            f"Track progress in the Schedules tab."
         ),
     }
 

@@ -24,13 +24,26 @@ class Base(DeclarativeBase):
 
 
 async def create_tables():
-    """Create all tables that don't exist yet."""
+    """Create all tables that don't exist yet, then run lightweight migrations."""
     import app.db.wifi_models  # noqa: F401 — register WiFi config model
     import app.analysis.models  # noqa: F401 — register analysis result model
     import app.scheduler.models  # noqa: F401 — register scheduler models
     import app.agent.models  # noqa: F401 — register agent chat models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Lightweight column migrations for SQLite (ALTER TABLE ADD COLUMN is safe)
+        await conn.run_sync(_migrate_columns)
+
+
+def _migrate_columns(conn):
+    """Add missing columns to existing tables (idempotent)."""
+    import sqlalchemy as sa
+    insp = sa.inspect(conn)
+    if insp.has_table("schedule_tasks"):
+        cols = [c["name"] for c in insp.get_columns("schedule_tasks")]
+        if "completed_at" not in cols:
+            conn.execute(sa.text("ALTER TABLE schedule_tasks ADD COLUMN completed_at DATETIME"))
+            print("[MIGRATE] Added schedule_tasks.completed_at")
 
 
 async def get_db():
