@@ -5,6 +5,8 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 import AgentChat from "../../components/AgentChat";
 import { useMQTT } from "../../hooks/useMQTT";
 
+type ConnectionState = "online" | "sleeping" | "offline";
+
 interface BoardState {
 	firmware: string | null;
 	lastSeen: number | null;
@@ -12,7 +14,7 @@ interface BoardState {
 	captures: number;
 	lastImageSize: number | null;
 	lastLatencyMs: number | null;
-	isOnline: boolean;
+	connection: ConnectionState;
 	logs: LogEntry[];
 }
 
@@ -69,12 +71,15 @@ export default function BoardPage({
 		captures: 0,
 		lastImageSize: null,
 		lastLatencyMs: null,
-		isOnline: false,
+		connection: "sleeping",
 		logs: [],
 	});
 	const [images, setImages] = useState<ImageCapture[]>([]);
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
-	const [activeTab, setActiveTab] = useState<"gallery" | "console">("gallery");
+	const [activeTab, setActiveTab] = useState<
+		"gallery" | "console" | "schedules"
+	>("gallery");
+	const [schedules, setSchedules] = useState<any[]>([]);
 
 	const logIdRef = useRef(0);
 	const addLog = useCallback(
@@ -122,7 +127,12 @@ export default function BoardPage({
 
 	useEffect(() => {
 		fetchImages();
-	}, [fetchImages]);
+		// Load schedules
+		fetch(`${apiBase}/api/schedules`)
+			.then((r) => r.json())
+			.then(setSchedules)
+			.catch(() => {});
+	}, [fetchImages, apiBase]);
 
 	const handleMessage = useCallback(
 		(topic: string, data: Record<string, any>, sourceBoardId: string) => {
@@ -183,13 +193,21 @@ export default function BoardPage({
 			if (sourceBoardId !== boardId) return;
 
 			setBoard((prev) => {
-				const update = { ...prev, isOnline: true, lastSeen: Date.now() };
+				const update = {
+					...prev,
+					connection: "online" as ConnectionState,
+					lastSeen: Date.now(),
+				};
 				if (data.firmware) update.firmware = data.firmware;
 				if (data.status) update.status = data.status;
 				if (data.status === "captured" || data.status === "uploaded") {
 					update.captures += 1;
 					if (data.size) update.lastImageSize = data.size;
 					if (data.latency_ms) update.lastLatencyMs = data.latency_ms;
+				}
+				// Board going to sleep
+				if (data.status === "sleep" || data.status === "cycle_complete") {
+					update.connection = "sleeping";
 				}
 				return update;
 			});
@@ -297,15 +315,17 @@ export default function BoardPage({
 	];
 	const { connectionStatus } = useMQTT(topics, handleMessage);
 
+	// Transition: online → sleeping (15s) → offline (2min)
 	useEffect(() => {
 		const interval = setInterval(() => {
 			setBoard((prev) => {
-				if (
-					prev.isOnline &&
-					prev.lastSeen &&
-					Date.now() - prev.lastSeen > 15000
-				) {
-					return { ...prev, isOnline: false };
+				if (!prev.lastSeen) return prev;
+				const elapsed = Date.now() - prev.lastSeen;
+				if (prev.connection === "online" && elapsed > 15000) {
+					return { ...prev, connection: "sleeping" };
+				}
+				if (prev.connection === "sleeping" && elapsed > 120000) {
+					return { ...prev, connection: "offline" };
 				}
 				return prev;
 			});
@@ -352,11 +372,13 @@ export default function BoardPage({
 				</div>
 				<div className="agent-header-stats">
 					<div className="header-stat">
-						<div
-							className={`status-indicator ${board.isOnline ? "online" : "offline"}`}
-						>
+						<div className={`status-indicator ${board.connection}`}>
 							<div className="dot" />
-							{board.isOnline ? "Online" : "Offline"}
+							{board.connection === "online"
+								? "Online"
+								: board.connection === "sleeping"
+									? "Standby"
+									: "Offline"}
 						</div>
 					</div>
 					<div className="header-stat">
@@ -412,6 +434,15 @@ export default function BoardPage({
 						Console
 						{board.logs.length > 0 && (
 							<span className="tab-count">{board.logs.length}</span>
+						)}
+					</button>
+					<button
+						className={`panel-tab ${activeTab === "schedules" ? "active" : ""}`}
+						onClick={() => setActiveTab("schedules")}
+					>
+						Schedules
+						{schedules.length > 0 && (
+							<span className="tab-count">{schedules.length}</span>
 						)}
 					</button>
 				</div>
@@ -481,6 +512,45 @@ export default function BoardPage({
 										<span className="log-tag">{log.tag}</span>
 										<span className="log-text">{log.text}</span>
 										{log.meta && <span className="log-meta">{log.meta}</span>}
+									</div>
+								))
+							)}
+						</div>
+					</div>
+				)}
+
+				{activeTab === "schedules" && (
+					<div className="panel-content">
+						<div className="schedules-list">
+							{schedules.length === 0 ? (
+								<div className="empty-state-sm">
+									No schedules yet. Ask the agent to create one.
+								</div>
+							) : (
+								schedules.map((sched: any) => (
+									<div
+										key={sched.id}
+										className={`schedule-card ${sched.is_active ? "active" : ""}`}
+									>
+										<div className="schedule-header">
+											<span className="schedule-name">{sched.name}</span>
+											{sched.is_active && (
+												<span className="schedule-badge">Active</span>
+											)}
+										</div>
+										{sched.description && (
+											<p className="schedule-desc">{sched.description}</p>
+										)}
+										<div className="schedule-tasks">
+											{(sched.tasks || []).map((task: any) => (
+												<div key={task.id} className="schedule-task">
+													<span className="schedule-time">{task.time}</span>
+													<span className="schedule-obj">
+														{task.objective || task.action}
+													</span>
+												</div>
+											))}
+										</div>
 									</div>
 								))
 							)}
