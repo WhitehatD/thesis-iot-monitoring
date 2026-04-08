@@ -291,7 +291,7 @@ async def _tool_create_schedule(inp: dict) -> dict:
         "type": "schedule",
         "tasks": [t.model_dump() for t in plan.tasks],
     }
-    await mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(schedule_payload))
+    mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(schedule_payload))
 
     task_list = "\n".join(
         f"| {t.id} | {t.time} | {t.action} | {t.objective} |"
@@ -312,7 +312,7 @@ async def _tool_create_schedule(inp: dict) -> dict:
 async def _tool_capture_now() -> dict:
     task_id = int(time.time())
     command = json.dumps({"type": "capture_now", "task_id": task_id})
-    await mqtt_client.publish(settings.mqtt_topic_commands, command)
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
     return {
         "success": True,
         "summary": f"Capture sent (task #{task_id})",
@@ -332,7 +332,7 @@ async def _tool_capture_sequence(inp: dict) -> dict:
         "task_id": task_id,
         "delays_ms": delays,
     })
-    await mqtt_client.publish(settings.mqtt_topic_commands, command)
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
 
     return {
         "success": True,
@@ -347,7 +347,7 @@ async def _tool_capture_sequence(inp: dict) -> dict:
 
 async def _tool_ping() -> dict:
     command = json.dumps({"type": "ping"})
-    await mqtt_client.publish(settings.mqtt_topic_commands, command)
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
     return {
         "success": True,
         "summary": "Ping sent — board LEDs will flash",
