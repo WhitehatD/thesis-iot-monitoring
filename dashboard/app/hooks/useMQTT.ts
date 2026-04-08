@@ -109,7 +109,7 @@ export function useBoardTracker(topics: string[]) {
 				captures: 0,
 				lastImageSize: null,
 				lastLatencyMs: null,
-				isOnline: true,
+				isOnline: false,
 			};
 
 			const update = { ...curr, isOnline: true, lastSeen: Date.now() };

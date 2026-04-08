@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useBoardTracker } from "./hooks/useMQTT";
 
-const FLEET_TOPICS = ["device/+/status", "device/stm32/status"];
+const FLEET_TOPICS = ["device/+/status"];
 
 export default function DashboardPage() {
 	const { boards, connectionStatus } = useBoardTracker(FLEET_TOPICS);

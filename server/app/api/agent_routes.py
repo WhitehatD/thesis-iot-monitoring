@@ -135,6 +135,24 @@ AGENT_TOOLS = [
             "properties": {},
         },
     },
+    {
+        "name": "synthesize_schedule",
+        "description": (
+            "Synthesize all AI vision analyses into an evolving conclusion. "
+            "Reads all recent analyses, identifies patterns and changes over time, "
+            "and produces a progressive insight report. Use when the user asks "
+            "'what did you learn', 'summarize findings', or 'conclusions'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of recent analyses to synthesize (default 10).",
+                },
+            },
+        },
+    },
 ]
 
 AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent. You control a physical STM32 camera board over MQTT. You are NOT the camera — you dispatch commands to the board hardware.
@@ -146,20 +164,28 @@ When you call capture_now, the system automatically runs the full pipeline (capt
 Tool selection:
 - "what does the camera see" / "look" / "check on" / "show me" → capture_now (triggers full pipeline including AI analysis)
 - "take a picture" / "capture" / "snap" / "photo" → capture_now
-- "monitor every X" / "schedule" / "watch between" → create_schedule
+- "monitor for X minutes/hours" / "schedule" / "watch" → create_schedule (you decide frequency autonomously)
 - "burst" / "sequence" / "take N pictures" / "rapid" → capture_sequence
 - "is it alive" / "ping" / "responsive" → ping_board
 - "show last analysis" / "previous results" / "what did you find" → analyze_latest
 - "board status" / "health" / "firmware" → get_board_status
+- "summarize" / "what did you learn" / "conclusions" → synthesize_schedule (evolving insights from all analyses)
+
+Scheduling intelligence — when creating schedules, YOU decide frequency:
+- "Monitor for 1 minute" → you decide: ~4 captures, 15s apart
+- "Monitor for 5 minutes" → ~5 captures, 1 min apart
+- "Monitor for 1 hour" → ~12 captures, 5 min apart
+- "Monitor overnight" → ~8 captures, 1 hour apart
+- Pass your reasoning as the prompt to create_schedule. Include the duration and your chosen frequency.
 
 Rules:
-- When the user implies they want to SEE something NOW, always use capture_now. It captures + analyzes in one flow.
+- When the user implies they want to SEE something NOW, always use capture_now.
 - Only use analyze_latest when they ask about a PREVIOUS/EXISTING analysis.
-- You can call MULTIPLE tools in one response. For example, "board status" should call both get_board_status AND ping_board. "Check what's happening" should call capture_now.
+- You can call MULTIPLE tools in one response.
 - Every board interaction MUST go through a tool call. Never describe an action without calling the tool.
 - Be concise. Don't explain the pipeline — the streaming steps show it.
 - For capture_sequence, derive count and interval_ms from context (default: 2s).
-- Don't reference UI elements (buttons, panels, galleries). You execute board actions.
+- Don't reference UI elements. You execute board actions.
 """
 
 
@@ -224,12 +250,17 @@ async def agent_chat(request: Request):
 
                     # Capture tools get the full pipeline with streaming steps
                     if tool_name in ("capture_now", "capture_sequence"):
+                        pipeline_reply = ""
                         async for ev in _capture_pipeline(tool_name, tool_input):
                             yield ev
+                            # Capture the reply text for history but don't re-emit it
                             if '"event": "reply"' in ev:
-                                # Extract reply text for history
                                 ev_data = json.loads(ev.split("data: ", 1)[1].strip())
-                                reply_parts.append(ev_data.get("text", ""))
+                                pipeline_reply = ev_data.get("text", "")
+                        if pipeline_reply:
+                            history.append({"role": "assistant", "content": pipeline_reply})
+                        # Skip adding to reply_parts — pipeline already sent the reply
+                        continue
                     else:
                         yield _sse_event("tool_call", {
                             "id": tool_name,
@@ -364,35 +395,67 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
         return await _tool_analyze_latest()
     elif name == "get_board_status":
         return await _tool_board_status()
+    elif name == "synthesize_schedule":
+        return await _tool_synthesize(inp)
     else:
         return {"success": False, "summary": f"Unknown tool: {name}", "detail": ""}
 
 
 async def _tool_create_schedule(inp: dict) -> dict:
+    from app.db.database import async_session
+    from app.scheduler.service import create_schedule, activate_schedule, list_schedules
+
     prompt = inp.get("prompt", "")
     model_key = "claude-sonnet" if settings.anthropic_api_key else "qwen3-vl"
 
+    # Enrich prompt with current time so the planner avoids past times
+    now = datetime.now()
+    enriched_prompt = (
+        f"Current time: {now.strftime('%H:%M')} on {now.strftime('%Y-%m-%d')}. "
+        f"Request: {prompt}"
+    )
+
     try:
-        plan = await generate_plan(prompt, model_key)
+        plan = await generate_plan(enriched_prompt, model_key)
     except Exception as e:
         return {"success": False, "summary": f"Planning failed: {e}", "detail": ""}
+
+    if not plan.tasks:
+        return {"success": False, "summary": "No tasks generated", "detail": "The planner returned an empty schedule."}
 
     task_count = len(plan.tasks)
     times = [t.time for t in plan.tasks]
 
-    schedule_payload = {
-        "type": "schedule",
-        "tasks": [t.model_dump() for t in plan.tasks],
-    }
-    mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(schedule_payload))
+    # Persist to DB so analysis can find objectives by task_id
+    async with async_session() as db:
+        # Check for conflicting active schedules
+        existing = await list_schedules(db)
+        active = [s for s in existing if s.is_active]
+        conflict_note = ""
+        if active:
+            conflict_note = f"\n\n*Deactivated previous schedule: \"{active[0].name}\"*"
+
+        schedule = await create_schedule(
+            db,
+            name=f"Agent: {prompt[:50]}",
+            description=prompt,
+            tasks=[t.model_dump() for t in plan.tasks],
+        )
+
+        # Activate (deactivates others) and get MQTT payload
+        mqtt_payload = await activate_schedule(db, schedule.id)
+
+    # Publish to board
+    mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(mqtt_payload))
 
     task_list = "\n".join(
         f"| {t.id} | {t.time} | {t.action} | {t.objective} |"
         for t in plan.tasks
     )
     detail = (
-        f"**Schedule created** ({task_count} tasks, {times[0]}–{times[-1]})\n\n"
+        f"**Schedule active** ({task_count} tasks, {times[0]}–{times[-1]})\n\n"
         f"| ID | Time | Action | Objective |\n|---|---|---|---|\n{task_list}"
+        f"{conflict_note}"
     )
 
     return {
@@ -504,6 +567,72 @@ async def _tool_board_status() -> dict:
         "success": True,
         "summary": f"{analysis_count} analyses recorded",
         "detail": detail,
+    }
+
+
+async def _tool_synthesize(inp: dict) -> dict:
+    """Synthesize all recent analyses into evolving conclusions."""
+    from sqlalchemy import select
+    from app.analysis.models import AnalysisResult
+    from app.db.database import async_session
+
+    limit = inp.get("limit", 10)
+
+    async with async_session() as db:
+        result = await db.execute(
+            select(AnalysisResult)
+            .order_by(AnalysisResult.created_at.desc())
+            .limit(limit)
+        )
+        analyses = list(result.scalars().all())
+
+    if not analyses:
+        return {
+            "success": False,
+            "summary": "No analyses to synthesize",
+            "detail": "No image analyses found. Capture some images first.",
+        }
+
+    # Build a synthesis using Claude
+    if settings.anthropic_api_key:
+        entries = []
+        for a in reversed(analyses):  # chronological order
+            entries.append(
+                f"Task #{a.task_id} | {a.objective}\n"
+                f"Findings: {a.analysis}\n"
+                f"Recommendation: {a.recommendation}"
+            )
+
+        synthesis_prompt = (
+            "You are analyzing a series of visual monitoring observations from an IoT camera over time.\n\n"
+            "Observations (chronological):\n\n" +
+            "\n---\n".join(entries) +
+            "\n\nSynthesize these observations into:\n"
+            "1. **Pattern**: What patterns or trends do you see across observations?\n"
+            "2. **Changes**: What changed between observations?\n"
+            "3. **Conclusion**: Overall assessment of the monitored environment.\n"
+            "4. **Recommendation**: What should be done next?\n\n"
+            "Be concise and specific."
+        )
+
+        client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        response = await client.messages.create(
+            model=settings.claude_haiku_model,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": synthesis_prompt}],
+            temperature=0.2,
+        )
+        synthesis = response.content[0].text
+    else:
+        # Fallback: simple aggregation
+        synthesis = "**Observations:**\n\n"
+        for a in reversed(analyses):
+            synthesis += f"- Task #{a.task_id}: {a.analysis[:100]}\n"
+
+    return {
+        "success": True,
+        "summary": f"Synthesized {len(analyses)} observations",
+        "detail": synthesis,
     }
 
 

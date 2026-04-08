@@ -57,7 +57,7 @@ export default function BoardPage({
 		captures: 0,
 		lastImageSize: null,
 		lastLatencyMs: null,
-		isOnline: true,
+		isOnline: false,
 		logs: [],
 	});
 	const [images, setImages] = useState<ImageCapture[]>([]);
@@ -172,7 +172,6 @@ export default function BoardPage({
 
 	const topics = [
 		`device/${boardId}/status`,
-		"device/stm32/status",
 		"dashboard/images/new",
 		"dashboard/analysis/new",
 		"dashboard/logs",
@@ -193,6 +192,15 @@ export default function BoardPage({
 			});
 		}, 5000);
 		return () => clearInterval(interval);
+	}, []);
+
+	// Close lightbox on Escape
+	useEffect(() => {
+		const handleEsc = (e: KeyboardEvent) => {
+			if (e.key === "Escape") setSelectedImage(null);
+		};
+		window.addEventListener("keydown", handleEsc);
+		return () => window.removeEventListener("keydown", handleEsc);
 	}, []);
 
 	const deleteImage = async (img: ImageCapture) => {

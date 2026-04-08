@@ -63,8 +63,8 @@ export default function AgentChat({
 		scrollToBottom();
 	}, [messages, scrollToBottom]);
 
-	const handleSend = async () => {
-		const msg = input.trim();
+	const handleSend = async (override?: string) => {
+		const msg = (override || input).trim();
 		if (!msg || isStreaming) return;
 
 		setInput("");
@@ -247,10 +247,7 @@ export default function AgentChat({
 								<button
 									key={qa}
 									className="agent-quick-btn"
-									onClick={() => {
-										setInput(qa);
-										setTimeout(() => textareaRef.current?.focus(), 50);
-									}}
+									onClick={() => handleSend(qa)}
 								>
 									{qa}
 								</button>
@@ -295,7 +292,7 @@ export default function AgentChat({
 				/>
 				<button
 					className="agent-send-btn"
-					onClick={handleSend}
+					onClick={() => handleSend()}
 					disabled={isStreaming || !input.trim()}
 				>
 					{isStreaming ? "\u23F3" : "\u2191"}
@@ -327,18 +324,11 @@ function BlockRenderer({ block }: { block: Block }) {
 							? "\u2705"
 							: "\u274C"}
 				</span>
-				<div className="step-content">
-					<span className="step-label">
-						{block.status === "running"
-							? block.label
-							: block.summary || block.label}
-					</span>
-					{block.status === "done" &&
-						block.summary &&
-						block.summary !== block.label && (
-							<span className="step-detail">{block.label}</span>
-						)}
-				</div>
+				<span className="step-label">
+					{block.status === "done" && block.summary
+						? block.summary
+						: block.label}
+				</span>
 			</div>
 		);
 	}
