@@ -492,16 +492,19 @@ async def _tool_board_status() -> dict:
         )
         latest = latest_result.scalar_one_or_none()
 
+    # Also ping the board to check liveness
+    mqtt_client.publish(settings.mqtt_topic_commands, json.dumps({"type": "ping"}))
+
     detail = "**Board Status**\n\n"
     detail += f"- **Total Analyses:** {analysis_count}\n"
     if latest:
         detail += f"- **Last Analysis:** task #{latest.task_id} ({latest.model_used}, {latest.inference_time_ms:.0f}ms)\n"
         detail += f"- **Last Objective:** {latest.objective}\n"
-    detail += "\n*MQTT heartbeats determine online/offline. Ping the board to verify responsiveness.*"
+    detail += "- **Ping:** sent (board LEDs will flash if responsive)"
 
     return {
         "success": True,
-        "summary": f"Board active — {analysis_count} analyses recorded",
+        "summary": f"{analysis_count} analyses — ping sent",
         "detail": detail,
     }
 
