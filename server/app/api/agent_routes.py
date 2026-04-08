@@ -504,7 +504,7 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
 
     # Wait for analysis results — one for single capture, N for sequence
-    start_time = datetime.utcnow()
+    start_time = datetime.now()
     # Timeout: sequence duration + 30s per expected image for upload+analysis
     timeout_polls = max(15, (total_seq_ms // 2000) + (expected * 15))
     analyses = []
@@ -518,11 +518,14 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     for _ in range(timeout_polls):
         await asyncio.sleep(2)
         async with async_session() as db:
-            result = await db.execute(
+            # Filter by task_id to avoid picking up results from other captures
+            query = (
                 select(AnalysisResult)
                 .where(AnalysisResult.created_at >= start_time)
+                .where(AnalysisResult.task_id >= task_id)
                 .order_by(AnalysisResult.created_at.asc())
             )
+            result = await db.execute(query)
             new_results = [r for r in result.scalars().all() if r.id not in seen_ids]
 
         for a in new_results:
