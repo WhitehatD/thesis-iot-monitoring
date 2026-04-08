@@ -113,6 +113,7 @@ static volatile uint32_t s_capture_now_task_id   = 20000;
 /* ── Capture Sequence (MQTT command) ──────────────────────── */
 #define MAX_SEQUENCE_CAPTURES 16
 static volatile uint8_t  s_sequence_requested = 0;
+static volatile uint8_t  s_sequence_abort     = 0;  /* Set by delete_schedule to stop running sequence */
 static volatile uint32_t s_sequence_count     = 0;
 static uint32_t s_sequence_delays_ms[MAX_SEQUENCE_CAPTURES];  /* ms offset from NOW for each capture */
 static uint32_t s_sequence_base_task_id = 30000;
@@ -438,6 +439,7 @@ static void on_command_received(const char *json_str, uint32_t length)
         /* ── Delete / clear active schedule ── */
         memset(&s_schedule, 0, sizeof(s_schedule));
         s_schedule_received = 0;
+        s_sequence_abort = 1;  /* Stop any running capture_sequence */
         LOG_INFO(TAG_MQTT, ">> DELETE_SCHEDULE — schedule cleared");
         MQTT_PublishStatus("{\"status\":\"schedule_cleared\"}");
     }
@@ -1689,24 +1691,41 @@ static void _do_capture_sequence(void)
         }
     }
 
+    s_sequence_abort = 0;
+
     /* Record the sequence start time for precise ms-offset timing */
     uint32_t sequence_start = HAL_GetTick();
 
     for (uint32_t i = 0; i < count; i++)
     {
+        /* Check for abort (set by delete_schedule command) */
+        if (s_sequence_abort)
+        {
+            LOG_WARN(TAG_BOOT, "Seq[%lu]: ABORTED by delete_schedule", (unsigned long)i);
+            MQTT_PublishStatus("{\"status\":\"sequence_aborted\"}");
+            break;
+        }
+
         uint32_t task_id = base_id + i;
         uint32_t target_ms = s_sequence_delays_ms[i];
 
-        /* Wait until the target offset from sequence start */
+        /* Wait until the target offset from sequence start.
+         * Poll in small steps so we can check for abort during waits. */
         uint32_t now = HAL_GetTick();
         uint32_t elapsed = now - sequence_start;
-        if (elapsed < target_ms)
+        while (elapsed < target_ms && !s_sequence_abort)
         {
-            uint32_t wait = target_ms - elapsed;
-            LOG_DEBUG(TAG_BOOT, "Seq[%lu]: waiting %lums for offset %lums...",
-                      (unsigned long)i, (unsigned long)wait, (unsigned long)target_ms);
-            HAL_Delay(wait);
+            uint32_t remaining = target_ms - elapsed;
+            uint32_t step = (remaining > 200) ? 200 : remaining;
+            if (i == 0 && elapsed == (now - sequence_start))
+            {
+                LOG_DEBUG(TAG_BOOT, "Seq[%lu]: waiting %lums for offset %lums...",
+                          (unsigned long)i, (unsigned long)remaining, (unsigned long)target_ms);
+            }
+            HAL_Delay(step);
+            elapsed = HAL_GetTick() - sequence_start;
         }
+        if (s_sequence_abort) continue;  /* Will be caught at top of next iteration */
 
         /* Use warm capture — sensor is already converged */
         BSP_LED_On(LED_RED);

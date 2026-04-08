@@ -132,7 +132,25 @@ export default function BoardPage({
 	const fetchSchedules = useCallback(() => {
 		fetch(`${apiBase}/api/schedules`)
 			.then((r) => r.json())
-			.then((data) => setSchedules(data.schedules ?? data ?? []))
+			.then((data) => {
+				const fresh = data.schedules ?? data ?? [];
+				setSchedules((prev) => {
+					// Merge: keep completed_at from previous state if HTTP response is stale
+					if (prev.length === 0) return fresh;
+					const prevMap = new Map(
+						prev.flatMap((s: any) =>
+							(s.tasks || []).map((t: any) => [t.id, t.completed_at]),
+						),
+					);
+					return fresh.map((s: any) => ({
+						...s,
+						tasks: (s.tasks || []).map((t: any) => ({
+							...t,
+							completed_at: t.completed_at || prevMap.get(t.id) || null,
+						})),
+					}));
+				});
+			})
 			.catch(() => {});
 	}, [apiBase]);
 
@@ -141,9 +159,9 @@ export default function BoardPage({
 		fetchSchedules();
 	}, [fetchImages, fetchSchedules]);
 
-	// Poll schedules as fallback (MQTT push is primary, poll catches missed updates)
+	// Poll schedules as fallback (MQTT push is primary, poll catches reconnects)
 	useEffect(() => {
-		const interval = setInterval(fetchSchedules, 5000);
+		const interval = setInterval(fetchSchedules, 30000);
 		return () => clearInterval(interval);
 	}, [fetchSchedules]);
 
