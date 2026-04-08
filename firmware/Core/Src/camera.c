@@ -215,9 +215,9 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     val = (uint8_t)(CAMERA_VTS_DEFAULT & 0xFF);
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x3A15, &val, 1);  /* MAX_EXPO 50Hz LOW  */
 
-    /* 4. Set VTS (Vertical Total Size) for faster frame rate.
-     *    CAMERA_VTS_DEFAULT = 0x07D0 (2000 lines) → ~12fps at VGA.
-     *    This is 4× faster than the original 0x1F80 (~3fps). */
+    /* 4. Set VTS (Vertical Total Size) for balanced frame rate + exposure.
+     *    VTS=0x07D0 (2000 lines) → ~12fps at VGA, 83ms max base exposure.
+     *    Night mode extends this to 4× (8000 lines, ~300ms) in low light. */
     val = (uint8_t)((CAMERA_VTS_DEFAULT >> 8) & 0xFF);
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x380E, &val, 1);  /* VTS HIGH */
     val = (uint8_t)(CAMERA_VTS_DEFAULT & 0xFF);
@@ -227,9 +227,14 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     val = 0x00;  /* bit 0=0: AEC auto, bit 1=0: AGC auto */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x3503, &val, 1);
 
-    /* 6. Enable AEC night mode frame-rate reduction via AEC_CTRL00 */
-    val = 0x7C;
+    /* 6. Enable AEC night mode with 4x frame insertion ceiling.
+     *    Night mode lets the ISP dynamically increase VTS (lower fps) when
+     *    the scene is dark, extending max exposure up to 4× the base VTS.
+     *    With VTS=2000 and 4x ceiling: max exposure ≈ 8000 lines ≈ 300ms. */
+    val = 0x7C;  /* AEC_CTRL00: enable night mode + band filter */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x3A00, &val, 1);
+    val = 0x03;  /* AEC_MAX_EXPO_INSERT: 11 = 4x frame insertion ceiling */
+    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x3A05, &val, 1);
 
     /* 7. PCLK boost — set PLL pre-divider for higher pixel clock.
      *    Register 0x3824 (PCLK divider): lower value = faster PCLK.

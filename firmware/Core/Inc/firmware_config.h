@@ -85,9 +85,9 @@
 #define CAMERA_FRAME_BUFFER_SIZE    (640 * 480 * 2)  /* 614,400 bytes — VGA RGB565 */
 
 /* ── Fast-Capture Tuning ──────────────────────────────── */
-#define CAMERA_WARMUP_FRAMES        1                 /* Frames to discard for AEC convergence (cold start only) */
-#define CAMERA_AEC_SETTLE_TIMEOUT_MS 800              /* Max wait for AEC register convergence */
-#define CAMERA_VTS_DEFAULT          0x0440            /* VTS=1088 lines — BSP default, safe for VGA windowed readout */
+#define CAMERA_WARMUP_FRAMES        3                 /* Frames to discard for AEC convergence (cold start only) */
+#define CAMERA_AEC_SETTLE_TIMEOUT_MS 1500             /* Max wait for AEC register convergence */
+#define CAMERA_VTS_DEFAULT          0x07D0            /* VTS=2000 lines — ~12fps, 83ms max exposure (night mode extends 4x) */
 #define CAMERA_INTER_FRAME_DELAY_MS 10                /* Brief ISP settle between snapshots */
 #define CAMERA_WARM_CAPTURE_RETRIES 3                 /* Max snapshot attempts before declaring failure */
 

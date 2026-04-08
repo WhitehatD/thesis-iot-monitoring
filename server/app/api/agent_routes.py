@@ -441,74 +441,100 @@ def _tool_label(name: str, inp: dict) -> str:
 
 
 async def _capture_pipeline(tool_name: str, tool_input: dict):
-    """Full agentic pipeline: capture → wait for upload → wait for analysis → report."""
-    from sqlalchemy import select
+    """Full agentic pipeline: capture → wait for upload(s) → analysis → report."""
+    from sqlalchemy import select, func
     from app.analysis.models import AnalysisResult
     from app.db.database import async_session
 
-    # Step 1: Send capture command
-    yield _sse_event("tool_call", {"id": "capture", "label": "Sending capture command to board..."})
-
     task_id = int(time.time())
+    expected = 1
 
     if tool_name == "capture_sequence":
-        count = max(2, min(tool_input.get("count", 3), 16))
+        expected = max(2, min(tool_input.get("count", 3), 16))
         interval = max(500, tool_input.get("interval_ms", 2000))
+        delays = [i * interval for i in range(expected)]
+        total_seq_ms = delays[-1] + 5000  # last capture + upload headroom
         command = json.dumps({
             "type": "capture_sequence",
             "task_id": task_id,
-            "delays_ms": [i * interval for i in range(count)],
+            "delays_ms": delays,
         })
+        yield _sse_event("tool_call", {"id": "capture", "label": f"Sending {expected}-shot sequence ({interval}ms apart)..."})
     else:
+        total_seq_ms = 0
         command = json.dumps({"type": "capture_now", "task_id": task_id})
+        yield _sse_event("tool_call", {"id": "capture", "label": "Sending capture command to board..."})
 
     mqtt_client.publish(settings.mqtt_topic_commands, command)
-
     yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
 
-    # Step 2: Wait for image upload
-    yield _sse_event("tool_call", {"id": "upload", "label": "Waiting for board to capture and upload..."})
-
-    image_found = False
+    # Wait for analysis results — one for single capture, N for sequence
     start_time = datetime.utcnow()
-    for _ in range(15):  # 30s timeout (15 x 2s)
+    # Timeout: sequence duration + 30s per expected image for upload+analysis
+    timeout_polls = max(15, (total_seq_ms // 2000) + (expected * 15))
+    analyses = []
+    seen_ids = set()
+
+    yield _sse_event("tool_call", {
+        "id": "upload",
+        "label": f"Waiting for {'image' if expected == 1 else f'{expected} images'}...",
+    })
+
+    for _ in range(timeout_polls):
         await asyncio.sleep(2)
-        # Check if a NEW analysis appeared since we sent the command
         async with async_session() as db:
             result = await db.execute(
                 select(AnalysisResult)
                 .where(AnalysisResult.created_at >= start_time)
-                .order_by(AnalysisResult.created_at.desc())
-                .limit(1)
+                .order_by(AnalysisResult.created_at.asc())
             )
-            analysis = result.scalar_one_or_none()
-            if analysis:
-                image_found = True
-                break
+            new_results = [r for r in result.scalars().all() if r.id not in seen_ids]
 
-    if not image_found:
+        for a in new_results:
+            seen_ids.add(a.id)
+            analyses.append(a)
+            if expected > 1:
+                yield _sse_event("tool_result", {
+                    "id": f"img_{len(analyses)}",
+                    "success": True,
+                    "summary": f"Image {len(analyses)}/{expected} analyzed (task #{a.task_id})",
+                })
+
+        if len(analyses) >= expected:
+            break
+
+    if not analyses:
         yield _sse_event("tool_result", {"id": "upload", "success": False, "summary": "Timeout waiting for image (board may be offline)"})
-        yield _sse_event("reply", {"text": "**Capture sent** but the board hasn't responded yet. It may be offline or busy. The image will appear in the gallery when it arrives."})
+        yield _sse_event("reply", {"text": "**Capture sent** but the board hasn't responded yet. It may be offline or busy."})
         return
 
-    yield _sse_event("tool_result", {"id": "upload", "success": True, "summary": "Image received and uploaded"})
-
-    # Step 3: Show analysis result
-    yield _sse_event("tool_call", {"id": "analysis", "label": "AI vision analysis complete"})
-
     yield _sse_event("tool_result", {
-        "id": "analysis",
+        "id": "upload",
         "success": True,
-        "summary": f"Analysis complete for task #{analysis.task_id}",
+        "summary": f"{len(analyses)}/{expected} image{'s' if expected > 1 else ''} analyzed",
     })
 
-    detail = (
-        f"**Capture & Analysis Complete** (task #{analysis.task_id})\n\n"
-        f"**Objective:** {analysis.objective}\n\n"
-        f"**Findings:** {analysis.analysis}\n\n"
-        f"**Recommendation:** {analysis.recommendation}\n\n"
-        f"*{analysis.model_used} | {analysis.inference_time_ms:.0f}ms*"
-    )
+    # Build report
+    if len(analyses) == 1:
+        a = analyses[0]
+        detail = (
+            f"**Capture & Analysis Complete** (task #{a.task_id})\n\n"
+            f"**Objective:** {a.objective}\n\n"
+            f"**Findings:** {a.analysis}\n\n"
+            f"**Recommendation:** {a.recommendation}\n\n"
+            f"*{a.model_used} | {a.inference_time_ms:.0f}ms*"
+        )
+    else:
+        parts = [f"**Sequence Complete** — {len(analyses)}/{expected} images analyzed\n"]
+        for i, a in enumerate(analyses, 1):
+            parts.append(
+                f"**#{i}** (task {a.task_id}): {a.analysis[:120]}{'...' if len(a.analysis) > 120 else ''}"
+            )
+        if analyses[-1].recommendation:
+            parts.append(f"\n**Recommendation:** {analyses[-1].recommendation}")
+        parts.append(f"\n*{analyses[-1].model_used} | avg {sum(a.inference_time_ms for a in analyses) / len(analyses):.0f}ms*")
+        detail = "\n\n".join(parts)
+
     yield _sse_event("reply", {"text": detail})
 
 
