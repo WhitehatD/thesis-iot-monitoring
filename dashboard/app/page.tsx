@@ -1,174 +1,99 @@
 "use client";
 
-import mqtt from "mqtt";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useBoardTracker } from "./hooks/useMQTT";
 
-interface BoardTelemetry {
-	id: string;
-	name: string;
-	firmware: string | null;
-	lastSeen: number | null;
-	status: string;
-	captures: number;
-	lastImageSize: number | null;
-	lastLatencyMs: number | null;
-	isOnline: boolean;
-}
+const FLEET_TOPICS = ["device/+/status", "device/stm32/status"];
 
 export default function DashboardPage() {
-	const [boards, setBoards] = useState<Record<string, BoardTelemetry>>({});
-	const [globalStatus, setGlobalStatus] = useState("connecting");
-	const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
+	const { boards, connectionStatus } = useBoardTracker(FLEET_TOPICS);
+	const [now, setNow] = useState(Date.now());
 
-	const mqttUrl =
-		typeof window !== "undefined"
-			? process.env.NEXT_PUBLIC_MQTT_WS_URL ||
-				`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/mqtt`
-			: "ws://localhost:9001";
-
+	// Tick every second so "Last Seen" stays fresh
 	useEffect(() => {
-		// Setup MQTT
-		const client = mqtt.connect(mqttUrl, { reconnectPeriod: 3000 });
-		mqttClientRef.current = client;
+		const timer = setInterval(() => setNow(Date.now()), 1000);
+		return () => clearInterval(timer);
+	}, []);
 
-		client.on("connect", () => {
-			setGlobalStatus("connected");
-			client.subscribe("device/+/status", { qos: 0 }); // Subscribe to any device
-			client.subscribe("device/stm32/status", { qos: 0 }); // Fallback for legacy topic
-		});
-
-		client.on("message", (topic, payload) => {
-			try {
-				const data = JSON.parse(payload.toString());
-
-				// Handle board status
-				let boardId = "stm32-iot-cam-01";
-				if (topic.startsWith("device/")) {
-					const parts = topic.split("/");
-					if (parts.length >= 3 && parts[1] !== "stm32") {
-						boardId = parts[1];
-					}
-				}
-				if (data.client_id || data.board_id) {
-					boardId = data.client_id || data.board_id;
-				}
-
-				setBoards((prev) => {
-					const curr = prev[boardId] || {
-						id: boardId,
-						name: `STM32 B-U585I-IOT02A`,
-						firmware: null,
-						lastSeen: null,
-						status: "idle",
-						captures: 0,
-						lastImageSize: null,
-						lastLatencyMs: null,
-						isOnline: true,
-					};
-
-					const update = { ...curr, isOnline: true, lastSeen: Date.now() };
-
-					if (data.firmware) update.firmware = data.firmware;
-					if (data.status) {
-						update.status = data.status;
-					}
-					if (data.status === "captured" || data.status === "uploaded") {
-						update.captures += 1;
-						if (data.size) update.lastImageSize = data.size;
-						if (data.latency_ms) update.lastLatencyMs = data.latency_ms;
-					}
-
-					return { ...prev, [boardId]: update };
-				});
-			} catch (e) {
-				console.error("MQTT parse err", e);
-			}
-		});
-
-		client.on("close", () => setGlobalStatus("disconnected"));
-		client.on("error", () => setGlobalStatus("error"));
-
-		// Online checker interval
-		const interval = setInterval(() => {
-			setBoards((prev) => {
-				let changed = false;
-				const next = { ...prev };
-				const now = Date.now();
-				for (const id in next) {
-					// If not seen for 15s, mark offline
-					if (
-						next[id].isOnline &&
-						next[id].lastSeen &&
-						now - next[id].lastSeen! > 15000
-					) {
-						next[id] = { ...next[id], isOnline: false };
-						changed = true;
-					}
-				}
-				return changed ? next : prev;
-			});
-		}, 5000);
-
-		return () => {
-			client.end();
-			clearInterval(interval);
-		};
-	}, [mqttUrl]);
-
-	const getStatusClass = (status: string) => {
-		if (status.includes("error") || status.includes("failed"))
-			return "status-error";
-		if (status.includes("captur") || status.includes("upload"))
-			return "status-active";
-		if (status.includes("ota") || status.includes("ping")) return "status-ota";
-		return "status-idle";
-	};
+	const boardList = Object.values(boards);
 
 	return (
 		<div className="app-container">
 			<header className="header">
 				<div className="header-title-container">
-					<div className="header-logo">👁</div>
+					<div className="header-logo">
+						<svg
+							width="22"
+							height="22"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							strokeWidth="2"
+							strokeLinecap="round"
+							strokeLinejoin="round"
+							style={{ color: "var(--accent)" }}
+							aria-hidden="true"
+						>
+							<circle cx="12" cy="12" r="3" />
+							<path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83" />
+						</svg>
+					</div>
 					<div>
-						<h1 className="header-title">Enterprise Visual Edge</h1>
-						<div className="header-subtitle">
-							Distributed STM32 Multimodal Fleet
-						</div>
+						<h1 className="header-title">Visual Monitor</h1>
+						<div className="header-subtitle">IoT Edge Fleet Dashboard</div>
 					</div>
 				</div>
 				<div className="connection-badge">
 					<div
-						className={`connection-dot ${globalStatus === "connected" ? "connected" : "disconnected"}`}
+						className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
 					/>
-					{globalStatus === "connected"
-						? "Broker Connected"
-						: "Broker Disconnected"}
+					{connectionStatus === "connected" ? "MQTT Connected" : "Disconnected"}
 				</div>
 			</header>
 
 			<section>
 				<div className="boards-grid">
-					{Object.values(boards).length === 0 ? (
-						<div
-							className="glass-panel hoverable-card"
-							style={{
-								gridColumn: "1 / -1",
-								textAlign: "center",
-								color: "var(--text-tertiary)",
-							}}
-						>
-							Waiting for edge nodes to check in...
+					{boardList.length === 0 && connectionStatus === "connected" && (
+						<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
+							Waiting for edge nodes to check in via MQTT...
 						</div>
-					) : (
-						Object.values(boards).map((board) => (
-							<div
-								key={board.id}
-								className="board-card glass-panel hoverable-card"
-							>
+					)}
+
+					{boardList.length === 0 && connectionStatus !== "connected" && (
+						<div className="loading-card" style={{ gridColumn: "1 / -1" }}>
+							<div className="skeleton skeleton-line" />
+							<div className="skeleton skeleton-line" />
+							<div className="skeleton skeleton-line" />
+						</div>
+					)}
+
+					{boardList.map((board) => {
+						const seenAgo = board.lastSeen
+							? Math.floor((now - board.lastSeen) / 1000)
+							: null;
+						return (
+							<div key={board.id} className="board-card">
 								<div className="board-header">
 									<div className="board-name-group">
-										<div className="board-icon">⚡</div>
+										<div className="board-icon">
+											<svg
+												width="18"
+												height="18"
+												viewBox="0 0 24 24"
+												fill="none"
+												stroke="currentColor"
+												aria-hidden="true"
+												strokeWidth="2"
+												strokeLinecap="round"
+												strokeLinejoin="round"
+												style={{ color: "var(--accent)" }}
+											>
+												<rect x="4" y="4" width="16" height="16" rx="2" />
+												<rect x="9" y="9" width="6" height="6" />
+												<path d="M15 2v2M15 20v2M2 15h2M20 15h2M9 2v2M9 20v2M2 9h2M20 9h2" />
+											</svg>
+										</div>
 										<div>
 											<div className="board-name">{board.name}</div>
 											<div className="board-id">{board.id}</div>
@@ -186,11 +111,11 @@ export default function DashboardPage() {
 									<div className="stat-item">
 										<span className="stat-label">Firmware</span>
 										<span className="stat-value">
-											{board.firmware ? `v${board.firmware}` : "—"}
+											{board.firmware ? `v${board.firmware}` : "\u2014"}
 										</span>
 									</div>
 									<div className="stat-item">
-										<span className="stat-label">Total Captures</span>
+										<span className="stat-label">Captures</span>
 										<span className="stat-value highlight">
 											{board.captures}
 										</span>
@@ -199,7 +124,7 @@ export default function DashboardPage() {
 
 								<div className="telemetry-box">
 									<div className="telemetry-row">
-										<span>Current State:</span>
+										<span>State</span>
 										<span
 											className={`telemetry-val ${getStatusClass(board.status)}`}
 										>
@@ -207,25 +132,25 @@ export default function DashboardPage() {
 										</span>
 									</div>
 									<div className="telemetry-row">
-										<span>Capture Latency:</span>
+										<span>Latency</span>
 										<span className="telemetry-val">
-											{board.lastLatencyMs ? `${board.lastLatencyMs}ms` : "—"}
+											{board.lastLatencyMs
+												? `${board.lastLatencyMs}ms`
+												: "\u2014"}
 										</span>
 									</div>
 									<div className="telemetry-row">
-										<span>Last Payload:</span>
+										<span>Payload</span>
 										<span className="telemetry-val">
 											{board.lastImageSize
 												? `${(board.lastImageSize / 1024).toFixed(1)} KB`
-												: "—"}
+												: "\u2014"}
 										</span>
 									</div>
 									<div className="telemetry-row">
-										<span>Last Seen:</span>
+										<span>Last Seen</span>
 										<span className="telemetry-val">
-											{board.lastSeen
-												? `${Math.floor((Date.now() - board.lastSeen) / 1000)}s ago`
-												: "Never"}
+											{seenAgo !== null ? `${seenAgo}s ago` : "Never"}
 										</span>
 									</div>
 								</div>
@@ -235,14 +160,23 @@ export default function DashboardPage() {
 										href={`/board/${board.id}`}
 										className="btn btn-primary btn-explore"
 									>
-										Manage Board Node <span className="arrow">→</span>
+										Open Dashboard <span className="arrow">&rarr;</span>
 									</Link>
 								</div>
 							</div>
-						))
-					)}
+						);
+					})}
 				</div>
 			</section>
 		</div>
 	);
+}
+
+function getStatusClass(status: string): string {
+	if (status.includes("error") || status.includes("failed"))
+		return "status-error";
+	if (status.includes("captur") || status.includes("upload"))
+		return "status-active";
+	if (status.includes("ota") || status.includes("ping")) return "status-ota";
+	return "status-idle";
 }

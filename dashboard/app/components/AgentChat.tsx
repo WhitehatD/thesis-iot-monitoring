@@ -21,6 +21,13 @@ interface AgentChatProps {
 	apiBase: string;
 }
 
+const QUICK_ACTIONS = [
+	"Take a picture now",
+	"Monitor every 15 min",
+	"What does the camera see?",
+	"Board status?",
+];
+
 export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [input, setInput] = useState("");
@@ -35,7 +42,7 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 	}, []);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every message change is intentional
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll on message change
 	useEffect(() => {
 		scrollToBottom();
 	}, [messages, scrollToBottom]);
@@ -47,7 +54,6 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 		setInput("");
 		setIsStreaming(true);
 
-		// Add user message
 		const userMsg: Message = { role: "user", content: msg };
 		const botMsg: Message = {
 			role: "assistant",
@@ -77,8 +83,6 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 				if (done) break;
 
 				buffer += decoder.decode(value, { stream: true });
-
-				// Parse SSE lines from buffer
 				const lines = buffer.split("\n");
 				buffer = lines.pop() || "";
 
@@ -129,7 +133,7 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 							return updated;
 						});
 					} catch {
-						// Skip malformed JSON
+						// skip malformed JSON
 					}
 				}
 			}
@@ -158,22 +162,30 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 		}
 	};
 
-	const quickActions = [
-		"Take a picture now",
-		"Monitor every 15 min from 9AM to 5PM",
-		"What does the latest image show?",
-		"Is the board online?",
-	];
-
 	return (
 		<div className="agent-chat">
 			<div className="agent-header">
-				<div className="agent-icon">&#x1F9E0;</div>
+				<div className="agent-icon">
+					<svg
+						width="16"
+						height="16"
+						viewBox="0 0 24 24"
+						fill="none"
+						stroke="currentColor"
+						strokeWidth="2"
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						style={{ color: "var(--accent)" }}
+						aria-hidden="true"
+					>
+						<path d="M12 8V4H8" />
+						<rect width="16" height="12" x="4" y="8" rx="2" />
+						<path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+					</svg>
+				</div>
 				<div>
 					<div className="agent-title">Monitoring Agent</div>
-					<div className="agent-subtitle">
-						Natural language control &amp; analysis
-					</div>
+					<div className="agent-subtitle">Natural language control</div>
 				</div>
 			</div>
 
@@ -182,15 +194,13 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 					<div className="agent-welcome">
 						<p>What would you like to monitor?</p>
 						<div className="agent-quick-actions">
-							{quickActions.map((qa) => (
+							{QUICK_ACTIONS.map((qa) => (
 								<button
 									key={qa}
 									className="agent-quick-btn"
 									onClick={() => {
 										setInput(qa);
-										setTimeout(() => {
-											textareaRef.current?.focus();
-										}, 50);
+										setTimeout(() => textareaRef.current?.focus(), 50);
 									}}
 								>
 									{qa}
@@ -227,15 +237,7 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 										))}
 									</div>
 								)}
-								{msg.content && (
-									<div
-										className="agent-reply"
-										// biome-ignore lint/security/noDangerouslySetInnerHtml: controlled markdown rendering from our own renderMarkdown
-										dangerouslySetInnerHTML={{
-											__html: renderMarkdown(msg.content),
-										}}
-									/>
-								)}
+								{msg.content && <MarkdownContent text={msg.content} />}
 								{msg.streaming && !msg.content && (
 									<div className="agent-typing">
 										<span className="typing-dot" />
@@ -254,7 +256,7 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 				<textarea
 					ref={textareaRef}
 					className="agent-textarea"
-					placeholder="Describe what you want to monitor..."
+					placeholder="Ask the agent..."
 					value={input}
 					onChange={(e) => setInput(e.target.value)}
 					onKeyDown={handleKeyDown}
@@ -273,30 +275,93 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 	);
 }
 
-/** Minimal markdown → HTML for agent replies. */
-function renderMarkdown(text: string): string {
-	return text
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-		.replace(/\*(.+?)\*/g, "<em>$1</em>")
-		.replace(/`(.+?)`/g, "<code>$1</code>")
-		.replace(
-			/\|(.+)\|/g,
-			(_, row) =>
-				`<tr>${row
-					.split("|")
-					.map((c: string) => `<td>${c.trim()}</td>`)
-					.join("")}</tr>`,
-		)
-		.replace(/(<tr>.*<\/tr>(\n|$))+/g, (block: string) => {
-			const rows = block.trim().split("\n");
-			// Skip separator rows (|---|---|)
-			const filtered = rows.filter(
-				(r) => !r.match(/^<tr>(<td>-+<\/td>)+<\/tr>$/),
+function MarkdownContent({ text }: { text: string }) {
+	const parts = parseMarkdown(text);
+	return <div className="agent-reply">{parts}</div>;
+}
+
+function parseMarkdown(text: string): React.ReactNode[] {
+	const nodes: React.ReactNode[] = [];
+	const lines = text.split("\n");
+	let tableRows: string[][] = [];
+
+	const flushTable = () => {
+		if (tableRows.length === 0) return;
+		const rows = tableRows.filter(
+			(row) => !row.every((cell) => /^-+$/.test(cell.trim())),
+		);
+		nodes.push(
+			<table key={`t-${nodes.length}`} className="agent-table">
+				<tbody>
+					{rows.map((row, ri) => (
+						<tr key={ri}>
+							{row.map((cell, ci) => (
+								<td key={ci}>{inlineFormat(cell.trim())}</td>
+							))}
+						</tr>
+					))}
+				</tbody>
+			</table>,
+		);
+		tableRows = [];
+	};
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+
+		if (line.startsWith("|") && line.endsWith("|")) {
+			const cells = line
+				.slice(1, -1)
+				.split("|")
+				.map((c) => c.trim());
+			tableRows.push(cells);
+			continue;
+		}
+
+		flushTable();
+
+		if (line.trim() === "") {
+			nodes.push(<br key={`br-${i}`} />);
+		} else {
+			nodes.push(
+				<span key={`l-${i}`}>
+					{inlineFormat(line)}
+					{i < lines.length - 1 && <br />}
+				</span>,
 			);
-			return `<table class="agent-table">${filtered.join("\n")}</table>`;
-		})
-		.replace(/\n/g, "<br>");
+		}
+	}
+
+	flushTable();
+	return nodes;
+}
+
+function inlineFormat(text: string): React.ReactNode[] {
+	const parts: React.ReactNode[] = [];
+	const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`(.+?)`)/g;
+	let lastIndex = 0;
+	let match: RegExpExecArray | null = regex.exec(text);
+
+	while (match !== null) {
+		if (match.index > lastIndex) {
+			parts.push(text.slice(lastIndex, match.index));
+		}
+
+		if (match[2]) {
+			parts.push(<strong key={`b-${match.index}`}>{match[2]}</strong>);
+		} else if (match[3]) {
+			parts.push(<em key={`i-${match.index}`}>{match[3]}</em>);
+		} else if (match[4]) {
+			parts.push(<code key={`c-${match.index}`}>{match[4]}</code>);
+		}
+
+		lastIndex = regex.lastIndex;
+		match = regex.exec(text);
+	}
+
+	if (lastIndex < text.length) {
+		parts.push(text.slice(lastIndex));
+	}
+
+	return parts.length > 0 ? parts : [text];
 }

@@ -1,14 +1,11 @@
 "use client";
 
-import mqtt from "mqtt";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 import AgentChat from "../../components/AgentChat";
+import { useMQTT } from "../../hooks/useMQTT";
 
-interface BoardTelemetry {
-	id: string;
-	name: string;
+interface BoardState {
 	firmware: string | null;
 	lastSeen: number | null;
 	status: string;
@@ -16,7 +13,13 @@ interface BoardTelemetry {
 	lastImageSize: number | null;
 	lastLatencyMs: number | null;
 	isOnline: boolean;
-	logs: { time: string; level: string; text: string }[];
+	logs: LogEntry[];
+}
+
+interface LogEntry {
+	time: string;
+	level: string;
+	text: string;
 }
 
 interface ImageCapture {
@@ -37,18 +40,17 @@ interface ImageCapture {
 	};
 }
 
+const MAX_LOGS = 500;
+
 export default function BoardPage({
 	params,
 }: {
 	params: Promise<{ id: string }>;
 }) {
-	const unwrappedParams = use(params);
-	const boardId = unwrappedParams.id;
-	const router = useRouter();
+	const { id: boardId } = use(params);
+	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
 
-	const [board, setBoard] = useState<BoardTelemetry>({
-		id: boardId,
-		name: `STM32 B-U585I-IOT02A`,
+	const [board, setBoard] = useState<BoardState>({
 		firmware: null,
 		lastSeen: null,
 		status: "idle",
@@ -58,23 +60,25 @@ export default function BoardPage({
 		isOnline: true,
 		logs: [],
 	});
-
 	const [images, setImages] = useState<ImageCapture[]>([]);
-	const [globalStatus, setGlobalStatus] = useState("connecting");
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
 	const [filterDate, setFilterDate] = useState("all");
 	const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
 	const [searchTaskId, setSearchTaskId] = useState("");
-	const mqttClientRef = useRef<mqtt.MqttClient | null>(null);
 
-	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+	const addLog = useCallback((level: string, text: string) => {
+		const entry: LogEntry = {
+			time: new Date().toLocaleTimeString(),
+			level,
+			text,
+		};
+		setBoard((prev) => ({
+			...prev,
+			logs: [entry, ...prev.logs].slice(0, MAX_LOGS),
+		}));
+	}, []);
 
-	const mqttUrl =
-		typeof window !== "undefined"
-			? process.env.NEXT_PUBLIC_MQTT_WS_URL ||
-				`${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/mqtt`
-			: "ws://localhost:9001";
-
+	// Fetch images from API
 	const fetchImages = useCallback(() => {
 		fetch(`${apiBase}/api/images?board_id=${boardId}`)
 			.then((res) => res.json())
@@ -97,139 +101,123 @@ export default function BoardPage({
 
 	useEffect(() => {
 		fetchImages();
+	}, [fetchImages]);
 
-		// Setup MQTT
-		const client = mqtt.connect(mqttUrl, { reconnectPeriod: 3000 });
-		mqttClientRef.current = client;
+	// MQTT message handler
+	const handleMessage = useCallback(
+		(topic: string, data: Record<string, any>, sourceBoardId: string) => {
+			if (topic === "dashboard/images/new") {
+				fetchImages();
+				return;
+			}
 
-		client.on("connect", () => {
-			setGlobalStatus("connected");
-			// Subscribe specifically to this board's topics
-			client.subscribe(`device/${boardId}/status`, { qos: 0 });
-			client.subscribe("device/stm32/status", { qos: 0 }); // Fallback
-			client.subscribe("dashboard/images/new", { qos: 0 });
-			client.subscribe("dashboard/analysis/new", { qos: 0 });
-			client.subscribe("dashboard/logs", { qos: 0 });
-		});
+			if (topic === "dashboard/analysis/new") {
+				setImages((prev) =>
+					prev.map((img) =>
+						img.filename === data.filename
+							? {
+									...img,
+									analysis: {
+										objective: data.objective || "",
+										objectiveMet: data.objective_met || false,
+										description: data.description || "",
+										findings: data.findings || "",
+										recommendation: data.recommendation || "",
+										model: data.model || "",
+										inferenceMs: data.inference_ms || 0,
+									},
+								}
+							: img,
+					),
+				);
+				addLog(
+					"info",
+					`AI analysis complete for task #${data.task_id}: ${data.objective_met ? "Objective MET" : "Objective NOT met"}`,
+				);
+				return;
+			}
 
-		client.on("message", (topic, payload) => {
-			try {
-				const data = JSON.parse(payload.toString());
+			if (topic === "dashboard/logs") {
+				const logTime = data.timestamp
+					? new Date(data.timestamp * 1000).toLocaleTimeString()
+					: new Date().toLocaleTimeString();
+				setBoard((prev) => ({
+					...prev,
+					logs: [
+						{ time: logTime, level: data.level || "log", text: data.text },
+						...prev.logs,
+					].slice(0, MAX_LOGS),
+				}));
+				return;
+			}
 
-				// Identify source board
-				let sourceBoardId = "stm32-iot-cam-01";
-				if (topic.startsWith("device/")) {
-					const parts = topic.split("/");
-					if (parts.length >= 3 && parts[1] !== "stm32") {
-						sourceBoardId = parts[1];
-					}
-				}
-				if (data.client_id || data.board_id) {
-					sourceBoardId = data.client_id || data.board_id;
-				}
+			// Board-specific telemetry
+			if (sourceBoardId !== boardId) return;
 
-				if (topic === "dashboard/images/new") {
-					fetchImages();
-					return;
-				}
-
-				if (topic === "dashboard/analysis/new") {
-					// Attach analysis result to the matching image
-					setImages((prev) =>
-						prev.map((img) =>
-							img.filename === data.filename
-								? {
-										...img,
-										analysis: {
-											objective: data.objective || "",
-											objectiveMet: data.objective_met || false,
-											description: data.description || "",
-											findings: data.findings || "",
-											recommendation: data.recommendation || "",
-											model: data.model || "",
-											inferenceMs: data.inference_ms || 0,
-										},
-									}
-								: img,
-						),
-					);
-
-					const logEntry = {
-						time: new Date().toLocaleTimeString(),
-						level: "info",
-						text: `AI analysis complete for task #${data.task_id}: ${data.objective_met ? "Objective MET" : "Objective NOT met"}`,
-					};
-					setBoard((prev) => ({
-						...prev,
-						logs: [logEntry, ...prev.logs].slice(0, 500),
-					}));
-					return;
-				}
-
-				// Global topic checks are done, now enforce source board filtering for board-specific telemetry
-				if (sourceBoardId !== boardId) return;
-
-				if (topic === "dashboard/logs") {
-					const logTime = data.timestamp
-						? new Date(data.timestamp * 1000).toLocaleTimeString()
-						: new Date().toLocaleTimeString();
-					const logEntry = {
-						time: logTime,
-						level: data.level || "log",
-						text: data.text,
-					};
-					setBoard((prev) => ({
-						...prev,
-						logs: [logEntry, ...prev.logs].slice(0, 500),
-					}));
-					return;
-				}
-
-				setBoard((prev) => {
-					const update = { ...prev, isOnline: true, lastSeen: Date.now() };
-
-					if (data.firmware) update.firmware = data.firmware;
-					if (data.status) {
-						update.status = data.status;
-						const logEntry = {
+			setBoard((prev) => {
+				const update = { ...prev, isOnline: true, lastSeen: Date.now() };
+				if (data.firmware) update.firmware = data.firmware;
+				if (data.status) {
+					update.status = data.status;
+					update.logs = [
+						{
 							time: new Date().toLocaleTimeString(),
 							level: "info",
-							text: `Status transition: ${data.status}`,
-						};
-						update.logs = [logEntry, ...update.logs].slice(0, 500);
-					}
-					if (data.status === "captured" || data.status === "uploaded") {
-						update.captures += 1;
-						if (data.size) update.lastImageSize = data.size;
-						if (data.latency_ms) update.lastLatencyMs = data.latency_ms;
-					}
+							text: `Status: ${data.status}`,
+						},
+						...update.logs,
+					].slice(0, MAX_LOGS);
+				}
+				if (data.status === "captured" || data.status === "uploaded") {
+					update.captures += 1;
+					if (data.size) update.lastImageSize = data.size;
+					if (data.latency_ms) update.lastLatencyMs = data.latency_ms;
+				}
+				return update;
+			});
+		},
+		[boardId, fetchImages, addLog],
+	);
 
-					return update;
-				});
-			} catch (e) {
-				console.error("MQTT parse err", e);
-			}
-		});
+	const topics = [
+		`device/${boardId}/status`,
+		"device/stm32/status",
+		"dashboard/images/new",
+		"dashboard/analysis/new",
+		"dashboard/logs",
+	];
+	const { connectionStatus } = useMQTT(topics, handleMessage);
 
-		client.on("close", () => setGlobalStatus("disconnected"));
-		client.on("error", () => setGlobalStatus("error"));
-
-		// Online checker interval
+	// Offline detection
+	useEffect(() => {
 		const interval = setInterval(() => {
 			setBoard((prev) => {
-				const now = Date.now();
-				if (prev.isOnline && prev.lastSeen && now - prev.lastSeen > 15000) {
+				if (
+					prev.isOnline &&
+					prev.lastSeen &&
+					Date.now() - prev.lastSeen > 15000
+				) {
 					return { ...prev, isOnline: false };
 				}
 				return prev;
 			});
 		}, 5000);
+		return () => clearInterval(interval);
+	}, []);
 
-		return () => {
-			client.end();
-			clearInterval(interval);
-		};
-	}, [mqttUrl, boardId, fetchImages]);
+	// Actions
+	const capturePicture = async () => {
+		try {
+			await fetch(`${apiBase}/api/capture`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ board_id: boardId }),
+			});
+			addLog("info", "Capture triggered");
+		} catch (err) {
+			addLog("error", `Capture failed: ${err}`);
+		}
+	};
 
 	const pingBoard = async () => {
 		try {
@@ -237,24 +225,16 @@ export default function BoardPage({
 				method: "POST",
 				body: JSON.stringify({ board_id: boardId }),
 			});
-			const logEntry = {
-				time: new Date().toLocaleTimeString(),
-				level: "info",
-				text: `📡 Ping command sent to node ${boardId}`,
-			};
-			setBoard((prev) => ({
-				...prev,
-				logs: [logEntry, ...prev.logs].slice(0, 500),
-			}));
+			addLog("info", "Ping sent");
 		} catch (err) {
-			console.error("Ping failed:", err);
+			addLog("error", `Ping failed: ${err}`);
 		}
 	};
 
 	const triggerSetupMode = async () => {
 		if (
 			!confirm(
-				"This will permanently erase the board's WiFi credentials and force it into setup mode. The device will reboot and broadcast its 'IoT-Setup' network. Are you sure?",
+				"This will erase WiFi credentials and reboot the board into setup mode. Continue?",
 			)
 		)
 			return;
@@ -263,43 +243,14 @@ export default function BoardPage({
 				method: "POST",
 				body: JSON.stringify({ board_id: boardId }),
 			});
-			const logEntry = {
-				time: new Date().toLocaleTimeString(),
-				level: "warning",
-				text: `⚠️ Setup mode triggered for node ${boardId} (WiFi erased)`,
-			};
-			setBoard((prev) => ({
-				...prev,
-				logs: [logEntry, ...prev.logs].slice(0, 500),
-			}));
+			addLog("warning", "Setup mode triggered (WiFi erased)");
 		} catch (err) {
-			console.error("Trigger setup failed:", err);
+			addLog("error", `Setup mode failed: ${err}`);
 		}
 	};
 
-	const capturePicture = async () => {
-		try {
-			await fetch(`${apiBase}/api/capture`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ board_id: boardId }),
-			});
-			const logEntry = {
-				time: new Date().toLocaleTimeString(),
-				level: "info",
-				text: `📸 Capture triggered for node ${boardId}`,
-			};
-			setBoard((prev) => ({
-				...prev,
-				logs: [logEntry, ...prev.logs].slice(0, 500),
-			}));
-		} catch (err) {
-			console.error("Capture failed:", err);
-		}
-	};
-
-	const deleteImage = async (img: any) => {
-		if (!confirm("Are you sure you want to delete this capture?")) return;
+	const deleteImage = async (img: ImageCapture) => {
+		if (!confirm("Delete this capture permanently?")) return;
 		try {
 			await fetch(`${apiBase}/api/images/${img.date}/${img.filename}`, {
 				method: "DELETE",
@@ -307,51 +258,68 @@ export default function BoardPage({
 			setImages((prev) => prev.filter((i) => i.filename !== img.filename));
 			setSelectedImage(null);
 		} catch (err) {
-			console.error("Delete failed:", err);
+			addLog("error", `Delete failed: ${err}`);
 		}
 	};
 
-	const clearLogs = () => {
-		setBoard((prev) => ({ ...prev, logs: [] }));
-	};
-
-	const getStatusClass = (status: string) => {
-		if (status.includes("error") || status.includes("failed"))
-			return "status-error";
-		if (status.includes("captur") || status.includes("upload"))
-			return "status-active";
-		if (status.includes("ota") || status.includes("ping")) return "status-ota";
-		return "status-idle";
-	};
+	// Filter images
+	let filteredImages = images;
+	if (filterDate !== "all")
+		filteredImages = filteredImages.filter((img) => img.date === filterDate);
+	if (searchTaskId.trim())
+		filteredImages = filteredImages.filter(
+			(img) => String(img.taskId) === searchTaskId.trim(),
+		);
+	filteredImages = [...filteredImages].sort((a, b) =>
+		sortOrder === "newest"
+			? b.timestamp - a.timestamp
+			: a.timestamp - b.timestamp,
+	);
 
 	return (
 		<div className="app-container split-layout">
+			{/* Header */}
 			<header className="header full-width">
 				<div className="header-title-container">
-					<button onClick={() => router.push("/")} className="btn-back">
-						← Back
-					</button>
+					<Link href="/" className="btn-back">
+						&larr; Fleet
+					</Link>
 					<div>
-						<h1 className="header-title">{board.name}</h1>
-						<div className="header-subtitle">Node: {boardId}</div>
+						<h1 className="header-title">STM32 B-U585I-IOT02A</h1>
+						<div className="header-subtitle">{boardId}</div>
 					</div>
 				</div>
 				<div className="connection-badge">
 					<div
-						className={`connection-dot ${globalStatus === "connected" ? "connected" : "disconnected"}`}
+						className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
 					/>
-					{globalStatus === "connected"
-						? "Broker Connected"
-						: "Broker Disconnected"}
+					{connectionStatus === "connected" ? "MQTT Connected" : "Disconnected"}
 				</div>
 			</header>
 
+			{/* Sidebar */}
 			<aside className="sidebar">
-				<div className="board-card glass-panel no-hover">
+				<div className="board-card">
+					{/* Telemetry */}
 					<div className="board-header">
 						<div className="board-name-group">
-							<div className="board-icon">⚡</div>
-							<span style={{ fontWeight: 600 }}>Telemetry</span>
+							<div className="board-icon">
+								<svg
+									width="16"
+									height="16"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									strokeWidth="2"
+									style={{ color: "var(--accent)" }}
+									aria-hidden="true"
+								>
+									<path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+								</svg>
+							</div>
+							<span style={{ fontWeight: 600, fontSize: "0.9rem" }}>
+								Telemetry
+							</span>
 						</div>
 						<div
 							className={`status-indicator ${board.isOnline ? "online" : "offline"}`}
@@ -361,66 +329,69 @@ export default function BoardPage({
 						</div>
 					</div>
 
-					<div className="telemetry-box mt-4">
+					<div className="telemetry-box">
 						<div className="telemetry-row">
-							<span>Current State:</span>
+							<span>State</span>
 							<span className={`telemetry-val ${getStatusClass(board.status)}`}>
 								{board.status}
 							</span>
 						</div>
 						<div className="telemetry-row">
-							<span>Firmware:</span>
-							<span className="telemetry-val">{board.firmware || "—"}</span>
+							<span>Firmware</span>
+							<span className="telemetry-val">
+								{board.firmware ? `v${board.firmware}` : "\u2014"}
+							</span>
 						</div>
 						<div className="telemetry-row">
-							<span>Total Captures:</span>
+							<span>Captures</span>
 							<span className="telemetry-val highlight">{board.captures}</span>
 						</div>
 						<div className="telemetry-row">
-							<span>Last Payload:</span>
+							<span>Payload</span>
 							<span className="telemetry-val">
 								{board.lastImageSize
 									? `${(board.lastImageSize / 1024).toFixed(1)} KB`
-									: "—"}
+									: "\u2014"}
 							</span>
 						</div>
 					</div>
 
+					{/* Actions */}
 					<div className="board-actions column-actions">
 						<button
 							className="btn btn-primary"
 							onClick={capturePicture}
 							disabled={!board.isOnline}
 						>
-							📸 Capture Picture
+							Capture Picture
 						</button>
 						<button
-							className="btn"
+							className="btn btn-secondary"
 							onClick={pingBoard}
 							disabled={!board.isOnline}
 						>
-							📡 Ping Node
+							Ping Node
 						</button>
 						<button
 							className="btn btn-danger"
 							onClick={triggerSetupMode}
 							disabled={!board.isOnline}
-							style={{
-								backgroundColor: "#ff5555",
-								borderColor: "#ff3333",
-								color: "white",
-							}}
 						>
-							⚠️ Setup Mode
+							Setup Mode
 						</button>
 					</div>
 
+					{/* Agent Chat */}
 					<AgentChat boardId={boardId} apiBase={apiBase} />
 
+					{/* Console */}
 					<div className="terminal-window">
 						<div className="terminal-header">
-							<span>Board Console</span>
-							<button className="btn-text" onClick={clearLogs}>
+							<span>Console</span>
+							<button
+								className="btn-text"
+								onClick={() => setBoard((prev) => ({ ...prev, logs: [] }))}
+							>
 								Clear
 							</button>
 						</div>
@@ -438,6 +409,7 @@ export default function BoardPage({
 				</div>
 			</aside>
 
+			{/* Main Content */}
 			<main className="main-content">
 				<section className="images-section">
 					<div className="gallery-header">
@@ -481,11 +453,11 @@ export default function BoardPage({
 								</select>
 							</div>
 							<div className="filter-group">
-								<label className="filter-label" htmlFor="filter-taskId">
+								<label className="filter-label" htmlFor="filter-task">
 									Task ID
 								</label>
 								<input
-									id="filter-taskId"
+									id="filter-task"
 									type="text"
 									className="filter-input"
 									placeholder="e.g. 5"
@@ -495,29 +467,16 @@ export default function BoardPage({
 							</div>
 						</div>
 					</div>
+
 					<div className="gallery-grid">
-						{(() => {
-							let filtered = images;
-							if (filterDate !== "all")
-								filtered = filtered.filter((img) => img.date === filterDate);
-							if (searchTaskId.trim())
-								filtered = filtered.filter(
-									(img) => String(img.taskId) === searchTaskId.trim(),
-								);
-							filtered = [...filtered].sort((a, b) =>
-								sortOrder === "newest"
-									? b.timestamp - a.timestamp
-									: a.timestamp - b.timestamp,
-							);
-							if (filtered.length === 0)
-								return (
-									<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
-										{images.length === 0
-											? "No captures received yet."
-											: "No captures match the current filters."}
-									</div>
-								);
-							return filtered.map((img) => (
+						{filteredImages.length === 0 ? (
+							<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
+								{images.length === 0
+									? "No captures received yet."
+									: "No captures match the current filters."}
+							</div>
+						) : (
+							filteredImages.map((img) => (
 								<div
 									key={img.filename}
 									className="image-card"
@@ -553,18 +512,18 @@ export default function BoardPage({
 											e.stopPropagation();
 											deleteImage(img);
 										}}
-										title="Delete Image"
+										title="Delete"
 									>
-										🗑️
+										&times;
 									</button>
 								</div>
-							));
-						})()}
+							))
+						)}
 					</div>
 				</section>
 			</main>
 
-			{/* Zoom Lightbox Overlay */}
+			{/* Lightbox */}
 			{selectedImage && (
 				<div
 					className="lightbox-overlay"
@@ -578,11 +537,11 @@ export default function BoardPage({
 							className="lightbox-close"
 							onClick={() => setSelectedImage(null)}
 						>
-							✕
+							&times;
 						</button>
 						<img
 							src={selectedImage.url}
-							alt="Full Size Export"
+							alt="Full size capture"
 							className="lightbox-image"
 						/>
 						<div className="lightbox-footer">
@@ -598,13 +557,13 @@ export default function BoardPage({
 									download
 									className="btn btn-secondary"
 								>
-									Download HD
+									Download
 								</a>
 								<button
 									className="btn btn-danger"
 									onClick={() => deleteImage(selectedImage)}
 								>
-									Delete Permanently
+									Delete
 								</button>
 							</div>
 						</div>
@@ -644,4 +603,13 @@ export default function BoardPage({
 			)}
 		</div>
 	);
+}
+
+function getStatusClass(status: string): string {
+	if (status.includes("error") || status.includes("failed"))
+		return "status-error";
+	if (status.includes("captur") || status.includes("upload"))
+		return "status-active";
+	if (status.includes("ota") || status.includes("ping")) return "status-ota";
+	return "status-idle";
 }
