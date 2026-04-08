@@ -277,9 +277,9 @@ jobs:
             mkdir -p ~/.docker
             echo "$GHCR_TOKEN" | docker login ghcr.io -u github --password-stdin
 
-            # Pull latest images and restart
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+            # Pull latest images and force-recreate containers
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull --quiet
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate --remove-orphans
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
