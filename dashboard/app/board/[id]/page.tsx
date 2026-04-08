@@ -405,6 +405,23 @@ export default function BoardPage({
 		}
 	};
 
+	const handleSetup = async () => {
+		setActionLoading("setup");
+		addLog("warning", "CMD", "Entering WiFi setup mode...");
+		try {
+			await fetch(`${apiBase}/api/erase-wifi`, { method: "POST" });
+			addLog(
+				"success",
+				"CMD",
+				"Setup mode activated — board starting AP at 192.168.10.1",
+			);
+		} catch (err) {
+			addLog("error", "CMD", `Setup mode failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
 	const handleRefresh = () => {
 		addLog("info", "CMD", "Refreshing images & schedules...");
 		fetchImages();
@@ -438,6 +455,13 @@ export default function BoardPage({
 						disabled={actionLoading !== null}
 					>
 						{actionLoading === "ping" ? "Sending..." : "Ping"}
+					</button>
+					<button
+						className="btn-action"
+						onClick={handleSetup}
+						disabled={actionLoading !== null}
+					>
+						{actionLoading === "setup" ? "Sending..." : "Setup"}
 					</button>
 					<button className="btn-action" onClick={handleRefresh}>
 						Refresh

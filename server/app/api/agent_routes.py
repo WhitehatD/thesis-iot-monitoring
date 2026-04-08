@@ -679,7 +679,7 @@ async def _tool_deactivate_schedule(inp: dict) -> dict:
             name = schedule.name
 
     # Tell board to clear its schedule
-    command = json.dumps({"type": "clear_schedule"})
+    command = json.dumps({"type": "delete_schedule"})
     mqtt_client.publish(settings.mqtt_topic_commands, command)
 
     await notify_schedule_update()

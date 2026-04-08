@@ -88,7 +88,7 @@ async def activate_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)
 async def deactivate_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
     """Deactivate a schedule and tell the board to clear it."""
     await service.deactivate_schedule(db, schedule_id)
-    payload = json.dumps({"type": "clear_schedule"})
+    payload = json.dumps({"type": "delete_schedule"})
     await mqtt_client.publish(settings.mqtt_topic_commands, payload)
     await notify_schedule_update()
     return {"status": "deactivated", "schedule_id": schedule_id}
