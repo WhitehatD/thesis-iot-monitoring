@@ -118,28 +118,55 @@ static void _wait_aec_converge(void)
     uint8_t  avg_lum;
     int32_t  ret;
 
-    /* Target band from our register writes: stable-in low=0x68, high=0x78 */
-    const uint8_t AEC_TARGET_LOW  = 0x50;  /* Allow some tolerance below target */
-    const uint8_t AEC_TARGET_HIGH = 0x90;  /* Allow some tolerance above target */
+    const uint8_t AEC_TARGET_LOW  = 0x50;
+    const uint8_t AEC_TARGET_HIGH = 0x90;
+
+    /* Stability detection: if luminance stops changing, AEC has done
+     * all it can — no point waiting further (handles very dark scenes). */
+    uint8_t  prev_lum = 0xFF;
+    uint8_t  stable_count = 0;
+    const uint8_t STABLE_THRESHOLD = 6;  /* 6 × 50ms = 300ms stable → done */
 
     LOG_DEBUG(TAG_CAM, "Waiting for AEC convergence (timeout=%dms)...",
               CAMERA_AEC_SETTLE_TIMEOUT_MS);
 
     while ((HAL_GetTick() - start) < (uint32_t)CAMERA_AEC_SETTLE_TIMEOUT_MS)
     {
-        /* 0x56A1 = AEC average luminance (ro, updated each frame) */
         ret = BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, 0x56A1, &avg_lum, 1);
-        if (ret == 0 && avg_lum >= AEC_TARGET_LOW && avg_lum <= AEC_TARGET_HIGH)
+        if (ret != 0)
+        {
+            HAL_Delay(50);
+            continue;
+        }
+
+        /* In target range — converged */
+        if (avg_lum >= AEC_TARGET_LOW && avg_lum <= AEC_TARGET_HIGH)
         {
             LOG_INFO(TAG_CAM, "AEC converged in %lums (lum=0x%02X)",
                      (unsigned long)(HAL_GetTick() - start), avg_lum);
             return;
         }
 
-        HAL_Delay(20);  /* Fast poll every 20ms for extreme responsiveness */
+        /* Stability check: AEC saturated (dark/bright scene) */
+        if (avg_lum == prev_lum || (avg_lum > 0 && avg_lum <= prev_lum + 1 && avg_lum + 1 >= prev_lum))
+        {
+            stable_count++;
+            if (stable_count >= STABLE_THRESHOLD)
+            {
+                LOG_INFO(TAG_CAM, "AEC stable in %lums (lum=0x%02X — scene limit)",
+                         (unsigned long)(HAL_GetTick() - start), avg_lum);
+                return;
+            }
+        }
+        else
+        {
+            stable_count = 0;
+        }
+        prev_lum = avg_lum;
+
+        HAL_Delay(50);
     }
 
-    /* Read final value for diagnostics */
     BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, 0x56A1, &avg_lum, 1);
     LOG_WARN(TAG_CAM, "AEC timeout after %dms (lum=0x%02X — proceeding anyway)",
              CAMERA_AEC_SETTLE_TIMEOUT_MS, avg_lum);
