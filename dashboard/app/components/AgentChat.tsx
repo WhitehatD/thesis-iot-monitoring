@@ -19,6 +19,7 @@ interface Message {
 interface AgentChatProps {
 	boardId: string;
 	apiBase: string;
+	fullSize?: boolean;
 }
 
 const QUICK_ACTIONS = [
@@ -28,7 +29,11 @@ const QUICK_ACTIONS = [
 	"Board status?",
 ];
 
-export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
+export default function AgentChat({
+	boardId,
+	apiBase,
+	fullSize,
+}: AgentChatProps) {
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [input, setInput] = useState("");
 	const [isStreaming, setIsStreaming] = useState(false);
@@ -163,7 +168,7 @@ export default function AgentChat({ boardId, apiBase }: AgentChatProps) {
 	};
 
 	return (
-		<div className="agent-chat">
+		<div className={`agent-chat ${fullSize ? "agent-chat-full" : ""}`}>
 			<div className="agent-header">
 				<div className="agent-icon">
 					<svg

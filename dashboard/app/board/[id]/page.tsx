@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useRef, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
 import AgentChat from "../../components/AgentChat";
 import { useMQTT } from "../../hooks/useMQTT";
 
@@ -62,9 +62,7 @@ export default function BoardPage({
 	});
 	const [images, setImages] = useState<ImageCapture[]>([]);
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
-	const [filterDate, setFilterDate] = useState("all");
-	const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
-	const [searchTaskId, setSearchTaskId] = useState("");
+	const [activeTab, setActiveTab] = useState<"gallery" | "console">("gallery");
 
 	const addLog = useCallback((level: string, text: string) => {
 		const entry: LogEntry = {
@@ -78,7 +76,6 @@ export default function BoardPage({
 		}));
 	}, []);
 
-	// Fetch images from API
 	const fetchImages = useCallback(() => {
 		fetch(`${apiBase}/api/images?board_id=${boardId}`)
 			.then((res) => res.json())
@@ -103,14 +100,12 @@ export default function BoardPage({
 		fetchImages();
 	}, [fetchImages]);
 
-	// MQTT message handler
 	const handleMessage = useCallback(
 		(topic: string, data: Record<string, any>, sourceBoardId: string) => {
 			if (topic === "dashboard/images/new") {
 				fetchImages();
 				return;
 			}
-
 			if (topic === "dashboard/analysis/new") {
 				setImages((prev) =>
 					prev.map((img) =>
@@ -132,11 +127,10 @@ export default function BoardPage({
 				);
 				addLog(
 					"info",
-					`AI analysis complete for task #${data.task_id}: ${data.objective_met ? "Objective MET" : "Objective NOT met"}`,
+					`AI analysis: task #${data.task_id} — ${data.objective_met ? "MET" : "NOT MET"}`,
 				);
 				return;
 			}
-
 			if (topic === "dashboard/logs") {
 				const logTime = data.timestamp
 					? new Date(data.timestamp * 1000).toLocaleTimeString()
@@ -150,10 +144,7 @@ export default function BoardPage({
 				}));
 				return;
 			}
-
-			// Board-specific telemetry
 			if (sourceBoardId !== boardId) return;
-
 			setBoard((prev) => {
 				const update = { ...prev, isOnline: true, lastSeen: Date.now() };
 				if (data.firmware) update.firmware = data.firmware;
@@ -188,7 +179,6 @@ export default function BoardPage({
 	];
 	const { connectionStatus } = useMQTT(topics, handleMessage);
 
-	// Offline detection
 	useEffect(() => {
 		const interval = setInterval(() => {
 			setBoard((prev) => {
@@ -205,50 +195,6 @@ export default function BoardPage({
 		return () => clearInterval(interval);
 	}, []);
 
-	// Actions
-	const capturePicture = async () => {
-		try {
-			await fetch(`${apiBase}/api/capture`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ board_id: boardId }),
-			});
-			addLog("info", "Capture triggered");
-		} catch (err) {
-			addLog("error", `Capture failed: ${err}`);
-		}
-	};
-
-	const pingBoard = async () => {
-		try {
-			await fetch(`${apiBase}/api/ping`, {
-				method: "POST",
-				body: JSON.stringify({ board_id: boardId }),
-			});
-			addLog("info", "Ping sent");
-		} catch (err) {
-			addLog("error", `Ping failed: ${err}`);
-		}
-	};
-
-	const triggerSetupMode = async () => {
-		if (
-			!confirm(
-				"This will erase WiFi credentials and reboot the board into setup mode. Continue?",
-			)
-		)
-			return;
-		try {
-			await fetch(`${apiBase}/api/erase-wifi`, {
-				method: "POST",
-				body: JSON.stringify({ board_id: boardId }),
-			});
-			addLog("warning", "Setup mode triggered (WiFi erased)");
-		} catch (err) {
-			addLog("error", `Setup mode failed: ${err}`);
-		}
-	};
-
 	const deleteImage = async (img: ImageCapture) => {
 		if (!confirm("Delete this capture permanently?")) return;
 		try {
@@ -262,65 +208,23 @@ export default function BoardPage({
 		}
 	};
 
-	// Filter images
-	let filteredImages = images;
-	if (filterDate !== "all")
-		filteredImages = filteredImages.filter((img) => img.date === filterDate);
-	if (searchTaskId.trim())
-		filteredImages = filteredImages.filter(
-			(img) => String(img.taskId) === searchTaskId.trim(),
-		);
-	filteredImages = [...filteredImages].sort((a, b) =>
-		sortOrder === "newest"
-			? b.timestamp - a.timestamp
-			: a.timestamp - b.timestamp,
-	);
+	const sortedImages = [...images].sort((a, b) => b.timestamp - a.timestamp);
 
 	return (
-		<div className="app-container split-layout">
-			{/* Header */}
-			<header className="header full-width">
-				<div className="header-title-container">
+		<div className="app-container agent-layout">
+			{/* Header with inline telemetry */}
+			<header className="agent-header-bar">
+				<div className="agent-header-left">
 					<Link href="/" className="btn-back">
-						&larr; Fleet
+						&larr;
 					</Link>
-					<div>
-						<h1 className="header-title">STM32 B-U585I-IOT02A</h1>
-						<div className="header-subtitle">{boardId}</div>
+					<div className="agent-header-info">
+						<h1 className="agent-header-title">Monitoring Agent</h1>
+						<span className="agent-header-node">{boardId}</span>
 					</div>
 				</div>
-				<div className="connection-badge">
-					<div
-						className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
-					/>
-					{connectionStatus === "connected" ? "MQTT Connected" : "Disconnected"}
-				</div>
-			</header>
-
-			{/* Sidebar */}
-			<aside className="sidebar">
-				<div className="board-card">
-					{/* Telemetry */}
-					<div className="board-header">
-						<div className="board-name-group">
-							<div className="board-icon">
-								<svg
-									width="16"
-									height="16"
-									viewBox="0 0 24 24"
-									fill="none"
-									stroke="currentColor"
-									strokeWidth="2"
-									style={{ color: "var(--accent)" }}
-									aria-hidden="true"
-								>
-									<path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-								</svg>
-							</div>
-							<span style={{ fontWeight: 600, fontSize: "0.9rem" }}>
-								Telemetry
-							</span>
-						</div>
+				<div className="agent-header-stats">
+					<div className="header-stat">
 						<div
 							className={`status-indicator ${board.isOnline ? "online" : "offline"}`}
 						>
@@ -328,200 +232,130 @@ export default function BoardPage({
 							{board.isOnline ? "Online" : "Offline"}
 						</div>
 					</div>
-
-					<div className="telemetry-box">
-						<div className="telemetry-row">
-							<span>State</span>
-							<span className={`telemetry-val ${getStatusClass(board.status)}`}>
-								{board.status}
-							</span>
-						</div>
-						<div className="telemetry-row">
-							<span>Firmware</span>
-							<span className="telemetry-val">
-								{board.firmware ? `v${board.firmware}` : "\u2014"}
-							</span>
-						</div>
-						<div className="telemetry-row">
-							<span>Captures</span>
-							<span className="telemetry-val highlight">{board.captures}</span>
-						</div>
-						<div className="telemetry-row">
-							<span>Payload</span>
-							<span className="telemetry-val">
-								{board.lastImageSize
-									? `${(board.lastImageSize / 1024).toFixed(1)} KB`
-									: "\u2014"}
-							</span>
-						</div>
+					<div className="header-stat">
+						<span className="header-stat-label">FW</span>
+						<span className="header-stat-value">
+							{board.firmware ? `v${board.firmware}` : "\u2014"}
+						</span>
 					</div>
-
-					{/* Actions */}
-					<div className="board-actions column-actions">
-						<button
-							className="btn btn-primary"
-							onClick={capturePicture}
-							disabled={!board.isOnline}
-						>
-							Capture Picture
-						</button>
-						<button
-							className="btn btn-secondary"
-							onClick={pingBoard}
-							disabled={!board.isOnline}
-						>
-							Ping Node
-						</button>
-						<button
-							className="btn btn-danger"
-							onClick={triggerSetupMode}
-							disabled={!board.isOnline}
-						>
-							Setup Mode
-						</button>
+					<div className="header-stat">
+						<span className="header-stat-label">Captures</span>
+						<span className="header-stat-value highlight">
+							{board.captures}
+						</span>
 					</div>
-
-					{/* Agent Chat */}
-					<AgentChat boardId={boardId} apiBase={apiBase} />
-
-					{/* Console */}
-					<div className="terminal-window">
-						<div className="terminal-header">
-							<span>Console</span>
-							<button
-								className="btn-text"
-								onClick={() => setBoard((prev) => ({ ...prev, logs: [] }))}
-							>
-								Clear
-							</button>
-						</div>
-						{board.logs.length === 0 ? (
-							<div className="terminal-empty">No telemetry received yet...</div>
-						) : (
-							board.logs.map((log, idx) => (
-								<div key={idx} className={`log-line log-${log.level}`}>
-									<span className="log-time">[{log.time}]</span>
-									{log.text}
-								</div>
-							))
-						)}
+					<div className="header-stat">
+						<span className="header-stat-label">State</span>
+						<span
+							className={`header-stat-value ${getStatusClass(board.status)}`}
+						>
+							{board.status}
+						</span>
+					</div>
+					<div className="connection-badge">
+						<div
+							className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
+						/>
+						MQTT
 					</div>
 				</div>
-			</aside>
+			</header>
 
-			{/* Main Content */}
-			<main className="main-content">
-				<section className="images-section">
-					<div className="gallery-header">
-						<h2>Capture History</h2>
-						<div className="filter-controls">
-							<div className="filter-group">
-								<label className="filter-label" htmlFor="filter-date">
-									Date
-								</label>
-								<select
-									id="filter-date"
-									className="filter-select"
-									value={filterDate}
-									onChange={(e) => setFilterDate(e.target.value)}
-								>
-									<option value="all">All Dates</option>
-									{[...new Set(images.map((img) => img.date))]
-										.sort()
-										.reverse()
-										.map((date) => (
-											<option key={date} value={date}>
-												{date}
-											</option>
-										))}
-								</select>
-							</div>
-							<div className="filter-group">
-								<label className="filter-label" htmlFor="filter-sort">
-									Sort
-								</label>
-								<select
-									id="filter-sort"
-									className="filter-select"
-									value={sortOrder}
-									onChange={(e) =>
-										setSortOrder(e.target.value as "newest" | "oldest")
-									}
-								>
-									<option value="newest">Newest First</option>
-									<option value="oldest">Oldest First</option>
-								</select>
-							</div>
-							<div className="filter-group">
-								<label className="filter-label" htmlFor="filter-task">
-									Task ID
-								</label>
-								<input
-									id="filter-task"
-									type="text"
-									className="filter-input"
-									placeholder="e.g. 5"
-									value={searchTaskId}
-									onChange={(e) => setSearchTaskId(e.target.value)}
-								/>
-							</div>
+			{/* Agent Chat — hero element */}
+			<main className="agent-main">
+				<AgentChat boardId={boardId} apiBase={apiBase} fullSize />
+			</main>
+
+			{/* Right panel: Gallery + Console */}
+			<aside className="agent-sidebar">
+				<div className="panel-tabs">
+					<button
+						className={`panel-tab ${activeTab === "gallery" ? "active" : ""}`}
+						onClick={() => setActiveTab("gallery")}
+					>
+						Gallery
+						{images.length > 0 && (
+							<span className="tab-count">{images.length}</span>
+						)}
+					</button>
+					<button
+						className={`panel-tab ${activeTab === "console" ? "active" : ""}`}
+						onClick={() => setActiveTab("console")}
+					>
+						Console
+						{board.logs.length > 0 && (
+							<span className="tab-count">{board.logs.length}</span>
+						)}
+					</button>
+				</div>
+
+				{activeTab === "gallery" && (
+					<div className="panel-content">
+						<div className="sidebar-gallery">
+							{sortedImages.length === 0 ? (
+								<div className="empty-state-sm">
+									No captures yet. Ask the agent to take a picture.
+								</div>
+							) : (
+								sortedImages.map((img) => (
+									<div
+										key={img.filename}
+										className="sidebar-image-card"
+										onClick={() => setSelectedImage(img)}
+									>
+										{img.analysis && (
+											<div
+												className={`analysis-indicator ${img.analysis.objectiveMet ? "met" : "unmet"}`}
+											/>
+										)}
+										<div className="sidebar-image-wrapper">
+											<img
+												src={img.url}
+												alt={`Task ${img.taskId}`}
+												loading="lazy"
+											/>
+										</div>
+										<div className="sidebar-image-meta">
+											<span>#{img.taskId}</span>
+											<span className="image-time">
+												{new Date(img.timestamp * 1000).toLocaleTimeString()}
+											</span>
+										</div>
+									</div>
+								))
+							)}
 						</div>
 					</div>
+				)}
 
-					<div className="gallery-grid">
-						{filteredImages.length === 0 ? (
-							<div className="empty-state" style={{ gridColumn: "1 / -1" }}>
-								{images.length === 0
-									? "No captures received yet."
-									: "No captures match the current filters."}
-							</div>
-						) : (
-							filteredImages.map((img) => (
-								<div
-									key={img.filename}
-									className="image-card"
-									onClick={() => setSelectedImage(img)}
+				{activeTab === "console" && (
+					<div className="panel-content">
+						<div className="terminal-window compact">
+							<div className="terminal-header">
+								<span>Board Console</span>
+								<button
+									className="btn-text"
+									onClick={() => setBoard((prev) => ({ ...prev, logs: [] }))}
 								>
-									{img.isNew && <div className="badge-new">NEW</div>}
-									{img.analysis && (
-										<div
-											className={`analysis-indicator ${img.analysis.objectiveMet ? "met" : "unmet"}`}
-											title={
-												img.analysis.objectiveMet
-													? "Objective met"
-													: "Objective not met"
-											}
-										/>
-									)}
-									<div className="image-wrapper">
-										<img
-											src={img.url}
-											alt={`Capture ${img.taskId}`}
-											loading="lazy"
-										/>
-									</div>
-									<div className="image-meta">
-										<span>Task #{img.taskId}</span>
-										<span className="image-time">
-											{new Date(img.timestamp * 1000).toLocaleTimeString()}
-										</span>
-									</div>
-									<button
-										className="btn-delete"
-										onClick={(e) => {
-											e.stopPropagation();
-											deleteImage(img);
-										}}
-										title="Delete"
-									>
-										&times;
-									</button>
+									Clear
+								</button>
+							</div>
+							{board.logs.length === 0 ? (
+								<div className="terminal-empty">
+									No telemetry received yet...
 								</div>
-							))
-						)}
+							) : (
+								board.logs.map((log, idx) => (
+									<div key={idx} className={`log-line log-${log.level}`}>
+										<span className="log-time">[{log.time}]</span>
+										{log.text}
+									</div>
+								))
+							)}
+						</div>
 					</div>
-				</section>
-			</main>
+				)}
+			</aside>
 
 			{/* Lightbox */}
 			{selectedImage && (
