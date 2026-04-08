@@ -1763,6 +1763,52 @@ body {
 	background: var(--accent-glow);
 }
 
+/* ── Header Action Buttons ── */
+.agent-header-actions {
+	display: flex;
+	gap: 6px;
+}
+
+.btn-action {
+	font-family: var(--font-sans);
+	font-size: 0.72rem;
+	font-weight: 600;
+	padding: 5px 14px;
+	border-radius: var(--radius-xl);
+	border: 1px solid var(--border);
+	background: var(--bg-surface);
+	color: var(--text-secondary);
+	cursor: pointer;
+	transition: all var(--transition-fast);
+}
+
+.btn-action:hover:not(:disabled) {
+	background: var(--bg-surface-hover);
+	border-color: var(--border-hover);
+	color: var(--text-primary);
+}
+
+.btn-action:active:not(:disabled) {
+	transform: scale(0.96);
+}
+
+.btn-action:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+}
+
+.btn-action.accent {
+	background: var(--accent-glow);
+	border-color: var(--border-accent);
+	color: var(--accent-hover);
+}
+
+.btn-action.accent:hover:not(:disabled) {
+	background: rgba(59, 130, 246, 0.2);
+	border-color: rgba(59, 130, 246, 0.4);
+	box-shadow: var(--shadow-glow);
+}
+
 /* ── Agent Main (Chat) ── */
 .agent-main {
 	grid-area: main;

@@ -56,6 +56,8 @@ async def on_message(client, topic, payload, qos, properties):
                     )
                     await db.commit()
                     print(f"[OK] Auto-deactivated schedule: {active[0].name}")
+                    from app.scheduler.notify import notify_schedule_update
+                    await notify_schedule_update()
         except Exception as e:
             print(f"[WARN] Failed to deactivate schedule: {e}")
 

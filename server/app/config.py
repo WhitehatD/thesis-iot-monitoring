@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     mqtt_topic_status: str = "device/stm32/status"
     mqtt_topic_dashboard_images: str = "dashboard/images/new"
     mqtt_topic_dashboard_analysis: str = "dashboard/analysis/new"
+    mqtt_topic_dashboard_schedules: str = "dashboard/schedules/updated"
 
     # ── Database ────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./data/thesis.db"

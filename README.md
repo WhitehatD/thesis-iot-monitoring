@@ -124,6 +124,102 @@ graph TD
 
 ---
 
+## The Agentic Loop — How It Works
+
+The dashboard's chat interface is backed by a full agentic loop: a user message triggers LLM reasoning, tool execution against real hardware, and streaming feedback — all in a single request/response cycle.
+
+### 1. Entry Point: User Message
+
+The user types a natural language message in the chat (e.g., *"Monitor the hallway every 5 minutes for an hour"*). The frontend sends this to `POST /api/agent/chat`, which returns a Server-Sent Events (SSE) stream. The frontend renders each event as it arrives — thinking indicators, tool execution spinners, results, and final replies — giving the user real-time visibility into what the agent is doing.
+
+### 2. LLM Tool Dispatch
+
+The server loads the conversation history from the database, appends the new message, and calls **Claude Haiku** with `tool_use` enabled. The system prompt defines the agent's personality (action-first, bias toward capturing fresh data) and routing rules that map user intents to specific tools.
+
+Claude's response contains a mix of text blocks and `tool_use` blocks. Each `tool_use` block specifies which tool to call and with what parameters. The server processes these sequentially:
+
+```
+User: "Monitor for 30 seconds"
+  → Claude decides: capture_sequence(count=4, interval_ms=7500)
+  → Server executes the tool
+  → Server streams progress events back
+```
+
+When no API key is configured, a **rule-based fallback dispatcher** maps keywords to tools directly — ensuring the system works without any LLM.
+
+### 3. The Agent's 9 Tools
+
+| Tool | Trigger Examples | What It Does |
+|------|-----------------|--------------|
+| `capture_now` | *"take a picture"*, *"what do you see"* | Sends `capture_now` MQTT command → board captures + uploads → server converts RGB565 → JPEG → multimodal LLM analyzes → findings streamed back |
+| `capture_sequence` | *"monitor for 30 seconds"*, *"burst of 5 shots"* | Creates a schedule in DB, sends `capture_sequence` with ms-precision delays to board, tracks per-image completion in real time |
+| `create_schedule` | *"monitor every 10 min for 2 hours"* | AI planner generates HH:MM task list → saved to DB → activated → MQTT command to board sets RTC alarms |
+| `deactivate_schedule` | *"stop monitoring"*, *"cancel"* | Deactivates the active schedule in DB → sends `clear_schedule` to board → dashboard updates in real time |
+| `ping_board` | *"ping"*, *"is it alive"* | Sends `ping` MQTT command → board flashes LEDs in a pattern to confirm it's responsive |
+| `start_portal` | *"setup mode"*, *"reconfigure wifi"* | Sends `start_portal` → board starts WiFi AP at 192.168.10.1 for credential reconfiguration |
+| `analyze_latest` | *"show last analysis"* | Fetches the most recent AI analysis result from the database |
+| `get_board_status` | *"status"*, *"uptime"* | Queries DB for analysis count, latest result, and board telemetry |
+| `synthesize_schedule` | *"summarize findings"*, *"what did you learn"* | Reads all recent analyses, feeds them to Claude for cross-observation pattern synthesis |
+
+### 4. SSE Streaming Protocol
+
+Each agent response is an SSE stream with typed events. The frontend renders these progressively:
+
+```
+data: {"event":"thinking","text":"Processing: \"take a picture\""}
+data: {"event":"tool_call","id":"capture","label":"Sending capture command..."}
+data: {"event":"tool_result","id":"capture","success":true,"summary":"Capture sent (task #42)"}
+data: {"event":"tool_call","id":"upload","label":"Waiting for image..."}
+data: {"event":"tool_result","id":"upload","success":true,"summary":"1/1 image analyzed"}
+data: {"event":"reply","text":"**Capture complete.** The hallway is empty..."}
+data: {"event":"done"}
+```
+
+The frontend maps these to a visual execution trace: thinking indicator → spinning steps → checkmarks → final markdown reply. For multi-shot sequences, individual image completions appear as separate steps.
+
+### 5. Real-Time MQTT Feedback
+
+While the agent executes, the board independently publishes status updates over MQTT. The dashboard subscribes to 6 topics and renders everything into a unified console:
+
+| Topic | Direction | Content |
+|-------|-----------|---------|
+| `device/{id}/status` | Board → Dashboard | Telemetry: firmware, status, capture progress, sleep/wake |
+| `device/{id}/logs` | Board → Dashboard | Raw firmware debug logs (`[ms] [LEVEL] [TAG] message`) |
+| `dashboard/images/new` | Server → Dashboard | New image notification (triggers gallery refresh) |
+| `dashboard/analysis/new` | Server → Dashboard | AI analysis result (updates gallery overlay) |
+| `dashboard/schedules/updated` | Server → Dashboard | Full schedule state (activation, deactivation, task completion) |
+| `dashboard/logs` | Server → Dashboard | Server-side log events |
+
+The schedule updates topic (`dashboard/schedules/updated`) fires whenever any schedule state changes — activation, deactivation, deletion, or individual task completion. The server publishes the full schedule list, and the frontend replaces its state, giving instant real-time visibility into monitoring progress without polling.
+
+### 6. Schedule Lifecycle
+
+```
+User message → LLM picks create_schedule → AI planner generates tasks
+  → DB: schedule saved + activated (others deactivated)
+  → MQTT: schedule command sent to board
+  → Dashboard: schedules/updated (real-time UI update)
+
+Board wakes via RTC alarm → captures image → HTTP upload to server
+  → Server: RGB565→JPEG, marks task.completed_at, triggers AI analysis
+  → MQTT: images/new + schedules/updated (task progress bar advances)
+  → MQTT: analysis/new (AI findings overlay appears on image)
+
+All tasks done → Board sends cycle_complete
+  → Server: auto-deactivates schedule
+  → MQTT: schedules/updated (schedule marked completed in UI)
+
+User: "stop monitoring" → LLM picks deactivate_schedule
+  → DB: schedule.is_active = False
+  → MQTT: clear_schedule to board + schedules/updated to dashboard
+```
+
+### 7. Conversation Persistence
+
+Chat sessions are stored in SQLite (`chat_sessions` + `chat_messages` tables). Each board can have multiple named sessions. The agent loads the last 20 messages as context for Claude, so it can reference previous captures and maintain continuity across interactions. Sessions survive page reloads and server restarts.
+
+---
+
 ## Technical Details
 
 ### Firmware (Bare-Metal, No RTOS)
@@ -138,10 +234,11 @@ graph TD
 ### Backend (FastAPI + AI)
 
 - **AI planning engine** — translates natural language monitoring requests into executable HH:MM task schedules with objectives. The planner is model-agnostic (Claude, Gemini, Qwen).
-- **Agentic chat with 8 tools** — the dashboard chat is backed by Claude with tool_use. The agent can capture images, create schedules, ping the board, enter setup mode, analyze results, and synthesize findings — all through natural language.
+- **Agentic chat with 9 tools** — the dashboard chat is backed by Claude with tool_use. The agent can capture images, create/deactivate schedules, ping the board, enter setup mode, analyze results, and synthesize findings — all through natural language.
 - **Full capture pipeline with SSE streaming** — when the agent triggers a capture, the server streams real-time progress events (command sent, image received, analysis complete) back to the dashboard. For sequences, it tracks all N images individually.
 - **RGB565 to JPEG conversion** — the OV5640 outputs BGR565 little-endian. The server correctly extracts B[15:11] G[10:5] R[4:0], scales to 8-bit, and saves as JPEG.
 - **Auto-deactivation** — when the board reports `cycle_complete`, the server automatically deactivates the active schedule.
+- **Real-time schedule notifications** — every schedule state change (activate, deactivate, delete, task completion) publishes the full schedule list to `dashboard/schedules/updated` via MQTT, so the frontend updates instantly without polling.
 
 ### Dashboard (Next.js 16 + React 19)
 

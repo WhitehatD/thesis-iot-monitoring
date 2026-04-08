@@ -260,6 +260,24 @@ AGENT_TOOLS = [
         },
     },
     {
+        "name": "deactivate_schedule",
+        "description": (
+            "Deactivate (stop) a currently active monitoring schedule. "
+            "Use when the user says 'stop monitoring', 'cancel schedule', "
+            "'deactivate', 'turn off', or 'disable schedule'. "
+            "If schedule_id is not provided, deactivates whichever schedule is currently active."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "schedule_id": {
+                    "type": "integer",
+                    "description": "ID of the schedule to deactivate. If omitted, deactivates the active schedule.",
+                },
+            },
+        },
+    },
+    {
         "name": "synthesize_schedule",
         "description": (
             "Synthesize all AI vision analyses into an evolving conclusion. "
@@ -304,6 +322,7 @@ create_schedule (duration 2+ min, uses HH:MM):
 - YOU decide frequency. Pass duration+frequency as prompt.
 
 Other tools:
+- deactivate_schedule: "stop" / "cancel" / "deactivate" / "turn off" / "disable" schedule
 - ping_board: "ping" / "alive" / "responsive"
 - start_portal: "setup" / "portal" / "wifi config"
 - get_board_status: "status" / "health" / "firmware" / "uptime"
@@ -440,6 +459,7 @@ def _tool_label(name: str, inp: dict) -> str:
         "create_schedule": f"Generating schedule: \"{inp.get('prompt', '')[:60]}\"",
         "capture_now": "Sending capture command to board...",
         "capture_sequence": f"Sending {inp.get('count', '?')}-shot sequence...",
+        "deactivate_schedule": "Deactivating schedule...",
         "ping_board": "Pinging board...",
         "analyze_latest": "Fetching latest AI analysis...",
         "get_board_status": "Checking board status...",
@@ -554,6 +574,8 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
         return await _tool_capture_now()
     elif name == "capture_sequence":
         return await _tool_capture_sequence(inp)
+    elif name == "deactivate_schedule":
+        return await _tool_deactivate_schedule(inp)
     elif name == "ping_board":
         return await _tool_ping()
     elif name == "start_portal":
@@ -615,6 +637,10 @@ async def _tool_create_schedule(inp: dict) -> dict:
     # Publish to board
     mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(mqtt_payload))
 
+    # Push real-time update to dashboard
+    from app.scheduler.notify import notify_schedule_update
+    await notify_schedule_update()
+
     task_list = "\n".join(
         f"| {t.id} | {t.time} | {t.action} | {t.objective} |"
         for t in plan.tasks
@@ -629,6 +655,39 @@ async def _tool_create_schedule(inp: dict) -> dict:
         "success": True,
         "summary": f"{task_count} tasks scheduled ({times[0]}–{times[-1]})",
         "detail": detail,
+    }
+
+
+async def _tool_deactivate_schedule(inp: dict) -> dict:
+    from app.db.database import async_session
+    from app.scheduler.service import deactivate_schedule, list_schedules
+    from app.scheduler.notify import notify_schedule_update
+
+    schedule_id = inp.get("schedule_id")
+
+    async with async_session() as db:
+        if schedule_id:
+            schedule = await deactivate_schedule(db, schedule_id)
+            name = schedule.name
+        else:
+            # Find and deactivate the currently active schedule
+            schedules = await list_schedules(db)
+            active = [s for s in schedules if s.is_active]
+            if not active:
+                return {"success": False, "summary": "No active schedule", "detail": "There is no active schedule to deactivate."}
+            schedule = await deactivate_schedule(db, active[0].id)
+            name = schedule.name
+
+    # Tell board to clear its schedule
+    command = json.dumps({"type": "clear_schedule"})
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
+
+    await notify_schedule_update()
+
+    return {
+        "success": True,
+        "summary": f"Deactivated: {name}",
+        "detail": f"**Schedule deactivated:** \"{name}\"\n\nThe board has been told to clear its schedule.",
     }
 
 
@@ -672,6 +731,10 @@ async def _tool_capture_sequence(inp: dict) -> dict:
             tasks=tasks,
         )
         await activate_schedule(db, schedule.id)
+
+    # Push real-time update to dashboard
+    from app.scheduler.notify import notify_schedule_update
+    await notify_schedule_update()
 
     # Send the capture_sequence MQTT command (ms-precision timing)
     delays = [i * interval for i in range(count)]
@@ -863,6 +926,8 @@ async def _fallback_dispatch(message: str, session_id: str):
         result = await _tool_ping()
     elif any(w in msg for w in ["status", "online", "health", "uptime"]):
         result = await _tool_board_status()
+    elif any(w in msg for w in ["stop", "cancel", "deactivate", "disable", "turn off"]):
+        result = await _tool_deactivate_schedule({})
     elif any(w in msg for w in ["monitor", "schedule", "every", "between", "watch"]):
         result = await _tool_create_schedule({"prompt": message})
     else:

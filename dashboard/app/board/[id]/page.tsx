@@ -80,6 +80,7 @@ export default function BoardPage({
 		"gallery",
 	);
 	const [schedules, setSchedules] = useState<any[]>([]);
+	const [actionLoading, setActionLoading] = useState<string | null>(null);
 
 	const logIdRef = useRef(0);
 	const addLog = useCallback(
@@ -179,6 +180,14 @@ export default function BoardPage({
 					`Vision analysis: ${met ? "objective met" : "objective not met"}`,
 					`${data.model || "?"} · ${data.inference_ms || 0}ms · task #${data.task_id}`,
 				);
+				return;
+			}
+
+			// Real-time schedule/task updates
+			if (topic === "dashboard/schedules/updated") {
+				if (data.schedules) {
+					setSchedules(data.schedules);
+				}
 				return;
 			}
 
@@ -325,6 +334,7 @@ export default function BoardPage({
 		"dashboard/images/new",
 		"dashboard/analysis/new",
 		"dashboard/logs",
+		"dashboard/schedules/updated",
 	];
 	const { connectionStatus } = useMQTT(topics, handleMessage);
 
@@ -368,6 +378,39 @@ export default function BoardPage({
 		}
 	};
 
+	const handleCapture = async () => {
+		setActionLoading("capture");
+		addLog("info", "CMD", "Sending capture command...");
+		try {
+			const res = await fetch(`${apiBase}/api/capture`, { method: "POST" });
+			const data = await res.json();
+			addLog("success", "CMD", "Capture command sent", `task #${data.task_id}`);
+		} catch (err) {
+			addLog("error", "CMD", `Capture failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const handlePing = async () => {
+		setActionLoading("ping");
+		addLog("info", "CMD", "Sending ping to board...");
+		try {
+			await fetch(`${apiBase}/api/ping`, { method: "POST" });
+			addLog("success", "CMD", "Ping sent — LED sequence triggered");
+		} catch (err) {
+			addLog("error", "CMD", `Ping failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const handleRefresh = () => {
+		addLog("info", "CMD", "Refreshing images & schedules...");
+		fetchImages();
+		fetchSchedules();
+	};
+
 	const sortedImages = [...images].sort((a, b) => b.timestamp - a.timestamp);
 
 	return (
@@ -380,6 +423,25 @@ export default function BoardPage({
 					</Link>
 					<h1 className="agent-header-title">Monitoring Agent</h1>
 					<span className="agent-header-node">{boardId}</span>
+				</div>
+				<div className="agent-header-actions">
+					<button
+						className="btn-action accent"
+						onClick={handleCapture}
+						disabled={actionLoading !== null}
+					>
+						{actionLoading === "capture" ? "Sending..." : "Capture"}
+					</button>
+					<button
+						className="btn-action"
+						onClick={handlePing}
+						disabled={actionLoading !== null}
+					>
+						{actionLoading === "ping" ? "Sending..." : "Ping"}
+					</button>
+					<button className="btn-action" onClick={handleRefresh}>
+						Refresh
+					</button>
 				</div>
 				<div className="agent-header-stats">
 					<div className={`status-indicator ${board.connection}`}>

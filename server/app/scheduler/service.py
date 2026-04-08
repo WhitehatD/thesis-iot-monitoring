@@ -86,6 +86,15 @@ async def delete_schedule(db: AsyncSession, schedule_id: int) -> None:
     await db.commit()
 
 
+async def deactivate_schedule(db: AsyncSession, schedule_id: int) -> Schedule:
+    """Deactivate a specific schedule."""
+    schedule = await get_schedule(db, schedule_id)
+    schedule.is_active = False
+    await db.commit()
+    await db.refresh(schedule, attribute_names=["tasks"])
+    return schedule
+
+
 async def activate_schedule(db: AsyncSession, schedule_id: int) -> dict:
     """
     Mark a schedule as active (deactivating all others).

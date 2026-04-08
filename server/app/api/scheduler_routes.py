@@ -12,6 +12,7 @@ from app.config import settings
 from app.db.database import get_db
 from app.mqtt.client import mqtt_client
 from app.scheduler import service
+from app.scheduler.notify import notify_schedule_update
 from app.api.schemas import (
     ScheduleCreate,
     ScheduleOut,
@@ -74,12 +75,23 @@ async def activate_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)
 
     await mqtt_client.publish(settings.mqtt_topic_commands, payload_json)
 
+    await notify_schedule_update()
+
     return ScheduleActivateOut(
         schedule_id=schedule_id,
         status="activated",
         mqtt_payload=payload_json,
     )
 
+
+@router.post("/{schedule_id}/deactivate", status_code=200)
+async def deactivate_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
+    """Deactivate a schedule and tell the board to clear it."""
+    await service.deactivate_schedule(db, schedule_id)
+    payload = json.dumps({"type": "clear_schedule"})
+    await mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    await notify_schedule_update()
+    return {"status": "deactivated", "schedule_id": schedule_id}
 
 
 @router.post("/sleep-mode", status_code=200)
@@ -96,6 +108,7 @@ async def delete_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
     await service.delete_schedule(db, schedule_id)
     payload = json.dumps({"type": "delete_schedule", "schedule_id": schedule_id})
     await mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    await notify_schedule_update()
 
 
 # ── Helpers ──────────────────────────────────────────────

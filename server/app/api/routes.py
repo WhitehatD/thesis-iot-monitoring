@@ -213,6 +213,9 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
             if task and task.completed_at is None:
                 task.completed_at = datetime.now()
                 await db.commit()
+                # Push real-time update to dashboard
+                from app.scheduler.notify import notify_schedule_update
+                await notify_schedule_update()
     except Exception:
         pass  # Non-critical — don't fail the upload
 
