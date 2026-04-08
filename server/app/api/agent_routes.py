@@ -23,9 +23,11 @@ SSE event types:
   - done: Stream complete
 """
 
+import asyncio
 import json
 import re
 import time
+from datetime import datetime
 
 import anthropic
 from fastapi import APIRouter, Request
@@ -213,20 +215,29 @@ async def agent_chat(request: Request):
                     tool_name = block.name
                     tool_input = block.input
 
-                    yield _sse_event("tool_call", {
-                        "id": tool_name,
-                        "label": _tool_label(tool_name, tool_input),
-                    })
+                    # Capture tools get the full pipeline with streaming steps
+                    if tool_name in ("capture_now", "capture_sequence"):
+                        async for ev in _capture_pipeline(tool_name, tool_input):
+                            yield ev
+                            if '"event": "reply"' in ev:
+                                # Extract reply text for history
+                                ev_data = json.loads(ev.split("data: ", 1)[1].strip())
+                                reply_parts.append(ev_data.get("text", ""))
+                    else:
+                        yield _sse_event("tool_call", {
+                            "id": tool_name,
+                            "label": _tool_label(tool_name, tool_input),
+                        })
 
-                    result = await _execute_tool(tool_name, tool_input, session_id)
+                        result = await _execute_tool(tool_name, tool_input, session_id)
 
-                    yield _sse_event("tool_result", {
-                        "id": tool_name,
-                        "success": result["success"],
-                        "summary": result["summary"],
-                    })
+                        yield _sse_event("tool_result", {
+                            "id": tool_name,
+                            "success": result["success"],
+                            "summary": result["summary"],
+                        })
 
-                    reply_parts.append(result.get("detail", ""))
+                        reply_parts.append(result.get("detail", ""))
 
             full_reply = "\n\n".join(p for p in reply_parts if p)
             if full_reply:
@@ -257,6 +268,78 @@ def _tool_label(name: str, inp: dict) -> str:
         "get_board_status": "Checking board status...",
     }
     return labels.get(name, f"Executing {name}...")
+
+
+async def _capture_pipeline(tool_name: str, tool_input: dict):
+    """Full agentic pipeline: capture → wait for upload → wait for analysis → report."""
+    from sqlalchemy import select
+    from app.analysis.models import AnalysisResult
+    from app.db.database import async_session
+
+    # Step 1: Send capture command
+    yield _sse_event("tool_call", {"id": "capture", "label": "Sending capture command to board..."})
+
+    task_id = int(time.time())
+
+    if tool_name == "capture_sequence":
+        count = max(2, min(tool_input.get("count", 3), 16))
+        interval = max(500, tool_input.get("interval_ms", 2000))
+        command = json.dumps({
+            "type": "capture_sequence",
+            "task_id": task_id,
+            "delays_ms": [i * interval for i in range(count)],
+        })
+    else:
+        command = json.dumps({"type": "capture_now", "task_id": task_id})
+
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
+
+    yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
+
+    # Step 2: Wait for image upload
+    yield _sse_event("tool_call", {"id": "upload", "label": "Waiting for board to capture and upload..."})
+
+    image_found = False
+    start_time = datetime.utcnow()
+    for _ in range(15):  # 30s timeout (15 x 2s)
+        await asyncio.sleep(2)
+        # Check if a NEW analysis appeared since we sent the command
+        async with async_session() as db:
+            result = await db.execute(
+                select(AnalysisResult)
+                .where(AnalysisResult.created_at >= start_time)
+                .order_by(AnalysisResult.created_at.desc())
+                .limit(1)
+            )
+            analysis = result.scalar_one_or_none()
+            if analysis:
+                image_found = True
+                break
+
+    if not image_found:
+        yield _sse_event("tool_result", {"id": "upload", "success": False, "summary": "Timeout waiting for image (board may be offline)"})
+        yield _sse_event("reply", {"text": "**Capture sent** but the board hasn't responded yet. It may be offline or busy. The image will appear in the gallery when it arrives."})
+        return
+
+    yield _sse_event("tool_result", {"id": "upload", "success": True, "summary": "Image received and uploaded"})
+
+    # Step 3: Show analysis result
+    yield _sse_event("tool_call", {"id": "analysis", "label": "AI vision analysis complete"})
+
+    yield _sse_event("tool_result", {
+        "id": "analysis",
+        "success": True,
+        "summary": f"Analysis complete for task #{analysis.task_id}",
+    })
+
+    detail = (
+        f"**Capture & Analysis Complete** (task #{analysis.task_id})\n\n"
+        f"**Objective:** {analysis.objective}\n\n"
+        f"**Findings:** {analysis.analysis}\n\n"
+        f"**Recommendation:** {analysis.recommendation}\n\n"
+        f"*{analysis.model_used} | {analysis.inference_time_ms:.0f}ms*"
+    )
+    yield _sse_event("reply", {"text": detail})
 
 
 async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
