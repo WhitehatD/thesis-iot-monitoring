@@ -1106,35 +1106,96 @@ body {
 	color: var(--text-secondary);
 }
 
-/* ── Tool Call Steps ── */
-.agent-steps {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	margin-bottom: 8px;
-	padding-bottom: 8px;
-	border-bottom: 1px solid var(--border);
-}
+/* ── Block-based rendering (chained like Claude Code) ── */
 
-.agent-step {
+.block-thinking {
 	display: flex;
 	align-items: center;
-	gap: 6px;
-	font-size: 0.72rem;
+	gap: 8px;
+	padding: 6px 0;
+	color: var(--text-muted);
+	font-size: 0.78rem;
+	font-style: italic;
+	animation: fade-in 0.2s ease-out;
+}
+
+.thinking-icon {
+	color: var(--accent);
+	animation: pulse-dot 1s ease-in-out infinite;
+}
+
+.block-step {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 6px 0;
+	font-size: 0.78rem;
 	font-family: var(--font-mono);
+	animation: fade-in 0.15s ease-out;
+	border-left: 2px solid transparent;
+	padding-left: 8px;
+	margin-left: -8px;
+}
+
+.block-step + .block-step {
+	border-top: 1px solid var(--border);
+	padding-top: 8px;
 }
 
 .step-icon {
 	font-size: 0.82rem;
 	flex-shrink: 0;
+	margin-top: 1px;
 }
-.step-running .step-text {
+
+.step-content {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.step-label {
+	color: var(--text-secondary);
+}
+
+.step-detail {
+	font-size: 0.68rem;
+	color: var(--text-muted);
+}
+
+.step-running {
+	border-left-color: var(--accent);
+}
+
+.step-running .step-label {
 	color: var(--accent);
 }
-.step-done .step-text {
+
+.step-done {
+	border-left-color: var(--emerald);
+}
+
+.step-done .step-label {
 	color: var(--emerald);
 }
-.step-error .step-text {
+
+.step-error {
+	border-left-color: var(--rose);
+}
+
+.step-error .step-label {
+	color: var(--rose);
+}
+
+.block-text {
+	padding: 8px 0;
+	border-top: 1px solid var(--border);
+	margin-top: 4px;
+	animation: fade-in 0.2s ease-out;
+}
+
+.block-error {
+	padding: 8px 0;
 	color: var(--rose);
 }
 

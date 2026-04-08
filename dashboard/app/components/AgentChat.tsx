@@ -2,17 +2,28 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-interface Step {
-	id: string;
-	label: string;
-	status: "running" | "done" | "error";
-	summary?: string;
-}
+/* ── Block-based message model ─────────────────────────────
+   Every SSE event becomes a Block. Blocks render in order,
+   giving the Claude-Code-like chained feel. Nothing is
+   overwritten — each event adds or updates a block.
+*/
+
+type Block =
+	| { type: "thinking"; text: string }
+	| {
+			type: "step";
+			id: string;
+			label: string;
+			status: "running" | "done" | "error";
+			summary?: string;
+	  }
+	| { type: "text"; text: string }
+	| { type: "error"; text: string };
 
 interface Message {
 	role: "user" | "assistant";
-	content: string;
-	steps?: Step[];
+	text?: string; // user messages
+	blocks: Block[]; // assistant messages
 	streaming?: boolean;
 }
 
@@ -59,11 +70,10 @@ export default function AgentChat({
 		setInput("");
 		setIsStreaming(true);
 
-		const userMsg: Message = { role: "user", content: msg };
+		const userMsg: Message = { role: "user", text: msg, blocks: [] };
 		const botMsg: Message = {
 			role: "assistant",
-			content: "",
-			steps: [],
+			blocks: [],
 			streaming: true,
 		};
 		setMessages((prev) => [...prev, userMsg, botMsg]);
@@ -102,36 +112,64 @@ export default function AgentChat({
 
 						setMessages((prev) => {
 							const updated = [...prev];
-							const bot = { ...updated[updated.length - 1] };
-							const steps = [...(bot.steps || [])];
+							const bot = {
+								...updated[updated.length - 1],
+								blocks: [...(updated[updated.length - 1].blocks || [])],
+							};
 
 							if (event === "thinking") {
-								bot.content = `*${data.text}*`;
+								// Replace existing thinking block or add new one
+								const thinkIdx = bot.blocks.findIndex(
+									(b) => b.type === "thinking",
+								);
+								if (thinkIdx >= 0) {
+									bot.blocks[thinkIdx] = {
+										type: "thinking",
+										text: data.text,
+									};
+								} else {
+									bot.blocks.push({
+										type: "thinking",
+										text: data.text,
+									});
+								}
 							} else if (event === "tool_call") {
-								steps.push({
+								bot.blocks.push({
+									type: "step",
 									id: data.id,
 									label: data.label,
 									status: "running",
 								});
-								bot.steps = steps;
 							} else if (event === "tool_result") {
-								const idx = steps.findIndex((s) => s.id === data.id);
+								// Find the step block and update it
+								const idx = bot.blocks.findIndex(
+									(b) =>
+										b.type === "step" &&
+										b.id === data.id &&
+										b.status === "running",
+								);
 								if (idx >= 0) {
-									steps[idx] = {
-										...steps[idx],
+									bot.blocks[idx] = {
+										...(bot.blocks[idx] as Extract<Block, { type: "step" }>),
 										status: data.success ? "done" : "error",
 										summary: data.summary,
 									};
-									bot.steps = steps;
 								}
 							} else if (event === "reply") {
-								bot.content = data.text;
-								bot.streaming = false;
+								bot.blocks.push({
+									type: "text",
+									text: data.text,
+								});
 							} else if (event === "error") {
-								bot.content = `Error: ${data.text}`;
+								bot.blocks.push({
+									type: "error",
+									text: data.text,
+								});
 								bot.streaming = false;
 							} else if (event === "done") {
 								bot.streaming = false;
+								// Remove thinking block once done
+								bot.blocks = bot.blocks.filter((b) => b.type !== "thinking");
 							}
 
 							updated[updated.length - 1] = bot;
@@ -149,7 +187,13 @@ export default function AgentChat({
 				if (bot) {
 					updated[updated.length - 1] = {
 						...bot,
-						content: `Connection error: ${err}`,
+						blocks: [
+							...bot.blocks,
+							{
+								type: "error",
+								text: `Connection error: ${err}`,
+							},
+						],
 						streaming: false,
 					};
 				}
@@ -218,32 +262,13 @@ export default function AgentChat({
 				{messages.map((msg, i) => (
 					<div key={i} className={`agent-msg agent-msg-${msg.role}`}>
 						{msg.role === "user" ? (
-							<div className="agent-bubble user-bubble">{msg.content}</div>
+							<div className="agent-bubble user-bubble">{msg.text}</div>
 						) : (
 							<div className="agent-bubble bot-bubble">
-								{msg.steps && msg.steps.length > 0 && (
-									<div className="agent-steps">
-										{msg.steps.map((step) => (
-											<div
-												key={step.id}
-												className={`agent-step step-${step.status}`}
-											>
-												<span className="step-icon">
-													{step.status === "running"
-														? "\u23F3"
-														: step.status === "done"
-															? "\u2705"
-															: "\u274C"}
-												</span>
-												<span className="step-text">
-													{step.summary || step.label}
-												</span>
-											</div>
-										))}
-									</div>
-								)}
-								{msg.content && <MarkdownContent text={msg.content} />}
-								{msg.streaming && !msg.content && (
+								{msg.blocks.map((block, bi) => (
+									<BlockRenderer key={`${i}-${bi}`} block={block} />
+								))}
+								{msg.streaming && msg.blocks.length === 0 && (
 									<div className="agent-typing">
 										<span className="typing-dot" />
 										<span className="typing-dot" />
@@ -279,6 +304,62 @@ export default function AgentChat({
 		</div>
 	);
 }
+
+/* ── Block Renderer ─────────────────────────────────────── */
+
+function BlockRenderer({ block }: { block: Block }) {
+	if (block.type === "thinking") {
+		return (
+			<div className="block-thinking">
+				<span className="thinking-icon">&bull;</span>
+				<span className="thinking-text">{block.text}</span>
+			</div>
+		);
+	}
+
+	if (block.type === "step") {
+		return (
+			<div className={`block-step step-${block.status}`}>
+				<span className="step-icon">
+					{block.status === "running"
+						? "\u23F3"
+						: block.status === "done"
+							? "\u2705"
+							: "\u274C"}
+				</span>
+				<div className="step-content">
+					<span className="step-label">
+						{block.status === "running"
+							? block.label
+							: block.summary || block.label}
+					</span>
+					{block.status === "done" &&
+						block.summary &&
+						block.summary !== block.label && (
+							<span className="step-detail">{block.label}</span>
+						)}
+				</div>
+			</div>
+		);
+	}
+
+	if (block.type === "error") {
+		return (
+			<div className="block-error">
+				<MarkdownContent text={block.text} />
+			</div>
+		);
+	}
+
+	// type === "text"
+	return (
+		<div className="block-text">
+			<MarkdownContent text={block.text} />
+		</div>
+	);
+}
+
+/* ── Markdown Renderer ──────────────────────────────────── */
 
 function MarkdownContent({ text }: { text: string }) {
 	const parts = parseMarkdown(text);
