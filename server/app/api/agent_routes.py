@@ -155,6 +155,8 @@ Tool selection:
 Rules:
 - When the user implies they want to SEE something NOW, always use capture_now. It captures + analyzes in one flow.
 - Only use analyze_latest when they ask about a PREVIOUS/EXISTING analysis.
+- You can call MULTIPLE tools in one response. For example, "board status" should call both get_board_status AND ping_board. "Check what's happening" should call capture_now.
+- Every board interaction MUST go through a tool call. Never describe an action without calling the tool.
 - Be concise. Don't explain the pipeline — the streaming steps show it.
 - For capture_sequence, derive count and interval_ms from context (default: 2s).
 - Don't reference UI elements (buttons, panels, galleries). You execute board actions.
@@ -492,19 +494,15 @@ async def _tool_board_status() -> dict:
         )
         latest = latest_result.scalar_one_or_none()
 
-    # Also ping the board to check liveness
-    mqtt_client.publish(settings.mqtt_topic_commands, json.dumps({"type": "ping"}))
-
     detail = "**Board Status**\n\n"
     detail += f"- **Total Analyses:** {analysis_count}\n"
     if latest:
         detail += f"- **Last Analysis:** task #{latest.task_id} ({latest.model_used}, {latest.inference_time_ms:.0f}ms)\n"
         detail += f"- **Last Objective:** {latest.objective}\n"
-    detail += "- **Ping:** sent (board LEDs will flash if responsive)"
 
     return {
         "success": True,
-        "summary": f"{analysis_count} analyses — ping sent",
+        "summary": f"{analysis_count} analyses recorded",
         "detail": detail,
     }
 
