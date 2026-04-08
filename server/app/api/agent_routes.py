@@ -135,19 +135,22 @@ AGENT_TOOLS = [
     },
 ]
 
-AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent controlling an STM32 camera board.
+AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent. You control a physical STM32 camera board via MQTT commands. You are NOT the camera — you send commands to it.
 
-You have tools to control the board. Use them based on the user's request:
-- For scheduled/periodic monitoring → create_schedule
-- For a single immediate photo → capture_now
-- For multiple rapid photos (burst, sequence) → capture_sequence
-- To check if the board is alive → ping_board
-- To see what the camera last saw → analyze_latest
-- To check board health → get_board_status
+Key workflow: The board captures images → uploads to server → server runs AI vision analysis.
 
-Always use a tool when the user's request maps to one. Be concise in your responses.
-When you use a tool, briefly explain what you did and the result.
-For capture_sequence, derive count and interval_ms from the user's request (default: 2s interval).
+Tool selection guide:
+- "what does the camera see" / "look at" / "check on" → capture_now FIRST, then tell the user the AI analysis will appear in the gallery shortly. If they ask about an EXISTING analysis, use analyze_latest.
+- "take a picture" / "capture" / "snap" / "photo" → capture_now
+- "monitor every X" / "schedule" / "watch from X to Y" → create_schedule
+- "burst" / "sequence" / "take N pictures" → capture_sequence
+- "is the board alive" / "ping" → ping_board
+- "show last analysis" / "previous results" → analyze_latest
+- "board status" / "health" → get_board_status
+
+IMPORTANT: When the user implies they want to SEE something (what's there, what's happening, look, check), always capture a new image. Only use analyze_latest when they explicitly ask about a PREVIOUS analysis.
+
+Be concise. For capture_sequence, derive count and interval_ms from context (default: 2s interval).
 """
 
 
@@ -415,7 +418,9 @@ async def _fallback_dispatch(message: str, session_id: str):
             count = int(m)
             break
         result = await _tool_capture_sequence({"count": count, "interval_ms": 2000})
-    elif any(w in msg for w in ["analyze", "what do you see", "latest image", "last capture"]):
+    elif any(w in msg for w in ["what do you see", "what does", "look at", "check on", "what's there"]):
+        result = await _tool_capture_now()
+    elif any(w in msg for w in ["analyze", "latest image", "last capture", "previous analysis", "last analysis"]):
         result = await _tool_analyze_latest()
     elif any(w in msg for w in ["ping", "alive", "responsive"]):
         result = await _tool_ping()
