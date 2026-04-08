@@ -154,7 +154,7 @@ When no API key is configured, a **rule-based fallback dispatcher** maps keyword
 | `capture_now` | *"take a picture"*, *"what do you see"* | Sends `capture_now` MQTT command → board captures + uploads → server converts RGB565 → JPEG → multimodal LLM analyzes → findings streamed back |
 | `capture_sequence` | *"monitor for 30 seconds"*, *"burst of 5 shots"* | Creates a schedule in DB, sends `capture_sequence` with ms-precision delays to board, tracks per-image completion in real time |
 | `create_schedule` | *"monitor every 10 min for 2 hours"* | AI planner generates HH:MM task list → saved to DB → activated → MQTT command to board sets RTC alarms |
-| `deactivate_schedule` | *"stop monitoring"*, *"cancel"* | Deactivates the active schedule in DB → sends `clear_schedule` to board → dashboard updates in real time |
+| `deactivate_schedule` | *"stop monitoring"*, *"cancel"* | Deactivates the active schedule in DB → sends `delete_schedule` to board → dashboard updates in real time via MQTT |
 | `ping_board` | *"ping"*, *"is it alive"* | Sends `ping` MQTT command → board flashes LEDs in a pattern to confirm it's responsive |
 | `start_portal` | *"setup mode"*, *"reconfigure wifi"* | Sends `start_portal` → board starts WiFi AP at 192.168.10.1 for credential reconfiguration |
 | `analyze_latest` | *"show last analysis"* | Fetches the most recent AI analysis result from the database |
@@ -228,7 +228,8 @@ Chat sessions are stored in SQLite (`chat_sessions` + `chat_messages` tables). E
 - **Adaptive AEC convergence** — polls the OV5640's luminance register at 50ms intervals. In well-lit scenes, captures in ~300ms. In dark scenes, detects AEC saturation (stable readings) and exits early instead of wasting the full timeout. Night mode extends exposure to 4x VTS (~300ms) automatically.
 - **Over-the-air updates** — board polls for new firmware, downloads to RAM in 2KB chunks (avoiding SPI/flash contention), CRC32-verifies, erases inactive flash bank, writes, and performs atomic bank swap. Automatic rollback on boot failure.
 - **STOP2 sleep between tasks** — board enters 2uA deep sleep between scheduled captures, wakes via RTC alarm.
-- **Captive portal WiFi provisioning** — no hardcoded credentials. Board starts a SoftAP with a configuration web page at 192.168.10.1 when no stored network is available.
+- **Captive portal WiFi provisioning** — no hardcoded credentials. Board starts a SoftAP (`IoT-Setup-XXXX`, password `setup123`) with DNS redirect for automatic captive portal detection on iOS/Android/Windows. Three entry paths: (1) first boot with no stored credentials, (2) stored credentials fail to connect after 3 retries, (3) **hold the B3 USER button for 3 seconds** — RED LED lights at 1s to signal "keep holding", 5x GREEN blinks confirm portal entry. Short press (<3s) triggers an instant capture.
+- **Phone hotspot compatible** — EMW3080 uses `MX_WIFI_SEC_AUTO` (WPA2/WPA3 PSK), 2.4GHz only. Explicit 30-second DHCP patience for iPhone hotspot latency. Server addressed by raw IP — no DNS dependency. Does **not** support WPA2-Enterprise (802.1X/RADIUS), which is why university WiFi networks are incompatible.
 - **9 MQTT command types**: capture_now, capture_sequence, schedule, delete_schedule, firmware_update, sleep_mode, ping, set_wifi, start_portal.
 
 ### Backend (FastAPI + AI)

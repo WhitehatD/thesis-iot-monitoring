@@ -138,6 +138,12 @@ export default function BoardPage({
 		fetchSchedules();
 	}, [fetchImages, fetchSchedules]);
 
+	// Poll schedules as fallback (MQTT push is primary, poll catches missed updates)
+	useEffect(() => {
+		const interval = setInterval(fetchSchedules, 5000);
+		return () => clearInterval(interval);
+	}, [fetchSchedules]);
+
 	const handleMessage = useCallback(
 		(topic: string, data: Record<string, any>, sourceBoardId: string) => {
 			// Dashboard image notification
