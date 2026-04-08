@@ -223,6 +223,20 @@ AGENT_TOOLS = [
         },
     },
     {
+        "name": "start_portal",
+        "description": (
+            "Force the board into WiFi setup (captive portal) mode. "
+            "The board starts a local access point so the user can "
+            "reconfigure WiFi credentials via a browser. Use when the "
+            "user says 'setup mode', 'portal', 'reconfigure wifi', or "
+            "'enter setup'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+    {
         "name": "analyze_latest",
         "description": (
             "Retrieve the most recent AI visual analysis from the database. "
@@ -274,19 +288,20 @@ When you call capture_now, the system automatically runs the full pipeline (capt
 Tool selection:
 - "what does the camera see" / "look" / "check on" / "show me" → capture_now (full pipeline)
 - "take a picture" / "capture" / "snap" / "photo" → capture_now
-- "monitor for X seconds" / short durations UNDER 2 MINUTES → capture_sequence (ms-precision timing)
+- "monitor for/the next X seconds/minute(s)" where X < 2 min → capture_sequence
 - "monitor for X minutes/hours" / durations 2+ MINUTES → create_schedule (HH:MM schedule)
 - "burst" / "sequence" / "take N pictures" / "rapid" → capture_sequence
 - "is it alive" / "ping" / "responsive" → ping_board
 - "show last analysis" / "previous results" → analyze_latest
 - "board status" / "health" / "firmware" → get_board_status
 - "summarize" / "what did you learn" / "conclusions" → synthesize_schedule
+- "setup" / "portal" / "reconfigure wifi" → start_portal
 
-CRITICAL — choosing between capture_sequence vs create_schedule:
-- Under 2 minutes → ALWAYS use capture_sequence. Set count and interval_ms yourself:
-  "30 seconds" → count=4, interval_ms=7500 (captures at 0s, 7.5s, 15s, 22.5s)
-  "1 minute" → count=4, interval_ms=15000 (captures at 0s, 15s, 30s, 45s)
-  "90 seconds" → count=6, interval_ms=15000
+CRITICAL — "monitor" requests MUST use capture_sequence when duration < 2 minutes:
+- "monitor the next 30 seconds" → capture_sequence count=4, interval_ms=7500
+- "monitor the next 1 minute" / "monitor for 1 minute" / "monitor for 60 seconds" → capture_sequence count=5, interval_ms=12000
+- "monitor for 90 seconds" → capture_sequence count=6, interval_ms=15000
+- NEVER use capture_now for "monitor" requests. capture_now = single snapshot only.
 - 2+ minutes → use create_schedule. YOU decide frequency:
   "5 minutes" → ~5 captures, 1 min apart
   "1 hour" → ~12 captures, 5 min apart
@@ -508,6 +523,8 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
         return await _tool_capture_sequence(inp)
     elif name == "ping_board":
         return await _tool_ping()
+    elif name == "start_portal":
+        return await _tool_start_portal()
     elif name == "analyze_latest":
         return await _tool_analyze_latest()
     elif name == "get_board_status":
@@ -625,6 +642,20 @@ async def _tool_ping() -> dict:
         "success": True,
         "summary": "Ping sent — board LEDs will flash",
         "detail": "**Ping sent.** The board's LEDs will flash to confirm it's alive.",
+    }
+
+
+async def _tool_start_portal() -> dict:
+    command = json.dumps({"type": "start_portal"})
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
+    return {
+        "success": True,
+        "summary": "Portal mode started — board is now an access point",
+        "detail": (
+            "**Setup mode activated.** The board is starting a WiFi access point.\n\n"
+            "Connect to the board's AP network and open `http://192.168.10.1` "
+            "in a browser to reconfigure WiFi credentials."
+        ),
     }
 
 

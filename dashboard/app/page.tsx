@@ -6,15 +6,57 @@ import { useBoardTracker } from "./hooks/useMQTT";
 
 const FLEET_TOPICS = ["device/+/status"];
 
+function formatUptime(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+	const h = Math.floor(seconds / 3600);
+	const m = Math.floor((seconds % 3600) / 60);
+	return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function rssiLabel(rssi: number): { text: string; cls: string } {
+	if (rssi >= -50) return { text: "Excellent", cls: "rssi-good" };
+	if (rssi >= -65) return { text: "Good", cls: "rssi-good" };
+	if (rssi >= -75) return { text: "Fair", cls: "rssi-fair" };
+	return { text: "Weak", cls: "rssi-weak" };
+}
+
 export default function DashboardPage() {
 	const { boards, connectionStatus } = useBoardTracker(FLEET_TOPICS);
 	const [now, setNow] = useState(Date.now());
+	const [totalImages, setTotalImages] = useState<Record<string, number>>({});
+	const [scheduleCount, setScheduleCount] = useState(0);
 
-	// Tick every second so "Last Seen" stays fresh
+	const apiBase = process.env.NEXT_PUBLIC_API_URL || "";
+
 	useEffect(() => {
 		const timer = setInterval(() => setNow(Date.now()), 1000);
 		return () => clearInterval(timer);
 	}, []);
+
+	// Fetch real stats from server
+	useEffect(() => {
+		fetch(`${apiBase}/api/images`)
+			.then((r) => r.json())
+			.then((data) => {
+				const images = data.images || [];
+				const counts: Record<string, number> = {};
+				for (const img of images) {
+					const bid = img.board_id || "stm32";
+					counts[bid] = (counts[bid] || 0) + 1;
+				}
+				setTotalImages(counts);
+			})
+			.catch(() => {});
+
+		fetch(`${apiBase}/api/schedules`)
+			.then((r) => r.json())
+			.then((data) => {
+				const scheds = data.schedules ?? data ?? [];
+				setScheduleCount(Array.isArray(scheds) ? scheds.length : 0);
+			})
+			.catch(() => {});
+	}, [apiBase]);
 
 	const boardList = Object.values(boards);
 
@@ -44,11 +86,22 @@ export default function DashboardPage() {
 						<div className="header-subtitle">IoT Edge Fleet Dashboard</div>
 					</div>
 				</div>
-				<div className="connection-badge">
-					<div
-						className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
-					/>
-					{connectionStatus === "connected" ? "MQTT Connected" : "Disconnected"}
+				<div className="fleet-summary">
+					<span className="fleet-chip">
+						{boardList.length} node{boardList.length !== 1 ? "s" : ""}
+					</span>
+					<span className="fleet-chip">
+						{Object.values(totalImages).reduce((a, b) => a + b, 0)} images
+					</span>
+					<span className="fleet-chip">{scheduleCount} schedules</span>
+					<div className="connection-badge">
+						<div
+							className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
+						/>
+						{connectionStatus === "connected"
+							? "MQTT Connected"
+							: "Disconnected"}
+					</div>
 				</div>
 			</header>
 
@@ -72,6 +125,8 @@ export default function DashboardPage() {
 						const seenAgo = board.lastSeen
 							? Math.floor((now - board.lastSeen) / 1000)
 							: null;
+						const imgCount = totalImages[board.id] ?? board.captures;
+						const wifi = board.wifiRssi ? rssiLabel(board.wifiRssi) : null;
 						return (
 							<div key={board.id} className="board-card">
 								<div className="board-header">
@@ -115,9 +170,21 @@ export default function DashboardPage() {
 										</span>
 									</div>
 									<div className="stat-item">
-										<span className="stat-label">Captures</span>
-										<span className="stat-value highlight">
-											{board.captures}
+										<span className="stat-label">Images</span>
+										<span className="stat-value highlight">{imgCount}</span>
+									</div>
+									<div className="stat-item">
+										<span className="stat-label">Uptime</span>
+										<span className="stat-value">
+											{board.uptimeSeconds != null
+												? formatUptime(board.uptimeSeconds)
+												: "\u2014"}
+										</span>
+									</div>
+									<div className="stat-item">
+										<span className="stat-label">WiFi</span>
+										<span className={`stat-value ${wifi?.cls || ""}`}>
+											{wifi ? `${wifi.text} (${board.wifiRssi}dBm)` : "\u2014"}
 										</span>
 									</div>
 								</div>
@@ -129,22 +196,6 @@ export default function DashboardPage() {
 											className={`telemetry-val ${getStatusClass(board.status)}`}
 										>
 											{board.status}
-										</span>
-									</div>
-									<div className="telemetry-row">
-										<span>Latency</span>
-										<span className="telemetry-val">
-											{board.lastLatencyMs
-												? `${board.lastLatencyMs}ms`
-												: "\u2014"}
-										</span>
-									</div>
-									<div className="telemetry-row">
-										<span>Payload</span>
-										<span className="telemetry-val">
-											{board.lastImageSize
-												? `${(board.lastImageSize / 1024).toFixed(1)} KB`
-												: "\u2014"}
 										</span>
 									</div>
 									<div className="telemetry-row">

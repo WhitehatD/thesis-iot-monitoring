@@ -122,6 +122,35 @@ body {
 	font-weight: 400;
 }
 
+/* ── Fleet Summary ── */
+.fleet-summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.fleet-chip {
+	font-family: var(--font-mono);
+	font-size: 0.72rem;
+	font-weight: 500;
+	color: var(--text-secondary);
+	background: var(--bg-surface);
+	border: 1px solid var(--border);
+	padding: 4px 10px;
+	border-radius: var(--radius-xl);
+}
+
+/* ── RSSI Colors ── */
+.rssi-good {
+	color: var(--emerald) !important;
+}
+.rssi-fair {
+	color: var(--amber) !important;
+}
+.rssi-weak {
+	color: var(--rose) !important;
+}
+
 /* ── Connection Badge ── */
 .connection-badge {
 	display: flex;

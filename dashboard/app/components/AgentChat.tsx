@@ -40,7 +40,8 @@ const QUICK_ACTIONS = [
 	"Take a picture now",
 	"Monitor for 5 minutes",
 	"What does the camera see?",
-	"Summarize findings",
+	"Enter setup mode",
+	"Ping the board",
 ];
 
 export default function AgentChat({

@@ -13,6 +13,8 @@ export interface BoardTelemetry {
 	lastImageSize: number | null;
 	lastLatencyMs: number | null;
 	isOnline: boolean;
+	uptimeSeconds: number | null;
+	wifiRssi: number | null;
 }
 
 type MessageHandler = (
@@ -112,11 +114,15 @@ export function useBoardTracker(topics: string[]) {
 				lastImageSize: null,
 				lastLatencyMs: null,
 				isOnline: false,
+				uptimeSeconds: null,
+				wifiRssi: null,
 			};
 
 			const update = { ...curr, isOnline: true, lastSeen: Date.now() };
 			if (data.firmware) update.firmware = data.firmware;
 			if (data.status) update.status = data.status;
+			if (data.uptime_s != null) update.uptimeSeconds = data.uptime_s;
+			if (data.wifi_rssi != null) update.wifiRssi = data.wifi_rssi;
 			if (data.status === "captured" || data.status === "uploaded") {
 				update.captures += 1;
 				if (data.size) update.lastImageSize = data.size;
