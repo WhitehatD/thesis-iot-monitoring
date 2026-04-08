@@ -32,10 +32,10 @@ function getMqttUrl(): string {
 }
 
 function extractBoardId(topic: string, data: Record<string, any>): string {
-	let boardId = "stm32-iot-cam-01";
+	let boardId = "stm32";
 	if (topic.startsWith("device/")) {
 		const parts = topic.split("/");
-		if (parts.length >= 3 && parts[1] !== "stm32") {
+		if (parts.length >= 3) {
 			boardId = parts[1];
 		}
 	}
@@ -71,13 +71,15 @@ export function useMQTT(topics: string[], onMessage?: MessageHandler) {
 		});
 
 		client.on("message", (topic, payload) => {
+			const raw = payload.toString();
+			let data: Record<string, any>;
 			try {
-				const data = JSON.parse(payload.toString());
-				const boardId = extractBoardId(topic, data);
-				onMessageRef.current?.(topic, data, boardId);
+				data = JSON.parse(raw);
 			} catch {
-				// skip malformed messages
+				data = { raw: raw.trim() };
 			}
+			const boardId = extractBoardId(topic, data);
+			onMessageRef.current?.(topic, data, boardId);
 		});
 
 		client.on("close", () => setConnectionStatus("disconnected"));
@@ -102,7 +104,7 @@ export function useBoardTracker(topics: string[]) {
 		setBoards((prev) => {
 			const curr = prev[boardId] || {
 				id: boardId,
-				name: "STM32 B-U585I-IOT02A",
+				name: "B-U585I-IOT02A",
 				firmware: null,
 				lastSeen: null,
 				status: "idle",
