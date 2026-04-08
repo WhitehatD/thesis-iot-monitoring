@@ -89,11 +89,19 @@ C_INCLUDES = \
 # ── Defines ───────────────────────────────────────────
 GIT_COMMIT_COUNT := $(shell git rev-list --count HEAD)
 GIT_HASH := $(shell git rev-parse --short HEAD)
+FW_VER_STR := 1.0.$(GIT_COMMIT_COUNT)
 
 C_DEFS = \
 -DSTM32U585xx \
 -DUSE_HAL_DRIVER \
--DFW_VERSION=\"1.0.$(GIT_COMMIT_COUNT)\"
+-DFW_VERSION=\"$(FW_VER_STR)\"
+
+# Force rebuild when version changes (incremental builds miss -D flag changes)
+VERSION_FILE := $(BUILD_DIR)/.fw_version
+$(shell mkdir -p $(BUILD_DIR))
+$(shell echo -n "$(FW_VER_STR)" > $(VERSION_FILE).tmp)
+$(shell cmp -s $(VERSION_FILE).tmp $(VERSION_FILE) 2>/dev/null || mv $(VERSION_FILE).tmp $(VERSION_FILE))
+$(shell rm -f $(VERSION_FILE).tmp)
 
 # ── Compiler Flags ────────────────────────────────────
 OPT = -O2
@@ -132,8 +140,8 @@ release: all
 budget: $(BUILD_DIR)/$(TARGET).bin
 	@python -c "import os, sys; sz=os.path.getsize('$<'); pct=sz*100.0/1048576.0; print(f'Flash Budget: {sz} bytes ({pct:.1f}%% of 1MB bank)'); sys.exit(1 if pct>85.0 else 0)"
 
-# C sources
-$(BUILD_DIR)/%.o: %.c
+# C sources (depend on version file to force rebuild on version change)
+$(BUILD_DIR)/%.o: %.c $(VERSION_FILE)
 	@mkdir -p $(dir $@)
 	$(CC) -c $(CFLAGS) -MMD -MP -MF"$(@:%.o=%.d)" -o $@ $<
 
