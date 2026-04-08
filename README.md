@@ -19,9 +19,9 @@ A complete edge-to-cloud system where you tell an AI agent *what to monitor* in 
 
 ---
 
-## What Makes This a Thesis, Not a Weekend Project
+## System Overview
 
-This isn't a Raspberry Pi running a Python script. It's **five engineering disciplines in one system**:
+The project spans five layers, from register-level hardware drivers to a cloud AI pipeline:
 
 | Layer | Technology | Lines of Code | What It Does |
 |-------|-----------|---------------|--------------|
@@ -31,13 +31,13 @@ This isn't a Raspberry Pi running a Python script. It's **five engineering disci
 | **Infrastructure** | Docker Compose, GitHub Actions, Nginx | ~500 | Automated CI/CD, cross-compilation, OTA binary delivery, VPS deployment, container orchestration |
 | **Hardware** | STM32 B-U585I-IOT02A Discovery Kit | — | 160MHz Cortex-M33, 768KB SRAM, OV5640 5MP camera, EMW3080 WiFi (SPI), dual-bank 2MB flash |
 
-A single `git push` compiles ARM firmware, runs 43 backend tests, builds two Docker images, deploys to a VPS, and delivers a firmware update over-the-air to the physical board — without touching it.
+A `git push` compiles ARM firmware, runs 43 backend tests, builds Docker images, deploys to a VPS, and delivers a firmware update over-the-air to the board.
 
 ---
 
 ## The Agentic Pipeline
 
-The core innovation: a natural language prompt becomes autonomous hardware behavior.
+A natural language prompt becomes autonomous hardware behavior:
 
 ```
 User: "Monitor the parking lot every 30 minutes for the next 2 hours"
@@ -111,14 +111,14 @@ graph TD
 
 ---
 
-## Key Technical Achievements
+## Technical Details
 
 ### Firmware (Bare-Metal, No RTOS)
 
-- **Hand-rolled MQTT 3.1.1 client** over the EMW3080's TCP socket API — no coreMQTT, no FreeRTOS dependency. Connect, subscribe, publish, ping, and auto-reconnect in ~400 lines of C.
+- **Custom MQTT 3.1.1 client** over the EMW3080's TCP socket API. Connect, subscribe, publish, ping, and auto-reconnect in ~400 lines of C.
 - **Adaptive AEC convergence** — polls the OV5640's luminance register at 50ms intervals. In well-lit scenes, captures in ~300ms. In dark scenes, detects AEC saturation (stable readings) and exits early instead of wasting the full timeout. Night mode extends exposure to 4x VTS (~300ms) automatically.
-- **Zero-downtime OTA** — CI/CD pushes firmware binary to VPS, board polls for updates, downloads to RAM in 2KB chunks (avoiding SPI/flash contention), CRC32-verifies, erases inactive flash bank, writes, and performs atomic bank swap. Automatic rollback on boot failure.
-- **STOP2 sleep between tasks** — board enters 2uA deep sleep between scheduled captures, wakes via RTC alarm. Extends battery life from hours to weeks.
+- **Over-the-air updates** — board polls for new firmware, downloads to RAM in 2KB chunks (avoiding SPI/flash contention), CRC32-verifies, erases inactive flash bank, writes, and performs atomic bank swap. Automatic rollback on boot failure.
+- **STOP2 sleep between tasks** — board enters 2uA deep sleep between scheduled captures, wakes via RTC alarm.
 - **Captive portal WiFi provisioning** — no hardcoded credentials. Board starts a SoftAP with a configuration web page at 192.168.10.1 when no stored network is available.
 - **9 MQTT command types**: capture_now, capture_sequence, schedule, delete_schedule, firmware_update, sleep_mode, ping, set_wifi, start_portal.
 
@@ -133,13 +133,13 @@ graph TD
 ### Dashboard (Next.js 16 + React 19)
 
 - **Always-visible console** — board firmware logs stream via MQTT (`device/stm32/logs`) and are parsed with the firmware's `[ms] [LEVEL] [TAG] message` format, color-coded by level.
-- **Agent chat with tool streaming** — SSE events render as a step-by-step execution trace (thinking, tool calls, results, reply) — similar to Claude Code's output.
+- **Agent chat with tool streaming** — SSE events render as a step-by-step execution trace (thinking, tool calls, results, reply).
 - **Real-time telemetry** — board status, firmware version, uptime, WiFi RSSI, capture count, connection state (online/standby/offline) all update live via MQTT WebSocket.
-- **Multi-session chat persistence** — conversations are stored in the database, survives page reloads and browser restarts.
+- **Multi-session chat persistence** — conversations are stored in the database and survive page reloads.
 
 ### CI/CD
 
-- **Smart path filtering** — `dorny/paths-filter` detects which components changed. A firmware-only change skips dashboard builds. A CSS tweak skips server tests. Saves CI minutes.
+- **Path-based filtering** — `dorny/paths-filter` detects which components changed. A firmware-only change skips dashboard builds.
 - **Full pipeline**: pytest (43 tests) -> Biome lint -> TypeScript check -> Next.js build -> ARM GCC cross-compile -> Docker build -> VPS deploy -> OTA firmware upload.
 - **Watchtower auto-update** — production containers poll GHCR every 5 minutes and restart on new images.
 
@@ -236,8 +236,8 @@ Configure `firmware/Core/Inc/firmware_config.h` for your WiFi SSID and server IP
 
 ### CI/CD (automatic after setup)
 
-Push to `main` -> GitHub Actions builds everything -> VPS deploys -> board updates OTA. Zero touch.
+Push to `main` -> GitHub Actions builds everything -> VPS deploys -> board updates OTA.
 
 ---
 
-<sub>Built as a bachelor thesis to prove that meaningful autonomous visual intelligence can run on a $50 microcontroller.</sub>
+<sub>Bachelor thesis project — Alexandru-Ionut Cioc, 2026</sub>
