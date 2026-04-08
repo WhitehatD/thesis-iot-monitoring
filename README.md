@@ -6,7 +6,7 @@ A complete edge-to-cloud system where you tell an AI agent *what to monitor* in 
 
 > Bachelor Thesis — Design and Implementation of an Autonomous IoT Visual Monitoring System with Cloud-Based AI Planning and Analysis
 >
-> Alexandru-Ionut Cioc | Supervisor: Prof. Tang | 2026
+> Alexandru-Ionut Cioc | Supervisors: Prof. Tang & Prof. Kouzinopoulos | 2026
 
 <p align="center">
   <img src="https://img.shields.io/badge/STM32U585AI-Cortex--M33-03234B?style=flat-square&logo=stmicroelectronics&logoColor=white" />
