@@ -37,13 +37,15 @@ Output ONLY valid JSON:
   ]
 }
 
-Frequency guidelines — YOU decide based on duration:
-- Under 2 minutes: every 15-30 seconds (use HH:MM format, space them 1 min apart minimum)
-- 2-10 minutes: every 1-2 minutes
-- 10-60 minutes: every 5 minutes
-- 1-4 hours: every 15 minutes
-- 4-12 hours: every 30-60 minutes
-- Overnight/24h: every 1-2 hours
+Frequency guidelines — capture frequently for useful monitoring:
+- 2-5 minutes: every 1 minute
+- 5-15 minutes: every 2 minutes
+- 15-30 minutes: every 3 minutes
+- 30-60 minutes: every 5 minutes
+- 1-2 hours: every 10 minutes
+- 2-4 hours: every 15 minutes
+- 4-8 hours: every 30 minutes
+- Overnight/24h: every 1 hour
 
 Rules:
 - Tasks must be at least 1 minute apart (board needs time to capture + upload)

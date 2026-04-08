@@ -48,17 +48,17 @@ AGENT_TOOLS = [
     {
         "name": "create_schedule",
         "description": (
-            "Generate a monitoring schedule from a natural language request. "
-            "Translates time ranges and frequencies into a JSON task list and "
-            "publishes it to the STM32 board via MQTT. Use this when the user "
-            "wants periodic or scheduled image captures over a time window."
+            "Create a LONG-DURATION monitoring schedule (2+ minutes). "
+            "Uses HH:MM time format — CANNOT schedule at sub-minute precision. "
+            "DO NOT use for durations under 2 minutes — use capture_sequence instead. "
+            "The schedule is saved to the database and sent to the board via MQTT."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "prompt": {
                     "type": "string",
-                    "description": "The user's natural language monitoring request, forwarded to the planning LLM.",
+                    "description": "The monitoring request with your chosen duration and frequency. Include 'every X minutes for Y duration'.",
                 },
             },
             "required": ["prompt"],
@@ -67,9 +67,8 @@ AGENT_TOOLS = [
     {
         "name": "capture_now",
         "description": (
-            "Take a single picture immediately. Sends a capture_now command "
-            "to the STM32 board. The board captures one image, uploads it, "
-            "and the server runs AI analysis on it. Use for single snapshots."
+            "Take a single picture immediately. The full pipeline runs: "
+            "capture → upload → AI analysis. Use for single snapshots."
         ),
         "input_schema": {
             "type": "object",
@@ -79,22 +78,23 @@ AGENT_TOOLS = [
     {
         "name": "capture_sequence",
         "description": (
-            "Take multiple pictures in rapid succession with precise timing. "
-            "Sends a single MQTT message with an array of millisecond delays. "
-            "The board executes all captures without needing additional MQTT "
-            "messages. Use when the user wants 2+ captures close together "
-            "(e.g. 'take 3 pictures 2 seconds apart', 'burst of 5 shots')."
+            "Take multiple pictures with millisecond-precision timing. "
+            "Use this for ANY monitoring under 2 minutes, bursts, or rapid sequences. "
+            "Examples: 'monitor for 30 seconds' → count=4, interval_ms=7500. "
+            "'monitor for 1 minute' → count=5, interval_ms=12000. "
+            "'burst of 3 shots' → count=3, interval_ms=2000. "
+            "YOU decide count and interval_ms based on the duration."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "count": {
                     "type": "integer",
-                    "description": "Number of pictures to take (2-16).",
+                    "description": "Number of pictures to take (2-16). Decide based on duration.",
                 },
                 "interval_ms": {
                     "type": "integer",
-                    "description": "Milliseconds between each capture (minimum 500).",
+                    "description": "Milliseconds between each capture (minimum 500). Decide based on duration.",
                 },
             },
             "required": ["count", "interval_ms"],
