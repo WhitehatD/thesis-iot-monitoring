@@ -266,10 +266,7 @@ jobs:
 
             # Inject secrets into persistent VPS env file
             ENV_FILE="$(pwd)/.env.prod"
-            cat > "$ENV_FILE" <<ENVEOF
-ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-FIRMWARE_UPLOAD_TOKEN=${FIRMWARE_UPLOAD_TOKEN}
-ENVEOF
+            printf '%s\n' "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" "FIRMWARE_UPLOAD_TOKEN=${FIRMWARE_UPLOAD_TOKEN}" > "$ENV_FILE"
             chmod 600 "$ENV_FILE"
 
             set -a
