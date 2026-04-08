@@ -211,7 +211,7 @@ async def upload_firmware(
     })
     
     try:
-        await mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+        mqtt_client.publish(settings.mqtt_topic_commands, update_command)
     except Exception as exc:
         print(f"[Firmware Upload] WARNING: MQTT publish failed: {exc}")
         # We don't fail the request because the file is safely saved on disk,
@@ -268,7 +268,7 @@ async def notify_firmware_update(
     })
 
     try:
-        await mqtt_client.publish(settings.mqtt_topic_commands, update_command)
+        mqtt_client.publish(settings.mqtt_topic_commands, update_command)
     except Exception as exc:
         raise HTTPException(
             status_code=503,

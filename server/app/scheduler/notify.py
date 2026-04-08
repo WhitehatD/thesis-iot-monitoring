@@ -22,37 +22,39 @@ async def notify_schedule_update():
     try:
         async with async_session() as db:
             schedules = await service.list_schedules(db)
+            # Build payload inside session context to avoid detached ORM access
+            payload = {
+                "schedules": [
+                    {
+                        "id": s.id,
+                        "name": s.name,
+                        "description": s.description,
+                        "is_active": s.is_active,
+                        "created_at": s.created_at.isoformat() if s.created_at else None,
+                        "updated_at": s.updated_at.isoformat() if s.updated_at else None,
+                        "tasks": [
+                            {
+                                "id": t.id,
+                                "time": t.time,
+                                "action": t.action,
+                                "objective": t.objective,
+                                "order": t.order,
+                                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
+                            }
+                            for t in s.tasks
+                        ],
+                    }
+                    for s in schedules
+                ]
+            }
     except Exception as e:
         print(f"[WARN] notify_schedule_update: DB read failed: {e}")
         return
 
-    payload = {
-        "schedules": [
-            {
-                "id": s.id,
-                "name": s.name,
-                "description": s.description,
-                "is_active": s.is_active,
-                "created_at": s.created_at.isoformat() if s.created_at else None,
-                "updated_at": s.updated_at.isoformat() if s.updated_at else None,
-                "tasks": [
-                    {
-                        "id": t.id,
-                        "time": t.time,
-                        "action": t.action,
-                        "objective": t.objective,
-                        "order": t.order,
-                        "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-                    }
-                    for t in s.tasks
-                ],
-            }
-            for s in schedules
-        ]
-    }
     try:
-        await mqtt_client.publish(
-            settings.mqtt_topic_dashboard_schedules, json.dumps(payload)
-        )
+        topic = settings.mqtt_topic_dashboard_schedules
+        message = json.dumps(payload)
+        mqtt_client.publish(topic, message)
+        print(f"[OK] notify_schedule_update: published {len(payload['schedules'])} schedules to {topic} ({len(message)} bytes)")
     except Exception as e:
         print(f"[WARN] notify_schedule_update: MQTT publish failed: {e}")

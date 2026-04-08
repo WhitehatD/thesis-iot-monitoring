@@ -62,7 +62,7 @@ async def set_wifi_config(request: WifiConfigRequest):
         "ssid": request.ssid,
         "password": request.password,
     }
-    await mqtt_client.publish(
+    mqtt_client.publish(
         settings.mqtt_topic_commands, json.dumps(command)
     )
 

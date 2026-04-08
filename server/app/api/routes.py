@@ -61,7 +61,7 @@ async def create_plan(request: PlanRequest):
 
     # Publish schedule to STM32 via MQTT
     schedule_json = json.dumps({"type": "schedule", "tasks": [t.model_dump() for t in plan.tasks]})
-    await mqtt_client.publish(settings.mqtt_topic_commands, schedule_json)
+    mqtt_client.publish(settings.mqtt_topic_commands, schedule_json)
 
     return plan
 
@@ -78,7 +78,7 @@ async def capture_now(request: CaptureRequest = CaptureRequest()):
 
     command = {"type": "capture_now", "task_id": _capture_counter}
     command_json = json.dumps(command)
-    await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
+    mqtt_client.publish(settings.mqtt_topic_commands, command_json)
 
     return CaptureResponse(
         task_id=_capture_counter,
@@ -94,7 +94,7 @@ async def ping_board():
     """
     command = {"type": "ping"}
     command_json = json.dumps(command)
-    await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
+    mqtt_client.publish(settings.mqtt_topic_commands, command_json)
 
     return {
         "status": "sent",
@@ -109,7 +109,7 @@ async def erase_wifi():
     """
     command = {"type": "erase_wifi"}
     command_json = json.dumps(command)
-    await mqtt_client.publish(settings.mqtt_topic_commands, command_json)
+    mqtt_client.publish(settings.mqtt_topic_commands, command_json)
 
     return {
         "status": "sent",
@@ -197,7 +197,7 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
         "timestamp": int(time.time()),
     }
     try:
-        await mqtt_client.publish(
+        mqtt_client.publish(
             settings.mqtt_topic_dashboard_images, json.dumps(image_meta)
         )
     except Exception as e:
@@ -279,7 +279,7 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
             "inference_ms": analysis.get("inference_time_ms", 0),
             "timestamp": int(time.time()),
         }
-        await mqtt_client.publish(settings.mqtt_topic_dashboard_analysis, json.dumps(analysis_msg))
+        mqtt_client.publish(settings.mqtt_topic_dashboard_analysis, json.dumps(analysis_msg))
 
         print(
             f"[AI] Analysis complete for task {task_id} "

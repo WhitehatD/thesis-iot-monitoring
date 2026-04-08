@@ -73,7 +73,7 @@ async def activate_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)
     mqtt_payload = await service.activate_schedule(db, schedule_id)
     payload_json = json.dumps(mqtt_payload)
 
-    await mqtt_client.publish(settings.mqtt_topic_commands, payload_json)
+    mqtt_client.publish(settings.mqtt_topic_commands, payload_json)
 
     await notify_schedule_update()
 
@@ -89,7 +89,7 @@ async def deactivate_schedule(schedule_id: int, db: AsyncSession = Depends(get_d
     """Deactivate a schedule and tell the board to clear it."""
     await service.deactivate_schedule(db, schedule_id)
     payload = json.dumps({"type": "delete_schedule"})
-    await mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
     await notify_schedule_update()
     return {"status": "deactivated", "schedule_id": schedule_id}
 
@@ -98,7 +98,7 @@ async def deactivate_schedule(schedule_id: int, db: AsyncSession = Depends(get_d
 async def set_sleep_mode(enabled: bool = True):
     """Toggle sleep mode on the STM32 board via MQTT."""
     payload = json.dumps({"type": "sleep_mode", "enabled": enabled})
-    await mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
     return {"status": "ok", "sleep_enabled": enabled}
 
 
@@ -107,7 +107,7 @@ async def delete_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
     """Delete a schedule and notify the board to clear it."""
     await service.delete_schedule(db, schedule_id)
     payload = json.dumps({"type": "delete_schedule", "schedule_id": schedule_id})
-    await mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
     await notify_schedule_update()
 
 

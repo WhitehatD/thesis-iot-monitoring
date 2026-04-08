@@ -193,6 +193,11 @@ export default function BoardPage({
 			if (topic === "dashboard/schedules/updated") {
 				if (data.schedules) {
 					setSchedules(data.schedules);
+					addLog(
+						"mqtt",
+						"SCHED",
+						`Schedule update via MQTT (${data.schedules.length} schedules)`,
+					);
 				}
 				return;
 			}
