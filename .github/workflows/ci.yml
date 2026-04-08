@@ -261,7 +261,8 @@ jobs:
               DEPLOY_DIR=$(dirname "$FILE_PATH")
               echo "Found deployment directory at $DEPLOY_DIR"
               cd "$DEPLOY_DIR"
-              git pull origin main
+              git fetch origin main
+              git reset --hard origin/main
             fi
 
             # Inject secrets into persistent VPS env file

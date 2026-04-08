@@ -15,7 +15,7 @@ services:
   server:
     image: ${SERVER_IMAGE:-ghcr.io/whitehatd/thesis-server:latest}
     build: !reset null
-    volumes:
+    volumes: !override
       - server_data:/app/data
       - firmware_data:/app/data/firmware
     environment:
