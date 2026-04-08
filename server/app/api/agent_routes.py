@@ -137,22 +137,27 @@ AGENT_TOOLS = [
     },
 ]
 
-AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent. You control a physical STM32 camera board via MQTT commands. You are NOT the camera — you send commands to it.
+AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent. You control a physical STM32 camera board over MQTT. You are NOT the camera — you dispatch commands to the board hardware.
 
-Key workflow: The board captures images → uploads to server → server runs AI vision analysis.
+Pipeline: You send MQTT command → board captures image → board uploads to server → server runs AI vision analysis → results stream back to you.
 
-Tool selection guide:
-- "what does the camera see" / "look at" / "check on" → capture_now FIRST, then tell the user the AI analysis will appear in the gallery shortly. If they ask about an EXISTING analysis, use analyze_latest.
+When you call capture_now, the system automatically runs the full pipeline (capture → upload → AI analysis) and streams each step to the user in real time. You do NOT need to describe what will happen — the pipeline handles it.
+
+Tool selection:
+- "what does the camera see" / "look" / "check on" / "show me" → capture_now (triggers full pipeline including AI analysis)
 - "take a picture" / "capture" / "snap" / "photo" → capture_now
-- "monitor every X" / "schedule" / "watch from X to Y" → create_schedule
-- "burst" / "sequence" / "take N pictures" → capture_sequence
-- "is the board alive" / "ping" → ping_board
-- "show last analysis" / "previous results" → analyze_latest
-- "board status" / "health" → get_board_status
+- "monitor every X" / "schedule" / "watch between" → create_schedule
+- "burst" / "sequence" / "take N pictures" / "rapid" → capture_sequence
+- "is it alive" / "ping" / "responsive" → ping_board
+- "show last analysis" / "previous results" / "what did you find" → analyze_latest
+- "board status" / "health" / "firmware" → get_board_status
 
-IMPORTANT: When the user implies they want to SEE something (what's there, what's happening, look, check), always capture a new image. Only use analyze_latest when they explicitly ask about a PREVIOUS analysis.
-
-Be concise. For capture_sequence, derive count and interval_ms from context (default: 2s interval).
+Rules:
+- When the user implies they want to SEE something NOW, always use capture_now. It captures + analyzes in one flow.
+- Only use analyze_latest when they ask about a PREVIOUS/EXISTING analysis.
+- Be concise. Don't explain the pipeline — the streaming steps show it.
+- For capture_sequence, derive count and interval_ms from context (default: 2s).
+- Don't reference UI elements (buttons, panels, galleries). You execute board actions.
 """
 
 
@@ -473,17 +478,31 @@ async def _tool_analyze_latest() -> dict:
 
 
 async def _tool_board_status() -> dict:
+    from sqlalchemy import func, select
+    from app.analysis.models import AnalysisResult
+    from app.db.database import async_session
+
+    # Count analyses and images to give real stats
+    async with async_session() as db:
+        count_result = await db.execute(select(func.count(AnalysisResult.id)))
+        analysis_count = count_result.scalar() or 0
+
+        latest_result = await db.execute(
+            select(AnalysisResult).order_by(AnalysisResult.created_at.desc()).limit(1)
+        )
+        latest = latest_result.scalar_one_or_none()
+
+    detail = "**Board Status**\n\n"
+    detail += f"- **Total Analyses:** {analysis_count}\n"
+    if latest:
+        detail += f"- **Last Analysis:** task #{latest.task_id} ({latest.model_used}, {latest.inference_time_ms:.0f}ms)\n"
+        detail += f"- **Last Objective:** {latest.objective}\n"
+    detail += "\n*MQTT heartbeats determine online/offline. Ping the board to verify responsiveness.*"
+
     return {
         "success": True,
-        "summary": "Status displayed in telemetry panel",
-        "detail": (
-            "**Board Status**\n\n"
-            "Live telemetry is shown in the left panel:\n"
-            "- **Online/Offline** — MQTT heartbeats every 5s\n"
-            "- **Firmware** — current version (auto-updated via OTA)\n"
-            "- **Captures** — total images this session\n\n"
-            "Use **Ping Node** button to verify responsiveness."
-        ),
+        "summary": f"Board active — {analysis_count} analyses recorded",
+        "detail": detail,
     }
 
 
