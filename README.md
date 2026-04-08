@@ -1,321 +1,243 @@
-<p align="center">
-  <h1 align="center">🔬 Autonomous IoT Visual Monitoring System</h1>
-  <p align="center">
-    <strong>STM32 Edge Camera with Multimodal LLM Intelligence</strong>
-  </p>
-  <p align="center">
-    <em>Bachelor Thesis — Computer Science & Engineering</em>
-    <br/>
-    <sub>by <strong>Alexandru Cioc (WhitehatD)</strong></sub>
-  </p>
-</p>
+# Autonomous IoT Visual Monitoring System
+
+**Natural language in, autonomous visual intelligence out.**
+
+A complete edge-to-cloud system where you tell an AI agent *what to monitor* in plain English, and a physical STM32 camera board autonomously captures, uploads, and analyzes images using multimodal LLMs — no camera feeds, no manual triggers, no human in the loop.
+
+> Bachelor Thesis — Design and Implementation of an Autonomous IoT Visual Monitoring System with Cloud-Based AI Planning and Analysis
+>
+> Alexandru-Ionut Cioc | Supervisor: Prof. Tang | 2026
 
 <p align="center">
-  <img src="https://img.shields.io/badge/STM32-U585AI-03234B?style=for-the-badge&logo=stmicroelectronics&logoColor=white" alt="STM32" />
-  <img src="https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=next.js&logoColor=white" alt="Next.js" />
-  <img src="https://img.shields.io/badge/MQTT-3.1.1-660066?style=for-the-badge&logo=eclipsemosquitto&logoColor=white" alt="MQTT" />
-  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker" />
-  <img src="https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white" alt="CI/CD" />
-  <img src="https://img.shields.io/badge/OTA-Dual_Bank_Flash-FF6F00?style=for-the-badge&logo=lightning&logoColor=white" alt="OTA" />
+  <img src="https://img.shields.io/badge/STM32U585AI-Cortex--M33-03234B?style=flat-square&logo=stmicroelectronics&logoColor=white" />
+  <img src="https://img.shields.io/badge/FastAPI-Python_3.12-009688?style=flat-square&logo=fastapi&logoColor=white" />
+  <img src="https://img.shields.io/badge/Next.js_16-React_19-000?style=flat-square&logo=next.js" />
+  <img src="https://img.shields.io/badge/MQTT-Mosquitto-660066?style=flat-square&logo=eclipsemosquitto&logoColor=white" />
+  <img src="https://img.shields.io/badge/OTA-Dual_Bank_Flash-FF6F00?style=flat-square" />
+  <img src="https://img.shields.io/badge/CI%2FCD-GitHub_Actions-2088FF?style=flat-square&logo=githubactions&logoColor=white" />
 </p>
 
 ---
 
-## 🚀 The Vision: Beyond Simple Sensors
+## What Makes This a Thesis, Not a Weekend Project
 
-Legacy industrial monitoring relies on dumb network cameras streaming petabytes of useless, empty footage to the cloud. This project introduces a fundamentally different paradigm: **Autonomous Visual Intelligence at the Edge**.
+This isn't a Raspberry Pi running a Python script. It's **five engineering disciplines in one system**:
 
-By combining a heavily optimized bare-metal STM32 microcontroller with state-of-the-art Multimodal Large Language Models (Gemini 3 Flash, Qwen3-VL), we deploy a zero-maintenance "eye" that actively understands its environment. It processes natural language prompts, creates its own execution schedules, captures high-fidelity RGB565 frames, and interprets the scene—all autonomously.
+| Layer | Technology | Lines of Code | What It Does |
+|-------|-----------|---------------|--------------|
+| **Firmware** | Bare-metal C, ARM Cortex-M33 | ~4,000 | OV5640 camera driver with register-level AEC tuning, hand-rolled MQTT 3.1.1 client, dual-bank OTA, DCMI/DMA capture, STOP2 sleep, hardware watchdog |
+| **Backend** | FastAPI, SQLAlchemy async, Python | ~3,000 | AI planning engine, multimodal LLM orchestration, MQTT broker bridge, image pipeline (RGB565 to JPEG), SSE streaming |
+| **Frontend** | Next.js 16, React 19, TypeScript | ~2,000 | Real-time MQTT WebSocket dashboard, agentic chat interface, live board console, image gallery with AI analysis overlay |
+| **Infrastructure** | Docker Compose, GitHub Actions, Nginx | ~500 | Automated CI/CD, cross-compilation, OTA binary delivery, VPS deployment, container orchestration |
+| **Hardware** | STM32 B-U585I-IOT02A Discovery Kit | — | 160MHz Cortex-M33, 768KB SRAM, OV5640 5MP camera, EMW3080 WiFi (SPI), dual-bank 2MB flash |
 
-Built for reliability, the system features a complete CI/CD-driven Over-The-Air (OTA) update pipeline, ensuring the edge devices continuously evolve without ever being physically touched.
-
----
-
-## ✨ Core Features
-
-* 🧠 **LLM-Driven Scheduling**: NLP planning engine translates human instructions ("Check if the delivery bay is clear every morning at 9 AM") into machine-executable RTC alarm sequences over MQTT.
-* ⚡ **Bare-Metal Performance**: Stripped-down, zero-RTOS C firmware maximizing the Cortex-M33's 160MHz capabilities. Complete memory control via stack watermark auditing.
-* 📸 **Capture Optimization**: Sub-second image acquisition. OV5640 PCLK boosted with an 800-line VTS (~30fps) and 20ms AEC hardware polling. DCMI DMA leverages perfect End-of-Frame hardware suspension (`HAL_DCMI_Suspend`) to eliminate tearing and top-line artifacts.
-* 🔄 **Zero-Downtime OTA Updates**: Dual-bank flash architecture utilizing a Download-to-RAM-first strategy to prevent Wi-Fi SPI starvation during erases. Firmware versions are robustly validated using non-semantic Git commit hashes (preventing accidental downgrades), streamed via chunked HTTP, verified via software CRC32, and executed via an atomic memory bank swap. Built-in automatic rollback upon boot failure ensures devices can't be bricked remotely.
-* 🛡️ **Autonomous Watchdog Recovery**: A 16-second Independent Hardware Watchdog (IWDG) runs on a dedicated LSI clock to protect against I2C bus deadlocks, camera DCMI stalls, and network lockups—guaranteeing 100% remote uptime recovery without manual intervention.
-* 🚦 **Mutually Exclusive Observability**: A strictly defined visual state machine through onboard LEDs guarantees zero ambiguity during diagnostics (Green heartbeat for Idle, Solid Red for Capture & Upload, Red/Green Strobe for OTA Updates).
-* 🌐 **Monitoring Dashboard**: A Next.js 16 control center featuring low-latency tactile feedback, real-time MQTT WebSocket pipelines, and live visual feeds.
-* 🛡️ **Resilient CI/CD Deployment**: End-to-end GitHub Actions pipeline. A single `git push` runs tests, compiles the ARM GCC payload, builds Docker containers, synchronizes the cloud VPS, and pushes the binary update directly to the edge hardware over-the-air.
+A single `git push` compiles ARM firmware, runs 43 backend tests, builds two Docker images, deploys to a VPS, and delivers a firmware update over-the-air to the physical board — without touching it.
 
 ---
 
-## 🔒 Enterprise Security & Reliability Hardening
+## The Agentic Pipeline
 
-In March 2026, the firmware underwent a comprehensive production-grade audit:
+The core innovation: a natural language prompt becomes autonomous hardware behavior.
 
-* **Decoupled & Hardened OTA Pipeline**: Resolved critical SPI bus contention and IWDG timeouts by separating version checks from binary downloads. Finalized in March 2026 with **32KB stack expansion**, systematic per-chunk watchdog refreshing, and robust buffer validation to eliminate memory corruption during long transfers.
-* **Hybrid OTA Push/Pull Daemon**: Re-architected the OTA discovery mechanism from a strict MQTT push-only model into a dual-layered Push/Pull daemon. The MCU autonomously polls the server version every 60 seconds (`OTA_CHECK_INTERVAL_MS`) without blocking the core event loop, guaranteeing distributed nodes are never permanently stranded autonomously if they happen to miss the central deployment broadcast.
-* **MIPC Socket Driver Hardening**: Resolved a severe API misuse involving the EMW3080 Wi-Fi driver where timeout values were incorrectly passed as TCP socket flags. This eliminated a critical networking freeze and hardware watchdog reset during the initial chunk reception of OTA downloads.
-* **Shared Socket Abstraction**: Abstracted and unified all TCP socket lifecycle management (`WiFi_TcpConnect`) across the MQTT and HTTP drivers, eliminating redundant magic numbers and silent network failure loops.
-* **Unconditional Watchdog Petting (Bare-Metal Abstraction)**: Resolved a persistent system reset during long OTA HTTP chunk downloads where the 16-second IWDG tripped before the 30-second SPI socket timeout could gracefully abort. Stripped fragile compilation guards in the OS abstraction layer (`mx_rtos_abs.c`) to ensure the watchdog is unfailingly petted during single-threaded `noos_sem_wait` and `noos_fifo_pop` blocking operations.
-* **Graceful SPI Error Recovery**: Patched `HAL_SPI_ErrorCallback` to eliminate a fatal `MX_ASSERT(false)` abstraction that trapped the MCU in an infinite `while(true)` death loop when high-throughput OTA chunks triggered a transient SPI Overrun (`OVR`). The STM32 now safely drops the MIPC chunk, letting the robust upper layers naturally timeout and retry instead of watchdog resetting.
-* **MIPC Transport Deadlock Elimination**: Repaired a critical architectural flaw where the EMW3080 Wi-Fi module silently stalled the entire STM32 SPI bus for exactly 10,000ms during TCP chunk downloads. The MIPC socket protocol was rigorously audited: the AT firmware expects a POSIX `struct mx_timeval` (8 bytes) for the `MX_SO_RCVTIMEO` socket option. The system previously passed a 4-byte `int32_t`, causing memory misalignment inside the EMW3080 where the timeout was interpreted as 100+ seconds, vastly exceeding the SPI polling threshold. The socket initialization was rewritten to securely pass the 8-byte `mx_timeval`, mathematically guaranteeing an instantaneous 100ms yield from the module even on empty buffers. This permanently eliminates the deadly `0x0205` transport hangs.
-* **Firmware MIPC Configuration Constraints**: Enforced a strict 10-second ceiling on `MX_WIFI_CMD_TIMEOUT` (down from the default 30s), eliminating silent application lockups. Instituted a **2-second SPI pre-warmup yield** explicitly designed to drain trailing MIPC artifacts following MQTT/Camera de-initialization sequences before engaging HTTP streams.
-* **Proactive SPI Overrun (OVR) Mitigation**: Resolved a severe physical transport fault where the EMW3080 Wi-Fi module's high-throughput TCP streams (122KB chunks) bombarded the bare-metal STM32 polling loop. This inherently caused hardware Overruns (`OVR`) during SysTick delays. Patched `mx_wifi_spi.c` to proactively clear `OVR`, `UDR`, and `MODF` flags before `HAL_SPI_TransmitReceive`, preventing the immediate HAL aborts that stalled MIPC packets and resolved the fatal `Error: command 0x0205 timeout`.
-* **MQTT Transport Reliability**: Hardened the custom bare-metal MQTT 3.1.1 client by fixing a critical API misuse where `MQTT_CONNECT_TIMEOUT_MS` was erroneously passed as the socket `flags` bitmask to the `MX_WIFI_Socket_send` API. This resolved a severe 10-second hang and dropped `SUBACK` issue, stabilizing the fleet command subscriber.
-* **Tactile Hardware Feedback**: Implemented a responsive `"ping"` command bridging the Next.js visual dashboard directly to the edge hardware (3× Red / 3× Green strobe).
-* **Strict Compiler Enforcement**: Upgraded the `Makefile` with a dedicated `-Werror` release target. Eradicated all implicit conversions and unreferenced variables.
-* **Log-Level Compilation & Telemetry**: Introduced `#define SYSTEM_LOG_LEVEL` filtering and **Stack High-Water Mark auditing**, stripping out heavy UART format strings locally while retaining critical error traces and memory safety observability. This reliably squeezed the firmware footprint down to **9.2%** of the available 1MB flash bank.
-* **Distributed Enterprise Dashboard (Next.js + TS)**: Re-architected the monolithic JavaScript UI into a robust TypeScript Next.js 16 application. Features a "Mechanical Luxury" YC-grade aesthetic with independent, real-time telemetry panels for tracking fleet-wide distributed STM32 nodes concurrently.
-* **Closed-Loop Hardware Feedback**: Hardened the visual "ping" sequence. The firmware now emits a conclusive `{"status":"ping_complete"}` MQTT acknowledgment back to the fleet dashboard after executing its hardware strobe sequence.
-* **Enterprise Task ID Synchronization**: Overhauled the task correlation architecture between the cloud Server, MQTT commands, and STM32 Edge. Replaced ephemeral server incrementers with strict Unix epoch-seeded sequences. The FastApi backend now explicitly packages unique `task_id` correlation IDs into remote `capture_now` MQTT payloads, and auto-intercepts legacy fallback IDs (`10000`, `20000`) dynamically upon `POST /api/upload`, guaranteeing perfect synchronization inside the React dashboard.
-* **Zero-Trust CORS Policies**: Audited the FastAPI cloud backend. Eliminated insecure wildcard origins combined with credential inclusions to strictly authenticate local UI traffic and eliminate implicit frontend `fetch` failures.
+```
+User: "Monitor the parking lot every 30 minutes for the next 2 hours"
+  |
+  v
+AI Planning Engine (Claude/Qwen) -----> Schedule: 4 tasks at :00, :30, :00, :30
+  |
+  v
+MQTT Command -----> STM32 Board stores schedule in RAM, sets RTC alarms
+  |
+  v
+Board wakes from STOP2 sleep -----> OV5640 captures RGB565 frame (83ms)
+  |
+  v
+HTTP POST (614KB, 16KB chunks) -----> Server converts RGB565 to JPEG
+  |
+  v
+Multimodal LLM (Gemini 3 Flash / Qwen3-VL) -----> Visual analysis
+  |
+  v
+Dashboard: real-time results streamed via SSE + MQTT WebSocket
+```
+
+Three LLM backends are compared for the thesis evaluation:
+- **Qwen3-VL-30B-A3B** via vLLM (open-weight, self-hosted)
+- **Qwen2.5-VL-3B** via vLLM (lightweight edge candidate)
+- **Gemini 3 Flash** via API (commercial baseline)
 
 ---
 
-## 🏗️ Architecture Blueprint
-
-The system spans from raw C hardware drivers to cloud-native Python services. The architecture is explicitly designed for **high observability** and **resilient edge-to-cloud communication**.
-
-### 1. The Global Network Topology
+## Architecture
 
 ```mermaid
 graph TD
-    classDef hardware fill:#03234B,color:#fff,stroke:#fff,stroke-width:2px
-    classDef cloud fill:#009688,color:#fff,stroke:#fff,stroke-width:2px
-    classDef frontend fill:#111,color:#fff,stroke:#38bdf8,stroke-width:2px
-    classDef db fill:#4CAF50,color:#fff,stroke:#fff
+    classDef hw fill:#1a1a2e,color:#e0e0e0,stroke:#3b82f6,stroke-width:2px
+    classDef cloud fill:#0f1923,color:#e0e0e0,stroke:#10b981,stroke-width:2px
+    classDef ui fill:#0f1923,color:#e0e0e0,stroke:#f59e0b,stroke-width:2px
 
-    subgraph Edge ["Edge Device (STM32 B-U585I-IOT02A)"]
-        MCU[Bare-Metal STM32U5]:::hardware
-        CAM[OV5640 Camera]:::hardware
-        WIFI[EMW3080 Wi-Fi]:::hardware
-        FLASH[Dual-Bank Flash]:::hardware
-        
+    subgraph Edge ["STM32 B-U585I-IOT02A"]
+        CAM[OV5640 Camera<br/>VGA RGB565]:::hw
+        MCU[Cortex-M33 160MHz<br/>Bare-Metal C]:::hw
+        WIFI[EMW3080 WiFi<br/>SPI Transport]:::hw
+        FLASH[Dual-Bank Flash<br/>OTA + Credentials]:::hw
+
         CAM -- DCMI/DMA --> MCU
         MCU -- SPI --> WIFI
-        MCU -- Flash API --> FLASH
+        MCU --> FLASH
     end
 
-    subgraph Infrastructure ["Cloud VPS Infrastructure"]
-        Broker[Mosquitto MQTT :1883]:::cloud
-        Server[FastAPI Backend :8000]:::cloud
-        DB[(SQLite Async)]:::db
-        AI[Multimodal LLMs<br/>Gemini/Qwen]:::cloud
-        
-        Broker <--> |Async Pub/Sub| Server
-        Server <--> |SQLAlchemy| DB
-        Server <--> |REST| AI
+    subgraph Cloud ["VPS (Docker Compose)"]
+        MQTT[Mosquitto<br/>MQTT 3.1.1]:::cloud
+        API[FastAPI<br/>+ AI Planner]:::cloud
+        DB[(SQLite<br/>Async)]:::cloud
+        LLM[Multimodal LLMs<br/>Gemini / Qwen]:::cloud
+
+        MQTT <--> API
+        API <--> DB
+        API <--> LLM
     end
 
-    subgraph Control ["User Interface"]
-        Dash[Next.js 16 Dashboard]:::frontend
+    subgraph UI ["Dashboard"]
+        DASH[Next.js 16<br/>Agent Chat + Console]:::ui
     end
 
-    %% Network links
-    WIFI == "MQTT (Telemetry & Commands)" === Broker
-    WIFI == "HTTP POST (Chunks)" === Server
-    Server == "HTTP GET (1MB Binary)" === WIFI
-    
-    Server -- "REST API" <--> Dash
-    Broker -- "WebSockets :9001" <--> Dash
-```
-
-### 2. High-Fidelity Capture Lifecycle
-
-The image capture process is tracked with microsecond precision. The dashboards acts as a true digital twin, reflecting state changes instantly.
-
-```mermaid
-sequenceDiagram
-    participant Dash as Dashboard
-    participant MQTT as Mosquitto
-    participant Server as FastAPI
-    participant Board as STM32 Edge
-    
-    Dash->>MQTT: Publish {"type":"capture_now"}
-    MQTT->>Board: Route to device/stm32/commands
-    
-    rect rgb(20, 40, 60)
-        Note over Board,Dash: Capture Phase
-        Board->>MQTT: status: {"status":"job_received"}
-        Board->>MQTT: status: {"status":"camera_init"}
-        Board->>MQTT: status: {"status":"capturing"}
-        Board-->>Board: OV5640 DCMI DMA Transfer (140ms)
-    end
-    
-    rect rgb(20, 60, 40)
-        Note over Board,Dash: Upload Phase
-        Board->>MQTT: status: {"status":"uploading"}
-        loop HTTP Chunking (16KB)
-            Board->>Server: POST /api/upload
-        end
-        Server-->>Board: 200 OK
-    end
-    
-    Board->>MQTT: status: {"status":"captured", "latency_ms":143, "size":614400}
-    MQTT->>Dash: Update UI (Performance Telemetry Panel)
-```
-
-### 3. Enterprise OTA Download-to-RAM Pipeline
-
-Updates are executed silently, with full rollback protection and real-time frontend visibility.
-
-```mermaid
-stateDiagram-v2
-    direction LR
-    
-    state "CI/CD Pipeline" as CI {
-        Build --> PushBinary
-        PushBinary --> NotifyWebhook
-    }
-    
-    state "Cloud VPS" as VPS {
-        FastAPI_Upload --> Save_firmware_json
-        Save_firmware_json --> MQTT_Trigger
-    }
-    
-    state "STM32 Edge" as Edge {
-        CheckVersion --> Download2RAM
-        Download2RAM --> FlashErase
-        FlashErase --> WriteFlash
-        WriteFlash --> RebootSwap
-    }
-    
-    NotifyWebhook --> FastAPI_Upload: POST /api/firmware/upload
-    MQTT_Trigger --> CheckVersion: {"type":"firmware_update"}
-    CheckVersion --> Save_firmware_json: HTTP GET /version (Mismatch?)
-    
-    note right of Download2RAM: Ensures Wi-Fi module<br/>SPI pipeline isn't starved<br/>by Flash erase stalls.
-    note right of RebootSwap: Bank automatic rollback<br/>if new image faults.
+    WIFI == "MQTT telemetry + commands" ==> MQTT
+    WIFI == "HTTP POST images" ==> API
+    API == "OTA binary" ==> WIFI
+    API -- REST + SSE --> DASH
+    MQTT -- WebSocket --> DASH
 ```
 
 ---
 
-## 📂 Codebase Anatomy
+## Key Technical Achievements
 
-The monorepo contains four primary components, strictly separated by concern:
+### Firmware (Bare-Metal, No RTOS)
 
-### 1. `firmware/` (The Brains of the Edge)
+- **Hand-rolled MQTT 3.1.1 client** over the EMW3080's TCP socket API — no coreMQTT, no FreeRTOS dependency. Connect, subscribe, publish, ping, and auto-reconnect in ~400 lines of C.
+- **Adaptive AEC convergence** — polls the OV5640's luminance register at 50ms intervals. In well-lit scenes, captures in ~300ms. In dark scenes, detects AEC saturation (stable readings) and exits early instead of wasting the full timeout. Night mode extends exposure to 4x VTS (~300ms) automatically.
+- **Zero-downtime OTA** — CI/CD pushes firmware binary to VPS, board polls for updates, downloads to RAM in 2KB chunks (avoiding SPI/flash contention), CRC32-verifies, erases inactive flash bank, writes, and performs atomic bank swap. Automatic rollback on boot failure.
+- **STOP2 sleep between tasks** — board enters 2uA deep sleep between scheduled captures, wakes via RTC alarm. Extends battery life from hours to weeks.
+- **Captive portal WiFi provisioning** — no hardcoded credentials. Board starts a SoftAP with a configuration web page at 192.168.10.1 when no stored network is available.
+- **9 MQTT command types**: capture_now, capture_sequence, schedule, delete_schedule, firmware_update, sleep_mode, ping, set_wifi, start_portal.
 
-Bare-metal C code compiled via `arm-none-eabi-gcc`.
+### Backend (FastAPI + AI)
 
-* **`main.c`**: The unified non-blocking event loop. Handles RTC wakeups, MQTT command dispatch, hardware watchdog refreshing, and graceful standby.
-* **`ota_update.c`**: Dual-bank firmware flashing mechanism. Implements secure chunk downloading into RAM, CRC32 verification, git-hash parsing, and atomic memory swapping. Hardened with 32KB stack safety and per-chunk watchdog pet sequences.
-* **`camera.c`**: Interacts with the OV5640 sensor. Initializes persistent configurations to enable warm sub-second capturing. Now with explicit shutdown verification before OTA staging.
-* **`wifi.c` / `mqtt_handler.c`**: High-durability networking stack. NTP time fetching is aggressively optimized via 50ms SPI polling loops (shaving 1.9s off boot time), while MQTT handles automatic silent reconnection sequences.
+- **AI planning engine** — translates natural language monitoring requests into executable HH:MM task schedules with objectives. The planner is model-agnostic (Claude, Gemini, Qwen).
+- **Agentic chat with 8 tools** — the dashboard chat is backed by Claude with tool_use. The agent can capture images, create schedules, ping the board, enter setup mode, analyze results, and synthesize findings — all through natural language.
+- **Full capture pipeline with SSE streaming** — when the agent triggers a capture, the server streams real-time progress events (command sent, image received, analysis complete) back to the dashboard. For sequences, it tracks all N images individually.
+- **RGB565 to JPEG conversion** — the OV5640 outputs BGR565 little-endian. The server correctly extracts B[15:11] G[10:5] R[4:0], scales to 8-bit, and saves as JPEG.
+- **Auto-deactivation** — when the board reports `cycle_complete`, the server automatically deactivates the active schedule.
 
-### 2. `server/` (The Cloud Engine)
+### Dashboard (Next.js 16 + React 19)
 
-Modern Python `FastAPI` application engineered for speed and resilience.
+- **Always-visible console** — board firmware logs stream via MQTT (`device/stm32/logs`) and are parsed with the firmware's `[ms] [LEVEL] [TAG] message` format, color-coded by level.
+- **Agent chat with tool streaming** — SSE events render as a step-by-step execution trace (thinking, tool calls, results, reply) — similar to Claude Code's output.
+- **Real-time telemetry** — board status, firmware version, uptime, WiFi RSSI, capture count, connection state (online/standby/offline) all update live via MQTT WebSocket.
+- **Multi-session chat persistence** — conversations are stored in the database, survives page reloads and browser restarts.
 
-* **API Layer**: Ingests image arrays, coordinates LLM generation, curates metadata, and handles OTA payload authorization. Error handling prevents malformed uploads.
-* **MQTT Layer**: Connects asynchronously to Mosquitto, pushing live commands (`capture_sequence`, `firmware_update`) to the fleet in real-time.
-* **AI Planner**: Converts abstract prompt strings to discrete JSON cron tasks using `gemini-3-flash` or local `vLLM`.
+### CI/CD
 
-### 3. `dashboard/` (The Interactive Digital Twin)
-
-React 19 / Next.js 16 highly-responsive frontend, engineered as a direct extension of the hardware state.
-
-* **Zero-Latency Telemetry**: Utilizes WebSocket-MQTT listeners for instantaneous state reflection without HTTP polling lag.
-* **Board Telemetry Panel**: A persistent glassmorphic interface that live-updates the active firmware version, hardware uptime, latest image size (KB), and sub-second capture latency (e.g., `187ms`).
-* **Progressive Status Stepper**: Visually tracks the exact execution state of edge jobs. Granularly resolves 6 phases: `Sending`, `Job Received`, `Camera Init`, `Capturing Image`, `Uploading`, and `Finished`, complete with per-step timing traces.
-* **CI/CD Deploy History**: Directly integrates with the FastAPI backend to visualize the chronological timeline of all OTA pushes and remote firmware upgrades.
-
-### 4. `scripts/` & `.github/workflows/` (The Factory)
-
-* **`ci.yml`**: Enterprise-grade adaptive pipeline. Uses `dorny/paths-filter` to dynamically isolate builds (Dashboard, Server, Firmware).
-  * **Dashboard Validation**: Strictly enforced Biome linting and TypeScript type-checking.
-  * **Server Validation**: PyTest gating and dependency audits.
-  * **Smart Orchestration**: Builds Docker images & synchronizes the VPS only for modules that inherently changed, optimizing CI minute consumption and eliminating redundant deployments.
+- **Smart path filtering** — `dorny/paths-filter` detects which components changed. A firmware-only change skips dashboard builds. A CSS tweak skips server tests. Saves CI minutes.
+- **Full pipeline**: pytest (43 tests) -> Biome lint -> TypeScript check -> Next.js build -> ARM GCC cross-compile -> Docker build -> VPS deploy -> OTA firmware upload.
+- **Watchtower auto-update** — production containers poll GHCR every 5 minutes and restart on new images.
 
 ---
 
-## 📡 MQTT Command Reference
+## Repository Structure
 
-All commands are JSON payloads published to the `device/stm32/commands` topic. The FastAPI backend coordinates these, but they can also be triggered manually during testing:
+```
+thesis-iot-monitoring/
+  firmware/               Bare-metal C (ARM GCC, STM32U585AI)
+    Core/Src/
+      main.c              Event loop, scheduler, command dispatch
+      camera.c            OV5640 driver, AEC tuning, DCMI/DMA capture
+      mqtt_handler.c      Hand-rolled MQTT 3.1.1 client
+      ota_update.c        Dual-bank OTA with CRC32 + rollback
+      wifi.c              EMW3080 TCP/HTTP, NTP, socket management
+      captive_portal.c    SoftAP WiFi provisioning web server
+    Core/Inc/
+      firmware_config.h   All tuneable parameters in one file
+    Drivers/              ST BSP + OV5640 + EMW3080 drivers
 
-| Command | Payload | Description |
-|---------|---------|-------------|
-| Capture Now | `{"type":"capture_now"}` | Instant image capture + upload |
-| Capture Sequence | `{"type":"capture_sequence","delays_ms":[0,2000]}` | Multi-capture at ms offsets |
-| Schedule | `{"type":"schedule","tasks":[...]}` | AI-generated task schedule |
-| Delete Schedule | `{"type":"delete_schedule"}` | Clear active schedule |
-| Firmware Update | `{"type":"firmware_update"}` | Trigger OTA update check |
-| Sleep Mode | `{"type":"sleep_mode","enabled":true}` | Toggle STOP2 between tasks |
-| Ping | `{"type":"ping"}` | LED strobe + acknowledgment |
-| Set WiFi | `{"type":"set_wifi","ssid":"...","password":"..."}` | Remote WiFi reconfiguration |
-| Erase WiFi | `{"type":"erase_wifi"}` | Erase credentials + reboot to portal |
-| Start Portal | `{"type":"start_portal"}` | Force captive portal mode |
+  server/                 FastAPI backend (Python 3.12)
+    app/
+      api/
+        agent_routes.py   Agentic chat (Claude tool_use + SSE streaming)
+        routes.py         Image upload, RGB565 conversion, analysis trigger
+        scheduler_routes.py  Schedule CRUD + MQTT dispatch
+      agent/              Chat session persistence (SQLAlchemy)
+      analysis/           Multimodal LLM analysis pipeline
+      planning/           NL prompt to schedule generation
+      mqtt/               Async MQTT client + auto-deactivation
+    tests/                43 pytest tests (async, in-memory SQLite)
+
+  dashboard/              Next.js 16 frontend (TypeScript, React 19)
+    app/
+      page.tsx            Fleet overview with live MQTT telemetry
+      board/[id]/page.tsx Board detail: chat + gallery + console
+      components/
+        AgentChat.tsx     Multi-session chat with SSE tool streaming
+      hooks/
+        useMQTT.ts        WebSocket MQTT hook with board tracking
+
+  mosquitto/              MQTT broker configuration
+  docker-compose.yml      Development stack
+  docker-compose.prod.yml Production (GHCR images + Watchtower)
+  .github/workflows/
+    ci.yml                Adaptive CI/CD pipeline
+```
 
 ---
 
-## 🚦 Edge Hardware Observability
+## MQTT Command Reference
 
-Ambiguous flashing LEDs are the bane of IoT engineering. This system employs a strictly enforced visual state machine via the board's Red and Green LEDs:
+All commands are JSON payloads on `device/stm32/commands`:
 
-| Hardware State | LED Pattern | What it means |
-| :--- | :--- | :--- |
-| **Boot Success** | 🟢 3× Fast Flashes | Hardware initialized, mapped to MQTT, ready. |
-| **Idling** | 🟢 50ms Pulse / 3 sec | Ultra-low power "heartbeat" proving system vitality. |
-| **Capture & Upload** | 🔴 Solid + 🟢 Rapid Flicker (Upload) | Sensor captures frame (Red) and streams via HTTP (Green flickers during transfer). |
-| **OTA Initialize** | 🔴+🟢 5× Strobe | Over-The-Air firmware manipulation is imminent. |
-| **OTA Flashing** | 🔴+🟢 Solid (Erase) → 🔴 Solid + 🟢 Pulse (Write) | Critical memory wiping and writing in progress. Do not unplug. |
+| Command | Payload | Board Response |
+|---------|---------|----------------|
+| Single capture | `{"type":"capture_now","task_id":N}` | Capture + HTTP upload + status updates |
+| Timed sequence | `{"type":"capture_sequence","task_id":N,"delays_ms":[0,5000,10000]}` | Multiple captures at ms offsets |
+| Schedule | `{"type":"schedule","tasks":[{"time":"09:00","action":"CAPTURE_IMAGE","objective":"..."}]}` | Stored in RAM, RTC alarms set |
+| Delete schedule | `{"type":"delete_schedule"}` | Clears active schedule |
+| OTA update | `{"type":"firmware_update"}` | Polls server, downloads, flashes, reboots |
+| Sleep toggle | `{"type":"sleep_mode","enabled":true}` | STOP2 between tasks (2uA) |
+| Ping | `{"type":"ping"}` | LED strobe (3x red, 3x green) + MQTT ack |
+| WiFi config | `{"type":"set_wifi","ssid":"...","password":"..."}` | Save to flash + reconnect |
+| WiFi portal | `{"type":"start_portal"}` | Start SoftAP at 192.168.10.1 |
+| Erase WiFi | `{"type":"erase_wifi"}` | Wipe credentials + reboot to portal |
 
 ---
 
-## 🛠️ Deployment & Setup (The "Zero-Friction" Way)
+## Quick Start
 
-### 1. The Cloud Platform (VPS)
-
-We bypass complicated third-party runners in favor of an aggressively streamlined VPS Docker model.
+### Cloud (VPS or local)
 
 ```bash
-# Clone the repository
-git clone https://github.com/your-username/thesis-iot-monitoring.git
+git clone https://github.com/whitehatd/thesis-iot-monitoring.git
 cd thesis-iot-monitoring
-
-# Set up your environment (AI API Keys, Host IPs)
-cp server/.env.example server/.env
-
-# Summon the stack
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-
-# Once running, access the Next.js Dashboard at: http://localhost:3000
+cp server/.env.example server/.env   # Configure API keys
+docker compose up -d                 # Mosquitto + FastAPI + Dashboard
 ```
 
-### 2. The Edge Firmware
+Dashboard at `http://localhost:3000`, API at `http://localhost:8000/docs`.
+
+### Firmware (first flash only)
 
 ```bash
-# Navigate to the firmware workspace
 cd firmware
-
-# Compile using your machine's parallel cores
-make -j8
-
-# First-time flash through ST-Link (subsequent fixes will push via OTA)
-make flash
+make -j8                                              # Cross-compile
+make flash                                            # STLink (one time)
+# All subsequent updates deploy via OTA through CI/CD
 ```
 
-Edit `firmware/Core/Inc/firmware_config.h` to supply your respective `WIFI_SSID` and `SERVER_HOST`.
+Configure `firmware/Core/Inc/firmware_config.h` for your WiFi SSID and server IP. Or use the captive portal — the board broadcasts a setup network on first boot.
 
-### 3. The CI/CD OTA Loop
+### CI/CD (automatic after setup)
 
-When modifying Edge Firmware (`main.c` / `camera.c`), you no longer physically touch the board.
-
-1. Commit and push your C code to GitHub `main` branch.
-2. The GitHub Action spins up an Ubuntu node, runs GNU Make, and packages `thesis-iot-firmware.bin`.
-3. The Action authenticates and pushes the binary straight to your live VPS over `/api/firmware/upload`.
-4. Your VPS securely brokers an MQTT payload to the board (`"type": "firmware_update"`).
-5. The board intercepts the payload, downloads chunks out of standard execution paths, flashes the inactive bank, and self-resets gracefully into the new logic.
-
-### 4. Board Setup (Wi-Fi Provisioning)
-
-If the board is freshly flashed or cannot connect to a known network, it will automatically launch a secure Captive Portal for headless configuration:
-
-1. Look for a solid **Red LED** indicating Portal Mode.
-2. On your phone or laptop, connect to the newly broadcasted **`IoT-Setup-XXXX`** Wi-Fi network using the default password **`setup123`**.
-3. Your device should automatically prompt you to "Sign in to network". If it doesn't, open a browser and navigate to **[http://192.168.10.1](http://192.168.10.1)**.
-4. Enter your target Wi-Fi SSID and Password in the portal UI.
-5. Click **Save & Connect**. The board will save the credentials to its internal flash memory, reboot automatically, and join your local network.
+Push to `main` -> GitHub Actions builds everything -> VPS deploys -> board updates OTA. Zero touch.
 
 ---
 
-<p align="center">
-  <sub>Built with ❤️ for autonomous vision research</sub>
-</p>
+<sub>Built as a bachelor thesis to prove that meaningful autonomous visual intelligence can run on a $50 microcontroller.</sub>
