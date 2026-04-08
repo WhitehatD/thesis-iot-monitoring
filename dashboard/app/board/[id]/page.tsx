@@ -76,9 +76,9 @@ export default function BoardPage({
 	});
 	const [images, setImages] = useState<ImageCapture[]>([]);
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
-	const [activeTab, setActiveTab] = useState<
-		"gallery" | "console" | "schedules"
-	>("gallery");
+	const [activeTab, setActiveTab] = useState<"gallery" | "schedules">(
+		"gallery",
+	);
 	const [schedules, setSchedules] = useState<any[]>([]);
 
 	const logIdRef = useRef(0);
@@ -130,7 +130,7 @@ export default function BoardPage({
 		// Load schedules
 		fetch(`${apiBase}/api/schedules`)
 			.then((r) => r.json())
-			.then(setSchedules)
+			.then((data) => setSchedules(data.schedules ?? data ?? []))
 			.catch(() => {});
 	}, [fetchImages, apiBase]);
 
@@ -368,48 +368,31 @@ export default function BoardPage({
 
 	return (
 		<div className="app-container agent-layout">
-			{/* Header with inline telemetry */}
+			{/* Header */}
 			<header className="agent-header-bar">
 				<div className="agent-header-left">
 					<Link href="/" className="btn-back">
 						&larr;
 					</Link>
-					<div className="agent-header-info">
-						<h1 className="agent-header-title">Monitoring Agent</h1>
-						<span className="agent-header-node">{boardId}</span>
-					</div>
+					<h1 className="agent-header-title">Monitoring Agent</h1>
+					<span className="agent-header-node">{boardId}</span>
 				</div>
 				<div className="agent-header-stats">
-					<div className="header-stat">
-						<div className={`status-indicator ${board.connection}`}>
-							<div className="dot" />
-							{board.connection === "online"
-								? "Online"
-								: board.connection === "sleeping"
-									? "Standby"
-									: "Offline"}
-						</div>
+					<div className={`status-indicator ${board.connection}`}>
+						<div className="dot" />
+						{board.connection === "online"
+							? "Online"
+							: board.connection === "sleeping"
+								? "Standby"
+								: "Offline"}
 					</div>
-					<div className="header-stat">
-						<span className="header-stat-label">FW</span>
-						<span className="header-stat-value">
-							{board.firmware ? `v${board.firmware}` : "\u2014"}
-						</span>
-					</div>
-					<div className="header-stat">
-						<span className="header-stat-label">Captures</span>
-						<span className="header-stat-value highlight">
-							{board.captures}
-						</span>
-					</div>
-					<div className="header-stat">
-						<span className="header-stat-label">State</span>
-						<span
-							className={`header-stat-value ${getStatusClass(board.status)}`}
-						>
-							{board.status}
-						</span>
-					</div>
+					<span className="header-chip">
+						FW {board.firmware ? `v${board.firmware}` : "\u2014"}
+					</span>
+					<span className="header-chip">
+						<span className={getStatusClass(board.status)}>{board.status}</span>
+					</span>
+					<span className="header-chip highlight">{board.captures} caps</span>
 					<div className="connection-badge">
 						<div
 							className={`connection-dot ${connectionStatus === "connected" ? "connected" : "disconnected"}`}
@@ -419,153 +402,141 @@ export default function BoardPage({
 				</div>
 			</header>
 
-			{/* Agent Chat — hero element */}
+			{/* Left: Agent Chat */}
 			<main className="agent-main">
 				<AgentChat boardId={boardId} apiBase={apiBase} fullSize />
 			</main>
 
-			{/* Right panel: Gallery + Console */}
-			<aside className="agent-sidebar">
-				<div className="panel-tabs">
-					<button
-						className={`panel-tab ${activeTab === "gallery" ? "active" : ""}`}
-						onClick={() => setActiveTab("gallery")}
-					>
-						Gallery
-						{images.length > 0 && (
-							<span className="tab-count">{images.length}</span>
+			{/* Right: Gallery/Schedules (top) + Console (bottom, always visible) */}
+			<aside className="agent-panel">
+				<div className="panel-upper">
+					<div className="panel-tabs">
+						<button
+							className={`panel-tab ${activeTab === "gallery" ? "active" : ""}`}
+							onClick={() => setActiveTab("gallery")}
+						>
+							Gallery
+							{images.length > 0 && (
+								<span className="tab-count">{images.length}</span>
+							)}
+						</button>
+						<button
+							className={`panel-tab ${activeTab === "schedules" ? "active" : ""}`}
+							onClick={() => setActiveTab("schedules")}
+						>
+							Schedules
+							{schedules.length > 0 && (
+								<span className="tab-count">{schedules.length}</span>
+							)}
+						</button>
+					</div>
+
+					<div className="panel-content">
+						{activeTab === "gallery" && (
+							<div className="sidebar-gallery">
+								{sortedImages.length === 0 ? (
+									<div className="empty-state-sm">
+										No captures yet. Ask the agent to take a picture.
+									</div>
+								) : (
+									sortedImages.map((img) => (
+										<div
+											key={img.filename}
+											className="sidebar-image-card"
+											onClick={() => setSelectedImage(img)}
+										>
+											{img.analysis && (
+												<div
+													className={`analysis-indicator ${img.analysis.objectiveMet ? "met" : "unmet"}`}
+												/>
+											)}
+											<div className="sidebar-image-wrapper">
+												<img
+													src={img.url}
+													alt={`Task ${img.taskId}`}
+													loading="lazy"
+												/>
+											</div>
+											<div className="sidebar-image-meta">
+												<span>#{img.taskId}</span>
+												<span className="image-time">
+													{new Date(img.timestamp * 1000).toLocaleTimeString()}
+												</span>
+											</div>
+										</div>
+									))
+								)}
+							</div>
 						)}
-					</button>
-					<button
-						className={`panel-tab ${activeTab === "console" ? "active" : ""}`}
-						onClick={() => setActiveTab("console")}
-					>
-						Console
-						{board.logs.length > 0 && (
-							<span className="tab-count">{board.logs.length}</span>
+
+						{activeTab === "schedules" && (
+							<div className="schedules-list">
+								{schedules.length === 0 ? (
+									<div className="empty-state-sm">
+										No schedules yet. Ask the agent to create one.
+									</div>
+								) : (
+									schedules.map((sched: any) => (
+										<div
+											key={sched.id}
+											className={`schedule-card ${sched.is_active ? "active" : ""}`}
+										>
+											<div className="schedule-header">
+												<span className="schedule-name">{sched.name}</span>
+												{sched.is_active && (
+													<span className="schedule-badge">Active</span>
+												)}
+											</div>
+											{sched.description && (
+												<p className="schedule-desc">{sched.description}</p>
+											)}
+											<div className="schedule-tasks">
+												{(sched.tasks || []).map((task: any) => (
+													<div key={task.id} className="schedule-task">
+														<span className="schedule-time">{task.time}</span>
+														<span className="schedule-obj">
+															{task.objective || task.action}
+														</span>
+													</div>
+												))}
+											</div>
+										</div>
+									))
+								)}
+							</div>
 						)}
-					</button>
-					<button
-						className={`panel-tab ${activeTab === "schedules" ? "active" : ""}`}
-						onClick={() => setActiveTab("schedules")}
-					>
-						Schedules
-						{schedules.length > 0 && (
-							<span className="tab-count">{schedules.length}</span>
-						)}
-					</button>
+					</div>
 				</div>
 
-				{activeTab === "gallery" && (
-					<div className="panel-content">
-						<div className="sidebar-gallery">
-							{sortedImages.length === 0 ? (
-								<div className="empty-state-sm">
-									No captures yet. Ask the agent to take a picture.
-								</div>
-							) : (
-								sortedImages.map((img) => (
-									<div
-										key={img.filename}
-										className="sidebar-image-card"
-										onClick={() => setSelectedImage(img)}
-									>
-										{img.analysis && (
-											<div
-												className={`analysis-indicator ${img.analysis.objectiveMet ? "met" : "unmet"}`}
-											/>
-										)}
-										<div className="sidebar-image-wrapper">
-											<img
-												src={img.url}
-												alt={`Task ${img.taskId}`}
-												loading="lazy"
-											/>
-										</div>
-										<div className="sidebar-image-meta">
-											<span>#{img.taskId}</span>
-											<span className="image-time">
-												{new Date(img.timestamp * 1000).toLocaleTimeString()}
-											</span>
-										</div>
-									</div>
-								))
-							)}
-						</div>
+				{/* Console — always visible */}
+				<div className="panel-console">
+					<div className="console-header">
+						<span className="console-title">Console</span>
+						<span className="console-count">{board.logs.length}</span>
+						<button
+							className="btn-text"
+							onClick={() => setBoard((prev) => ({ ...prev, logs: [] }))}
+						>
+							Clear
+						</button>
 					</div>
-				)}
-
-				{activeTab === "console" && (
-					<div className="panel-content">
-						<div className="terminal-window compact">
-							<div className="terminal-header">
-								<span>Board Console</span>
-								<span className="terminal-count">
-									{board.logs.length} entries
-								</span>
-								<button
-									className="btn-text"
-									onClick={() => setBoard((prev) => ({ ...prev, logs: [] }))}
-								>
-									Clear
-								</button>
+					<div className="console-body">
+						{board.logs.length === 0 ? (
+							<div className="terminal-empty">
+								Waiting for board telemetry...
 							</div>
-							{board.logs.length === 0 ? (
-								<div className="terminal-empty">
-									Waiting for board telemetry...
+						) : (
+							board.logs.map((log) => (
+								<div key={log.id} className={`log-entry log-${log.level}`}>
+									<span className="log-time">{log.time}</span>
+									<span className="log-tag">{log.tag}</span>
+									<span className="log-text">{log.text}</span>
+									{log.meta && <span className="log-meta">{log.meta}</span>}
 								</div>
-							) : (
-								board.logs.map((log) => (
-									<div key={log.id} className={`log-entry log-${log.level}`}>
-										<span className="log-time">{log.time}</span>
-										<span className="log-tag">{log.tag}</span>
-										<span className="log-text">{log.text}</span>
-										{log.meta && <span className="log-meta">{log.meta}</span>}
-									</div>
-								))
-							)}
-						</div>
+							))
+						)}
 					</div>
-				)}
-
-				{activeTab === "schedules" && (
-					<div className="panel-content">
-						<div className="schedules-list">
-							{schedules.length === 0 ? (
-								<div className="empty-state-sm">
-									No schedules yet. Ask the agent to create one.
-								</div>
-							) : (
-								schedules.map((sched: any) => (
-									<div
-										key={sched.id}
-										className={`schedule-card ${sched.is_active ? "active" : ""}`}
-									>
-										<div className="schedule-header">
-											<span className="schedule-name">{sched.name}</span>
-											{sched.is_active && (
-												<span className="schedule-badge">Active</span>
-											)}
-										</div>
-										{sched.description && (
-											<p className="schedule-desc">{sched.description}</p>
-										)}
-										<div className="schedule-tasks">
-											{(sched.tasks || []).map((task: any) => (
-												<div key={task.id} className="schedule-task">
-													<span className="schedule-time">{task.time}</span>
-													<span className="schedule-obj">
-														{task.objective || task.action}
-													</span>
-												</div>
-											))}
-										</div>
-									</div>
-								))
-							)}
-						</div>
-					</div>
-				)}
+				</div>
 			</aside>
 
 			{/* Lightbox */}
