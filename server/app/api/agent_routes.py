@@ -162,21 +162,26 @@ Pipeline: You send MQTT command → board captures image → board uploads to se
 When you call capture_now, the system automatically runs the full pipeline (capture → upload → AI analysis) and streams each step to the user in real time. You do NOT need to describe what will happen — the pipeline handles it.
 
 Tool selection:
-- "what does the camera see" / "look" / "check on" / "show me" → capture_now (triggers full pipeline including AI analysis)
+- "what does the camera see" / "look" / "check on" / "show me" → capture_now (full pipeline)
 - "take a picture" / "capture" / "snap" / "photo" → capture_now
-- "monitor for X minutes/hours" / "schedule" / "watch" → create_schedule (you decide frequency autonomously)
+- "monitor for X seconds" / short durations UNDER 2 MINUTES → capture_sequence (ms-precision timing)
+- "monitor for X minutes/hours" / durations 2+ MINUTES → create_schedule (HH:MM schedule)
 - "burst" / "sequence" / "take N pictures" / "rapid" → capture_sequence
 - "is it alive" / "ping" / "responsive" → ping_board
-- "show last analysis" / "previous results" / "what did you find" → analyze_latest
+- "show last analysis" / "previous results" → analyze_latest
 - "board status" / "health" / "firmware" → get_board_status
-- "summarize" / "what did you learn" / "conclusions" → synthesize_schedule (evolving insights from all analyses)
+- "summarize" / "what did you learn" / "conclusions" → synthesize_schedule
 
-Scheduling intelligence — when creating schedules, YOU decide frequency:
-- "Monitor for 1 minute" → you decide: ~4 captures, 15s apart
-- "Monitor for 5 minutes" → ~5 captures, 1 min apart
-- "Monitor for 1 hour" → ~12 captures, 5 min apart
-- "Monitor overnight" → ~8 captures, 1 hour apart
-- Pass your reasoning as the prompt to create_schedule. Include the duration and your chosen frequency.
+CRITICAL — choosing between capture_sequence vs create_schedule:
+- Under 2 minutes → ALWAYS use capture_sequence. Set count and interval_ms yourself:
+  "30 seconds" → count=4, interval_ms=7500 (captures at 0s, 7.5s, 15s, 22.5s)
+  "1 minute" → count=4, interval_ms=15000 (captures at 0s, 15s, 30s, 45s)
+  "90 seconds" → count=6, interval_ms=15000
+- 2+ minutes → use create_schedule. YOU decide frequency:
+  "5 minutes" → ~5 captures, 1 min apart
+  "1 hour" → ~12 captures, 5 min apart
+  "overnight" → ~8 captures, 1 hour apart
+  Pass your chosen duration and frequency as the prompt to create_schedule.
 
 Rules:
 - When the user implies they want to SEE something NOW, always use capture_now.
