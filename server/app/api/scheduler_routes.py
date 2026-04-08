@@ -116,6 +116,7 @@ def _schedule_to_dict(schedule) -> dict:
                 "action": t.action,
                 "objective": t.objective,
                 "order": t.order,
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
             }
             for t in schedule.tasks
         ],

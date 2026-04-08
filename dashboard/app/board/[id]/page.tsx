@@ -125,20 +125,24 @@ export default function BoardPage({
 			.catch(console.error);
 	}, [apiBase, boardId]);
 
-	useEffect(() => {
-		fetchImages();
-		// Load schedules
+	const fetchSchedules = useCallback(() => {
 		fetch(`${apiBase}/api/schedules`)
 			.then((r) => r.json())
 			.then((data) => setSchedules(data.schedules ?? data ?? []))
 			.catch(() => {});
-	}, [fetchImages, apiBase]);
+	}, [apiBase]);
+
+	useEffect(() => {
+		fetchImages();
+		fetchSchedules();
+	}, [fetchImages, fetchSchedules]);
 
 	const handleMessage = useCallback(
 		(topic: string, data: Record<string, any>, sourceBoardId: string) => {
 			// Dashboard image notification
 			if (topic === "dashboard/images/new") {
 				fetchImages();
+				fetchSchedules();
 				addLog(
 					"upload",
 					"IMG",
@@ -312,7 +316,7 @@ export default function BoardPage({
 					}
 			}
 		},
-		[boardId, fetchImages, addLog],
+		[boardId, fetchImages, fetchSchedules, addLog],
 	);
 
 	const topics = [
@@ -476,32 +480,60 @@ export default function BoardPage({
 										No schedules yet. Ask the agent to create one.
 									</div>
 								) : (
-									schedules.map((sched: any) => (
-										<div
-											key={sched.id}
-											className={`schedule-card ${sched.is_active ? "active" : ""}`}
-										>
-											<div className="schedule-header">
-												<span className="schedule-name">{sched.name}</span>
-												{sched.is_active && (
-													<span className="schedule-badge">Active</span>
-												)}
-											</div>
-											{sched.description && (
-												<p className="schedule-desc">{sched.description}</p>
-											)}
-											<div className="schedule-tasks">
-												{(sched.tasks || []).map((task: any) => (
-													<div key={task.id} className="schedule-task">
-														<span className="schedule-time">{task.time}</span>
-														<span className="schedule-obj">
-															{task.objective || task.action}
+									schedules.map((sched: any) => {
+										const tasks = sched.tasks || [];
+										const done = tasks.filter(
+											(t: any) => t.completed_at,
+										).length;
+										const allDone = tasks.length > 0 && done === tasks.length;
+										return (
+											<div
+												key={sched.id}
+												className={`schedule-card ${sched.is_active ? "active" : ""} ${allDone ? "completed" : ""}`}
+											>
+												<div className="schedule-header">
+													<span className="schedule-name">{sched.name}</span>
+													{allDone ? (
+														<span className="schedule-badge done">
+															Completed
 														</span>
-													</div>
-												))}
+													) : sched.is_active ? (
+														<span className="schedule-badge">Active</span>
+													) : (
+														<span className="schedule-badge inactive">
+															Inactive
+														</span>
+													)}
+												</div>
+												<div className="schedule-progress">
+													<div
+														className="schedule-progress-bar"
+														style={{
+															width: tasks.length
+																? `${(done / tasks.length) * 100}%`
+																: "0%",
+														}}
+													/>
+												</div>
+												<div className="schedule-tasks">
+													{tasks.map((task: any) => (
+														<div
+															key={task.id}
+															className={`schedule-task ${task.completed_at ? "task-done" : ""}`}
+														>
+															<span className="schedule-check">
+																{task.completed_at ? "\u2713" : "\u25CB"}
+															</span>
+															<span className="schedule-time">{task.time}</span>
+															<span className="schedule-obj">
+																{task.objective || task.action}
+															</span>
+														</div>
+													))}
+												</div>
 											</div>
-										</div>
-									))
+										);
+									})
 								)}
 							</div>
 						)}

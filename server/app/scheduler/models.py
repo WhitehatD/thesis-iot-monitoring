@@ -4,6 +4,8 @@ Thesis IoT Server — Scheduler ORM Models
 
 from datetime import datetime
 
+from typing import Optional
+
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,5 +48,6 @@ class ScheduleTask(Base):
     action: Mapped[str] = mapped_column(String(32), default="CAPTURE_IMAGE")
     objective: Mapped[str] = mapped_column(Text, default="")
     order: Mapped[int] = mapped_column(Integer, default=0)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=None)
 
     schedule: Mapped["Schedule"] = relationship(back_populates="tasks")

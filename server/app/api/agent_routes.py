@@ -290,13 +290,14 @@ capture_now (DEFAULT — use this most often):
 - "take a picture" / "capture" / "snap" / "photo"
 - ANY ambiguous request → capture_now (bias toward action)
 
-capture_sequence (timed multi-shot, duration < 2 min):
+capture_sequence (timed multi-shot, duration < 2 min, runs in BACKGROUND):
 - "monitor for/the next X seconds/minute" → capture_sequence
 - "burst" / "sequence" / "take N pictures" / "rapid"
 - 30s → count=4, interval_ms=7500
 - 1 min → count=5, interval_ms=12000
 - 90s → count=6, interval_ms=15000
 - NEVER use capture_now for "monitor" requests.
+- This runs in the background — images appear in the Gallery as they arrive.
 
 create_schedule (duration 2+ min, uses HH:MM):
 - "monitor for X minutes/hours" / long durations
@@ -382,7 +383,7 @@ async def agent_chat(request: Request):
                     tool_name = block.name
                     tool_input = block.input
 
-                    if tool_name in ("capture_now", "capture_sequence"):
+                    if tool_name == "capture_now":
                         pipeline_reply = ""
                         async for ev in _capture_pipeline(tool_name, tool_input):
                             yield ev
@@ -391,6 +392,12 @@ async def agent_chat(request: Request):
                                 pipeline_reply = ev_data.get("text", "")
                         if pipeline_reply and session_id:
                             await _persist_message(session_id, "assistant", pipeline_reply)
+                        continue
+                    elif tool_name == "capture_sequence":
+                        yield _sse_event("tool_call", {"id": tool_name, "label": _tool_label(tool_name, tool_input)})
+                        result = await _tool_capture_sequence(tool_input)
+                        yield _sse_event("tool_result", {"id": tool_name, "success": result["success"], "summary": result["summary"]})
+                        reply_parts.append(result.get("detail", ""))
                         continue
                     else:
                         yield _sse_event("tool_call", {
@@ -650,13 +657,13 @@ async def _tool_capture_sequence(inp: dict) -> dict:
     })
     mqtt_client.publish(settings.mqtt_topic_commands, command)
 
+    total_s = delays[-1] / 1000
     return {
         "success": True,
-        "summary": f"{count} captures queued ({interval}ms apart)",
+        "summary": f"{count} captures dispatched ({total_s:.0f}s sequence)",
         "detail": (
-            f"**Capture sequence started** — {count} images, {interval}ms intervals.\n\n"
-            f"Delays: {delays}\n\n"
-            f"All captures are batched in a single MQTT message for reliability."
+            f"**Monitoring started** — {count} captures over {total_s:.0f}s, running in the background.\n\n"
+            f"Images will appear in the Gallery as each capture completes."
         ),
     }
 

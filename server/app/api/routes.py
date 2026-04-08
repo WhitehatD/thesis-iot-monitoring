@@ -203,6 +203,19 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
     except Exception as e:
         print(f"[WARN] Failed to publish MQTT message for dashboard: {e}")
 
+    # ── Mark schedule task as completed ──
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(ScheduleTask).where(ScheduleTask.id == task_id)
+            )
+            task = result.scalar_one_or_none()
+            if task and task.completed_at is None:
+                task.completed_at = datetime.now()
+                await db.commit()
+    except Exception:
+        pass  # Non-critical — don't fail the upload
+
     # ── Agentic Layer: trigger async visual analysis ──
     asyncio.create_task(_run_analysis(task_id, filepath, date_dir, filename))
 
