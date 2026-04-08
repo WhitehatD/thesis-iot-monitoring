@@ -31,16 +31,126 @@ from datetime import datetime
 
 import anthropic
 from fastapi import APIRouter, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
+from app.agent.models import ChatMessage, ChatSession
 from app.config import settings
+from app.db.database import async_session
 from app.mqtt.client import mqtt_client
 from app.planning.engine import generate_plan
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
-# Server-side session history
-_sessions: dict[str, list[dict]] = {}
+
+# ── Session CRUD ────────────────────────────────────────────
+
+@router.get("/sessions")
+async def list_sessions(board_id: str = "stm32-iot-cam-01"):
+    """List all chat sessions for a board."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatSession)
+            .where(ChatSession.board_id == board_id)
+            .order_by(ChatSession.created_at.desc())
+        )
+        sessions = list(result.scalars().all())
+
+    return [
+        {"id": s.id, "name": s.name, "boardId": s.board_id, "createdAt": s.created_at.isoformat()}
+        for s in sessions
+    ]
+
+
+@router.post("/sessions")
+async def create_session(request: Request):
+    """Create a new chat session."""
+    body = await request.json()
+    board_id = body.get("boardId", "stm32-iot-cam-01")
+    name = body.get("name", f"Session {datetime.now().strftime('%H:%M')}")
+
+    async with async_session() as db:
+        session = ChatSession(board_id=board_id, name=name)
+        db.add(session)
+        await db.commit()
+        await db.refresh(session)
+
+    return {"id": session.id, "name": session.name, "boardId": session.board_id, "createdAt": session.created_at.isoformat()}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: int):
+    """Delete a chat session and all its messages."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatSession).where(ChatSession.id == session_id)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            return JSONResponse(status_code=404, content={"detail": "Session not found"})
+        await db.delete(session)
+        await db.commit()
+
+    return {"ok": True}
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: int):
+    """Get all messages for a session."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatSession)
+            .options(selectinload(ChatSession.messages))
+            .where(ChatSession.id == session_id)
+        )
+        session = result.scalar_one_or_none()
+        if not session:
+            return JSONResponse(status_code=404, content={"detail": "Session not found"})
+
+    return [
+        {"role": m.role, "content": m.content, "createdAt": m.created_at.isoformat()}
+        for m in session.messages
+    ]
+
+
+@router.delete("/sessions/{session_id}/messages")
+async def clear_session_messages(session_id: int):
+    """Clear all messages in a session (like /clear)."""
+    from sqlalchemy import delete as sql_delete
+
+    async with async_session() as db:
+        await db.execute(
+            sql_delete(ChatMessage).where(ChatMessage.session_id == session_id)
+        )
+        await db.commit()
+
+    return {"ok": True}
+
+
+async def _persist_message(session_id: int, role: str, content: str):
+    """Save a message to the database."""
+    async with async_session() as db:
+        db.add(ChatMessage(session_id=session_id, role=role, content=content))
+        await db.commit()
+
+
+async def _load_history(session_id: int, limit: int = 20) -> list[dict]:
+    """Load recent messages from DB for Claude's context."""
+    async with async_session() as db:
+        result = await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.session_id == session_id)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(limit)
+        )
+        messages = list(result.scalars().all())
+
+    # Return in chronological order
+    return [
+        {"role": m.role, "content": m.content}
+        for m in reversed(messages)
+    ]
 
 # ── Tool Definitions (Claude tool_use format) ────────────
 
@@ -202,7 +312,7 @@ def _sse_event(event: str, data: dict) -> str:
 async def agent_chat(request: Request):
     body = await request.json()
     message = body.get("message", "").strip()
-    session_id = body.get("sessionId", "default")
+    session_id = body.get("sessionId")  # DB integer ID
 
     if not message:
         return StreamingResponse(
@@ -210,23 +320,27 @@ async def agent_chat(request: Request):
             media_type="text/event-stream",
         )
 
+    # Validate session exists
+    if session_id is not None:
+        try:
+            session_id = int(session_id)
+        except (ValueError, TypeError):
+            session_id = None
+
     async def event_stream():
         try:
-            if session_id not in _sessions:
-                _sessions[session_id] = []
-            history = _sessions[session_id]
+            # Load conversation history from DB
+            history = await _load_history(session_id) if session_id else []
             history.append({"role": "user", "content": message})
 
-            # Trim history to last 20 messages
-            if len(history) > 20:
-                _sessions[session_id] = history[-20:]
-                history = _sessions[session_id]
+            # Persist user message
+            if session_id:
+                await _persist_message(session_id, "user", message)
 
             yield _sse_event("thinking", {"text": f"Processing: \"{message}\""})
 
             # ── Call Claude with tools ──
             if not settings.anthropic_api_key:
-                # Fallback: rule-based dispatch without LLM
                 async for ev in _fallback_dispatch(message, session_id):
                     yield ev
                 yield _sse_event("done", {})
@@ -253,18 +367,15 @@ async def agent_chat(request: Request):
                     tool_name = block.name
                     tool_input = block.input
 
-                    # Capture tools get the full pipeline with streaming steps
                     if tool_name in ("capture_now", "capture_sequence"):
                         pipeline_reply = ""
                         async for ev in _capture_pipeline(tool_name, tool_input):
                             yield ev
-                            # Capture the reply text for history but don't re-emit it
                             if '"event": "reply"' in ev:
                                 ev_data = json.loads(ev.split("data: ", 1)[1].strip())
                                 pipeline_reply = ev_data.get("text", "")
-                        if pipeline_reply:
-                            history.append({"role": "assistant", "content": pipeline_reply})
-                        # Skip adding to reply_parts — pipeline already sent the reply
+                        if pipeline_reply and session_id:
+                            await _persist_message(session_id, "assistant", pipeline_reply)
                         continue
                     else:
                         yield _sse_event("tool_call", {
@@ -284,7 +395,8 @@ async def agent_chat(request: Request):
 
             full_reply = "\n\n".join(p for p in reply_parts if p)
             if full_reply:
-                history.append({"role": "assistant", "content": full_reply})
+                if session_id:
+                    await _persist_message(session_id, "assistant", full_reply)
                 yield _sse_event("reply", {"text": full_reply})
 
             yield _sse_event("done", {})

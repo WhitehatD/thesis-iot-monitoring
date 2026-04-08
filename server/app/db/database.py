@@ -28,6 +28,7 @@ async def create_tables():
     import app.db.wifi_models  # noqa: F401 — register WiFi config model
     import app.analysis.models  # noqa: F401 — register analysis result model
     import app.scheduler.models  # noqa: F401 — register scheduler models
+    import app.agent.models  # noqa: F401 — register agent chat models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

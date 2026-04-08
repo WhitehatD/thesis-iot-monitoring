@@ -23,11 +23,11 @@ interface Message {
 	streaming?: boolean;
 }
 
-interface ChatSession {
-	id: string;
+interface DbSession {
+	id: number;
 	name: string;
-	messages: Message[];
-	createdAt: number;
+	boardId: string;
+	createdAt: string;
 }
 
 interface AgentChatProps {
@@ -43,92 +43,177 @@ const QUICK_ACTIONS = [
 	"Summarize findings",
 ];
 
-const STORAGE_KEY = (boardId: string) => `agent-sessions-${boardId}`;
-
-function loadSessions(boardId: string): ChatSession[] {
-	if (typeof window === "undefined") return [];
-	try {
-		const raw = localStorage.getItem(STORAGE_KEY(boardId));
-		return raw ? JSON.parse(raw) : [];
-	} catch {
-		return [];
-	}
-}
-
-function saveSessions(boardId: string, sessions: ChatSession[]) {
-	if (typeof window === "undefined") return;
-	try {
-		localStorage.setItem(STORAGE_KEY(boardId), JSON.stringify(sessions));
-	} catch {
-		// localStorage full or unavailable
-	}
-}
-
-function newSession(): ChatSession {
-	const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-	return {
-		id,
-		name: `Session ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
-		messages: [],
-		createdAt: Date.now(),
-	};
-}
-
 export default function AgentChat({
 	boardId,
 	apiBase,
 	fullSize,
 }: AgentChatProps) {
-	const [sessions, setSessions] = useState<ChatSession[]>(() => {
-		const loaded = loadSessions(boardId);
-		return loaded.length > 0 ? loaded : [newSession()];
-	});
-	const [activeIdx, setActiveIdx] = useState(0);
+	const [sessions, setSessions] = useState<DbSession[]>([]);
+	const [activeId, setActiveId] = useState<number | null>(null);
+	const [messages, setMessages] = useState<Message[]>([]);
 	const [input, setInput] = useState("");
 	const [isStreaming, setIsStreaming] = useState(false);
+	const [loading, setLoading] = useState(true);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-	const active = sessions[activeIdx] || sessions[0];
-	const messages = active?.messages || [];
-
-	// Persist sessions to localStorage
+	// biome-ignore lint/correctness/useExhaustiveDependencies: load sessions on mount and board change only
 	useEffect(() => {
-		saveSessions(boardId, sessions);
-	}, [sessions, boardId]);
+		fetchSessions();
+	}, [boardId]);
+
+	const fetchSessions = async () => {
+		try {
+			const res = await fetch(
+				`${apiBase}/api/agent/sessions?board_id=${boardId}`,
+			);
+			if (!res.ok) return;
+			const data: DbSession[] = await res.json();
+			setSessions(data);
+			if (data.length > 0 && !activeId) {
+				setActiveId(data[0].id);
+				loadMessages(data[0].id);
+			} else {
+				setLoading(false);
+			}
+		} catch {
+			setLoading(false);
+		}
+	};
+
+	const loadMessages = async (sessionId: number) => {
+		setLoading(true);
+		try {
+			const res = await fetch(
+				`${apiBase}/api/agent/sessions/${sessionId}/messages`,
+			);
+			if (!res.ok) {
+				setMessages([]);
+				return;
+			}
+			const data: { role: string; content: string }[] = await res.json();
+			setMessages(
+				data.map((m) => ({
+					role: m.role as "user" | "assistant",
+					text: m.role === "user" ? m.content : undefined,
+					blocks:
+						m.role === "assistant"
+							? [{ type: "text" as const, text: m.content }]
+							: [],
+				})),
+			);
+		} catch {
+			setMessages([]);
+		} finally {
+			setLoading(false);
+		}
+	};
+
+	const createSession = async () => {
+		try {
+			const res = await fetch(`${apiBase}/api/agent/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					boardId,
+					name: `Session ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+				}),
+			});
+			if (!res.ok) return;
+			const session: DbSession = await res.json();
+			setSessions((prev) => [session, ...prev]);
+			setActiveId(session.id);
+			setMessages([]);
+		} catch {
+			// network error
+		}
+	};
+
+	const deleteSession = async (id: number) => {
+		if (sessions.length <= 1) return;
+		try {
+			await fetch(`${apiBase}/api/agent/sessions/${id}`, {
+				method: "DELETE",
+			});
+			setSessions((prev) => prev.filter((s) => s.id !== id));
+			if (activeId === id) {
+				const remaining = sessions.filter((s) => s.id !== id);
+				if (remaining.length > 0) {
+					setActiveId(remaining[0].id);
+					loadMessages(remaining[0].id);
+				}
+			}
+		} catch {
+			// network error
+		}
+	};
+
+	const clearMessages = async () => {
+		if (!activeId) return;
+		try {
+			await fetch(`${apiBase}/api/agent/sessions/${activeId}/messages`, {
+				method: "DELETE",
+			});
+			setMessages([]);
+		} catch {
+			// network error
+		}
+	};
+
+	const switchSession = (id: number) => {
+		if (id === activeId) return;
+		setActiveId(id);
+		loadMessages(id);
+	};
 
 	const scrollToBottom = useCallback(() => {
 		messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 	}, []);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll on message change
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentional scroll
 	useEffect(() => {
 		scrollToBottom();
 	}, [messages, scrollToBottom]);
-
-	const updateActiveMessages = useCallback(
-		(updater: (msgs: Message[]) => Message[]) => {
-			setSessions((prev) =>
-				prev.map((s, i) =>
-					i === activeIdx ? { ...s, messages: updater(s.messages) } : s,
-				),
-			);
-		},
-		[activeIdx],
-	);
 
 	const handleSend = async (override?: string) => {
 		const msg = (override || input).trim();
 		if (!msg || isStreaming) return;
 
-		// Handle slash commands
+		// Slash commands
 		if (msg === "/clear") {
 			setInput("");
-			updateActiveMessages(() => []);
+			clearMessages();
 			return;
 		}
 
+		// Auto-create session if none exists
+		if (!activeId) {
+			try {
+				const res = await fetch(`${apiBase}/api/agent/sessions`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						boardId,
+						name: `Session ${new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`,
+					}),
+				});
+				if (res.ok) {
+					const session: DbSession = await res.json();
+					setSessions((prev) => [session, ...prev]);
+					setActiveId(session.id);
+					await sendMessage(msg, session.id);
+					return;
+				}
+			} catch {
+				// fall through
+			}
+		}
+
 		setInput("");
+		await sendMessage(msg, activeId!);
+	};
+
+	const sendMessage = async (msg: string, sessionId: number) => {
 		setIsStreaming(true);
 
 		const userMsg: Message = { role: "user", text: msg, blocks: [] };
@@ -137,13 +222,16 @@ export default function AgentChat({
 			blocks: [],
 			streaming: true,
 		};
-		updateActiveMessages((prev) => [...prev, userMsg, botMsg]);
+		setMessages((prev) => [...prev, userMsg, botMsg]);
 
 		try {
 			const res = await fetch(`${apiBase}/api/agent/chat`, {
 				method: "POST",
 				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ message: msg, sessionId: active.id }),
+				body: JSON.stringify({
+					message: msg,
+					sessionId: sessionId,
+				}),
 			});
 
 			if (!res.ok || !res.body) {
@@ -171,7 +259,7 @@ export default function AgentChat({
 						const data = JSON.parse(jsonStr);
 						const event = data.event;
 
-						updateActiveMessages((prev) => {
+						setMessages((prev) => {
 							const updated = [...prev];
 							const bot = {
 								...updated[updated.length - 1],
@@ -239,17 +327,20 @@ export default function AgentChat({
 				}
 			}
 
-			// Mark streaming done after reader finishes
-			updateActiveMessages((prev) => {
+			// Mark streaming done
+			setMessages((prev) => {
 				const updated = [...prev];
 				const last = updated[updated.length - 1];
 				if (last?.streaming) {
-					updated[updated.length - 1] = { ...last, streaming: false };
+					updated[updated.length - 1] = {
+						...last,
+						streaming: false,
+					};
 				}
 				return updated;
 			});
 		} catch (err) {
-			updateActiveMessages((prev) => {
+			setMessages((prev) => {
 				const updated = [...prev];
 				const bot = updated[updated.length - 1];
 				if (bot) {
@@ -279,27 +370,15 @@ export default function AgentChat({
 		}
 	};
 
-	const addSession = () => {
-		const s = newSession();
-		setSessions((prev) => [...prev, s]);
-		setActiveIdx(sessions.length);
-	};
-
-	const removeSession = (idx: number) => {
-		if (sessions.length <= 1) return;
-		setSessions((prev) => prev.filter((_, i) => i !== idx));
-		setActiveIdx((prev) => (prev >= idx ? Math.max(0, prev - 1) : prev));
-	};
-
 	return (
 		<div className={`agent-chat ${fullSize ? "agent-chat-full" : ""}`}>
 			{/* Session tabs */}
 			<div className="session-tabs">
-				{sessions.map((s, i) => (
+				{sessions.map((s) => (
 					<button
 						key={s.id}
-						className={`session-tab ${i === activeIdx ? "active" : ""}`}
-						onClick={() => setActiveIdx(i)}
+						className={`session-tab ${s.id === activeId ? "active" : ""}`}
+						onClick={() => switchSession(s.id)}
 					>
 						<span className="session-tab-name">{s.name}</span>
 						{sessions.length > 1 && (
@@ -307,7 +386,7 @@ export default function AgentChat({
 								className="session-tab-close"
 								onClick={(e) => {
 									e.stopPropagation();
-									removeSession(i);
+									deleteSession(s.id);
 								}}
 							>
 								&times;
@@ -317,7 +396,7 @@ export default function AgentChat({
 				))}
 				<button
 					className="session-tab session-tab-add"
-					onClick={addSession}
+					onClick={createSession}
 					title="New session"
 				>
 					+
@@ -326,7 +405,17 @@ export default function AgentChat({
 
 			{/* Messages */}
 			<div className="agent-messages">
-				{messages.length === 0 && (
+				{loading && messages.length === 0 && (
+					<div className="agent-welcome">
+						<div className="agent-typing">
+							<span className="typing-dot" />
+							<span className="typing-dot" />
+							<span className="typing-dot" />
+						</div>
+					</div>
+				)}
+
+				{!loading && messages.length === 0 && (
 					<div className="agent-welcome">
 						<p>What would you like to monitor?</p>
 						<div className="agent-quick-actions">
