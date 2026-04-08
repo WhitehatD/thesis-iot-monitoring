@@ -49,7 +49,7 @@
 #define MQTT_CLIENT_ID              "stm32-iot-cam-01"
 #define MQTT_KEEPALIVE_SECONDS      60
 #define MQTT_CONNECT_TIMEOUT_MS     10000
-#define MQTT_RECV_TIMEOUT_MS        1000
+#define MQTT_RECV_TIMEOUT_MS        100     /* Non-blocking: poll quickly, don't stall the loop */
 #ifndef MQTT_USERNAME
 #define MQTT_USERNAME               ""     /* Empty = no auth (development) */
 #endif
@@ -99,7 +99,7 @@
  *  Scheduler Configuration
  * ═══════════════════════════════════════════════════════════════════════════ */
 #define SCHEDULER_MAX_TASKS         32     /* Must match MAX_SCHEDULED_TASKS */
-#define SCHEDULER_MQTT_POLL_MS      500    /* MQTT poll interval while waiting for schedule */
+#define SCHEDULER_MQTT_POLL_MS      50     /* Fast poll — keep loop responsive for commands */
 #define SCHEDULER_MQTT_WAIT_TOTAL_S 300    /* Max seconds to wait for initial schedule (5 min) */
 #define SCHEDULE_JSON_MAX           2048   /* Max schedule JSON size (bytes) — shared with main.c */
 

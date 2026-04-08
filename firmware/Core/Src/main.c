@@ -115,7 +115,7 @@ static uint32_t s_sequence_delays_ms[MAX_SEQUENCE_CAPTURES];  /* ms offset from 
 static uint32_t s_sequence_base_task_id = 30000;
 
 /* ── Sleep mode toggle (MQTT command) ───────────────────── */
-static volatile uint8_t s_sleep_enabled = 0;  /* 0 = awake (default), 1 = low power between tasks */
+static volatile uint8_t s_sleep_enabled = 1;  /* 1 = low power between tasks (STOP2), 0 = active wait */
 
 /* ── OTA firmware update (MQTT command) ─────────────────── */
 static volatile uint8_t s_ota_requested = 0;
@@ -1060,12 +1060,15 @@ int main(void)
                         /* SEC-10: Cryptographic Sanitization of Image Buffer */
                         secure_erase(s_image_buffer, captured_size);
 
-                        /* Re-establish MQTT if connection was lost */
-                        if (MQTT_Init(&mqtt_cfg) == 0)
+                        /* Re-establish MQTT only if connection was lost during upload */
+                        if (!MQTT_IsConnected())
                         {
-                            MQTT_SubscribeCommands(on_command_received);
-                            MQTT_PublishStatus(status_msg);
+                            if (MQTT_Init(&mqtt_cfg) == 0)
+                            {
+                                MQTT_SubscribeCommands(on_command_received);
+                            }
                         }
+                        MQTT_PublishStatus(status_msg);
                     }
                     else
                     {
