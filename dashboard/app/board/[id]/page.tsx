@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import AgentChat from "../../components/AgentChat";
 import { useMQTT } from "../../hooks/useMQTT";
 
@@ -17,9 +17,21 @@ interface BoardState {
 }
 
 interface LogEntry {
+	id: number;
 	time: string;
-	level: string;
+	level:
+		| "info"
+		| "success"
+		| "warning"
+		| "error"
+		| "mqtt"
+		| "camera"
+		| "upload"
+		| "ota"
+		| "system";
+	tag: string;
 	text: string;
+	meta?: string;
 }
 
 interface ImageCapture {
@@ -64,17 +76,29 @@ export default function BoardPage({
 	const [selectedImage, setSelectedImage] = useState<ImageCapture | null>(null);
 	const [activeTab, setActiveTab] = useState<"gallery" | "console">("gallery");
 
-	const addLog = useCallback((level: string, text: string) => {
-		const entry: LogEntry = {
-			time: new Date().toLocaleTimeString(),
-			level,
-			text,
-		};
-		setBoard((prev) => ({
-			...prev,
-			logs: [entry, ...prev.logs].slice(0, MAX_LOGS),
-		}));
-	}, []);
+	const logIdRef = useRef(0);
+	const addLog = useCallback(
+		(level: LogEntry["level"], tag: string, text: string, meta?: string) => {
+			logIdRef.current += 1;
+			const entry: LogEntry = {
+				id: logIdRef.current,
+				time: new Date().toLocaleTimeString("en-GB", {
+					hour: "2-digit",
+					minute: "2-digit",
+					second: "2-digit",
+				}),
+				level,
+				tag,
+				text,
+				meta,
+			};
+			setBoard((prev) => ({
+				...prev,
+				logs: [entry, ...prev.logs].slice(0, MAX_LOGS),
+			}));
+		},
+		[],
+	);
 
 	const fetchImages = useCallback(() => {
 		fetch(`${apiBase}/api/images?board_id=${boardId}`)
@@ -102,10 +126,19 @@ export default function BoardPage({
 
 	const handleMessage = useCallback(
 		(topic: string, data: Record<string, any>, sourceBoardId: string) => {
+			// Dashboard image notification
 			if (topic === "dashboard/images/new") {
 				fetchImages();
+				addLog(
+					"upload",
+					"IMG",
+					`New image: ${data.filename}`,
+					`task #${data.task_id}`,
+				);
 				return;
 			}
+
+			// AI analysis result
 			if (topic === "dashboard/analysis/new") {
 				setImages((prev) =>
 					prev.map((img) =>
@@ -125,40 +158,34 @@ export default function BoardPage({
 							: img,
 					),
 				);
+				const met = data.objective_met;
 				addLog(
-					"info",
-					`AI analysis: task #${data.task_id} — ${data.objective_met ? "MET" : "NOT MET"}`,
+					met ? "success" : "warning",
+					"AI",
+					`Vision analysis: ${met ? "objective met" : "objective not met"}`,
+					`${data.model || "?"} · ${data.inference_ms || 0}ms · task #${data.task_id}`,
 				);
 				return;
 			}
+
+			// Server-side logs
 			if (topic === "dashboard/logs") {
-				const logTime = data.timestamp
-					? new Date(data.timestamp * 1000).toLocaleTimeString()
-					: new Date().toLocaleTimeString();
-				setBoard((prev) => ({
-					...prev,
-					logs: [
-						{ time: logTime, level: data.level || "log", text: data.text },
-						...prev.logs,
-					].slice(0, MAX_LOGS),
-				}));
+				addLog(
+					"system",
+					"SRV",
+					data.text || "Server log",
+					data.level || undefined,
+				);
 				return;
 			}
+
+			// Board telemetry — filter by board ID
 			if (sourceBoardId !== boardId) return;
+
 			setBoard((prev) => {
 				const update = { ...prev, isOnline: true, lastSeen: Date.now() };
 				if (data.firmware) update.firmware = data.firmware;
-				if (data.status) {
-					update.status = data.status;
-					update.logs = [
-						{
-							time: new Date().toLocaleTimeString(),
-							level: "info",
-							text: `Status: ${data.status}`,
-						},
-						...update.logs,
-					].slice(0, MAX_LOGS);
-				}
+				if (data.status) update.status = data.status;
 				if (data.status === "captured" || data.status === "uploaded") {
 					update.captures += 1;
 					if (data.size) update.lastImageSize = data.size;
@@ -166,6 +193,98 @@ export default function BoardPage({
 				}
 				return update;
 			});
+
+			// Produce detailed log from board status
+			const status = data.status;
+			if (!status) {
+				// Heartbeat without status change
+				addLog(
+					"mqtt",
+					"HB",
+					"Heartbeat received",
+					data.firmware ? `fw ${data.firmware}` : undefined,
+				);
+				return;
+			}
+
+			const taskMeta = data.task_id ? `task #${data.task_id}` : undefined;
+
+			switch (status) {
+				case "idle":
+					addLog("info", "BOARD", "Board idle — awaiting commands");
+					break;
+				case "executing":
+					addLog("info", "SCHED", `Executing scheduled task`, taskMeta);
+					break;
+				case "camera_init":
+					addLog(
+						"camera",
+						"CAM",
+						"Camera cold start — initializing sensor",
+						taskMeta,
+					);
+					break;
+				case "capturing":
+					addLog("camera", "CAM", "Capturing frame (VGA RGB565)", taskMeta);
+					break;
+				case "captured":
+					addLog(
+						"success",
+						"CAM",
+						`Frame captured — ${data.size ? `${(data.size / 1024).toFixed(0)} KB` : "?"}`,
+						taskMeta,
+					);
+					break;
+				case "uploading":
+					addLog("upload", "HTTP", "Uploading image to server...", taskMeta);
+					break;
+				case "uploaded":
+					addLog(
+						"success",
+						"HTTP",
+						`Upload complete — ${data.bytes ? `${(data.bytes / 1024).toFixed(0)} KB` : "OK"}`,
+						data.latency_ms ? `${data.latency_ms}ms` : taskMeta,
+					);
+					break;
+				case "cycle_complete":
+					addLog("success", "SCHED", "All scheduled tasks completed for today");
+					break;
+				case "ota_checking":
+					addLog("ota", "OTA", "Checking for firmware update...");
+					break;
+				case "ota_downloading":
+					addLog(
+						"ota",
+						"OTA",
+						`Downloading firmware v${data.version || "?"}`,
+						data.progress ? `${data.progress}%` : undefined,
+					);
+					break;
+				case "ota_complete":
+					addLog(
+						"success",
+						"OTA",
+						`OTA complete — rebooting to v${data.version || "?"}`,
+					);
+					break;
+				case "sleep":
+					addLog(
+						"system",
+						"PWR",
+						"Entering STOP2 sleep mode",
+						data.wake_time || undefined,
+					);
+					break;
+				case "wake":
+					addLog("system", "PWR", "Woke from sleep — reconnecting");
+					break;
+				default:
+					if (status.includes("error") || status.includes("fail")) {
+						addLog("error", "ERR", `${status}`, data.reason || taskMeta);
+					} else {
+						addLog("info", "BOARD", status, taskMeta);
+					}
+			}
 		},
 		[boardId, fetchImages, addLog],
 	);
@@ -212,7 +331,7 @@ export default function BoardPage({
 			setImages((prev) => prev.filter((i) => i.filename !== img.filename));
 			setSelectedImage(null);
 		} catch (err) {
-			addLog("error", `Delete failed: ${err}`);
+			addLog("error", "HTTP", `Delete failed: ${err}`);
 		}
 	};
 
@@ -341,6 +460,9 @@ export default function BoardPage({
 						<div className="terminal-window compact">
 							<div className="terminal-header">
 								<span>Board Console</span>
+								<span className="terminal-count">
+									{board.logs.length} entries
+								</span>
 								<button
 									className="btn-text"
 									onClick={() => setBoard((prev) => ({ ...prev, logs: [] }))}
@@ -350,13 +472,15 @@ export default function BoardPage({
 							</div>
 							{board.logs.length === 0 ? (
 								<div className="terminal-empty">
-									No telemetry received yet...
+									Waiting for board telemetry...
 								</div>
 							) : (
-								board.logs.map((log, idx) => (
-									<div key={idx} className={`log-line log-${log.level}`}>
-										<span className="log-time">[{log.time}]</span>
-										{log.text}
+								board.logs.map((log) => (
+									<div key={log.id} className={`log-entry log-${log.level}`}>
+										<span className="log-time">{log.time}</span>
+										<span className="log-tag">{log.tag}</span>
+										<span className="log-text">{log.text}</span>
+										{log.meta && <span className="log-meta">{log.meta}</span>}
 									</div>
 								))
 							)}
