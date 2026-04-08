@@ -208,6 +208,39 @@ int Scheduler_SetNextAlarm(Schedule_t *schedule)
     if (schedule == NULL)
         return 1;
 
+    /* ── Skip past tasks ──
+     * When a schedule arrives late (network delay, boot time), some tasks
+     * may already be in the past.  Advance current_index past any task
+     * that is more than 30 s ago so the board doesn't sleep until tomorrow. */
+    RTC_TimeTypeDef now_time;
+    RTC_DateTypeDef now_date;
+    HAL_RTC_GetTime(&hrtc, &now_time, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &now_date, RTC_FORMAT_BIN);  /* Must read date after time per RM */
+
+    int32_t now_secs = (int32_t)now_time.Hours * 3600
+                     + (int32_t)now_time.Minutes * 60
+                     + (int32_t)now_time.Seconds;
+
+    while (schedule->current_index < schedule->task_count)
+    {
+        const ScheduledTask_t *t = &schedule->tasks[schedule->current_index];
+        int32_t t_secs = (int32_t)t->hour * 3600
+                       + (int32_t)t->minute * 60
+                       + (int32_t)t->second;
+        int32_t d = t_secs - now_secs;
+        if (d < 0) d += 86400;
+
+        /* Task is in the future or within a 30-second recent window — keep it */
+        if (d <= 30 || d >= 86370)
+            break;
+
+        /* Task is stale (> 30 s in the past) — skip */
+        LOG_WARN(TAG_SCHED, "Skipping past task %u at %02u:%02u:%02u (-%ld s ago)",
+                 t->task_id, t->hour, t->minute, t->second,
+                 (long)(86400 - d));
+        schedule->current_index++;
+    }
+
     if (schedule->current_index >= schedule->task_count)
     {
         LOG_INFO(TAG_SCHED, "All %d tasks completed — no more alarms",
@@ -220,32 +253,29 @@ int Scheduler_SetNextAlarm(Schedule_t *schedule)
     LOG_INFO(TAG_SCHED, "Setting RTC alarm for task %u at %02u:%02u:%02u",
              next->task_id, next->hour, next->minute, next->second);
 
-    /* ── Check if task time is in the past (or essentially "now") ──
-     * Enterprise practice: prevent the board from sleeping until tomorrow
-     * if the dashboard sends a "Capture Now" with the current/past time.
-     * Return 2 = "execute immediately, don't sleep". */
-    RTC_TimeTypeDef now_time;
-    RTC_DateTypeDef now_date;
+    /* Re-read RTC (may have advanced during skip loop) */
     HAL_RTC_GetTime(&hrtc, &now_time, RTC_FORMAT_BIN);
-    HAL_RTC_GetDate(&hrtc, &now_date, RTC_FORMAT_BIN);  /* Must read date after time per RM */
+    HAL_RTC_GetDate(&hrtc, &now_date, RTC_FORMAT_BIN);
 
-    /* Convert both to seconds-since-midnight for precise comparison */
-    int32_t now_secs  = (int32_t)now_time.Hours * 3600 + (int32_t)now_time.Minutes * 60 + (int32_t)now_time.Seconds;
-    int32_t task_secs = (int32_t)next->hour * 3600 + (int32_t)next->minute * 60 + (int32_t)next->second;
+    now_secs = (int32_t)now_time.Hours * 3600
+             + (int32_t)now_time.Minutes * 60
+             + (int32_t)now_time.Seconds;
+    int32_t task_secs = (int32_t)next->hour * 3600
+                      + (int32_t)next->minute * 60
+                      + (int32_t)next->second;
     int32_t diff = task_secs - now_secs;
 
     LOG_DEBUG(TAG_SCHED, "Current RTC: %02u:%02u:%02u, task: %02u:%02u:%02u (diff=%ld s)",
               now_time.Hours, now_time.Minutes, now_time.Seconds,
               next->hour, next->minute, next->second, (long)diff);
 
-    /* If the task time is in the past, assume it is for the next day */
     if (diff < 0)
     {
-        diff += 86400; /* Wrap around 24 hours */
+        diff += 86400;
     }
 
-    /* Target is within a 5-second window: execute immediately */
-    if (diff == 0 || diff >= 86395)
+    /* Target is within a 30-second window: execute immediately */
+    if (diff <= 30 || diff >= 86370)
     {
         LOG_INFO(TAG_SCHED, "Task %u time is NOW — executing immediately",
                  next->task_id);

@@ -189,22 +189,27 @@ AGENT_TOOLS = [
         "name": "capture_sequence",
         "description": (
             "Take multiple pictures with millisecond-precision timing. "
-            "Use this for ANY monitoring under 2 minutes, bursts, or rapid sequences. "
-            "Examples: 'monitor for 30 seconds' → count=4, interval_ms=7500. "
+            "Use this for ANY monitoring with sub-minute intervals OR durations under 2 minutes. "
+            "Examples: 'every 20 seconds for 5 min' → count=16, interval_ms=20000. "
+            "'monitor for 30 seconds' → count=4, interval_ms=7500. "
             "'monitor for 1 minute' → count=5, interval_ms=12000. "
             "'burst of 3 shots' → count=3, interval_ms=2000. "
-            "YOU decide count and interval_ms based on the duration."
+            "YOU decide count and interval_ms based on the duration and interval."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "count": {
                     "type": "integer",
-                    "description": "Number of pictures to take (2-16). Decide based on duration.",
+                    "description": "Number of pictures to take (2-16). Decide based on duration and interval.",
                 },
                 "interval_ms": {
                     "type": "integer",
-                    "description": "Milliseconds between each capture (minimum 500). Decide based on duration.",
+                    "description": "Milliseconds between each capture (minimum 500). Decide based on requested interval.",
+                },
+                "objective": {
+                    "type": "string",
+                    "description": "What to monitor/look for in each capture.",
                 },
             },
             "required": ["count", "interval_ms"],
@@ -308,17 +313,20 @@ capture_now (DEFAULT — use this most often):
 - "take a picture" / "capture" / "snap" / "photo"
 - ANY ambiguous request → capture_now (bias toward action)
 
-capture_sequence (timed multi-shot, duration < 2 min, runs in BACKGROUND):
+capture_sequence (timed multi-shot, up to 16 captures, runs in BACKGROUND):
 - "monitor for/the next X seconds/minute" → capture_sequence
 - "burst" / "sequence" / "take N pictures" / "rapid"
+- ANY request with sub-minute intervals (e.g. "every 10/20/30 seconds") → capture_sequence
 - 30s → count=4, interval_ms=7500
 - 1 min → count=5, interval_ms=12000
-- 90s → count=6, interval_ms=15000
+- 5 min every 20s → count=16, interval_ms=20000
 - NEVER use capture_now for "monitor" requests.
 - This runs in the background — images appear in the Gallery as they arrive.
 
-create_schedule (duration 2+ min, uses HH:MM):
-- "monitor for X minutes/hours" / long durations
+create_schedule (duration 2+ min, minute-level intervals ONLY):
+- "monitor for X minutes/hours" with intervals >= 1 minute
+- Uses HH:MM — CANNOT do sub-minute intervals (every 10s, 20s, 30s)
+- If user asks for sub-minute intervals, ALWAYS use capture_sequence instead.
 - YOU decide frequency. Pass duration+frequency as prompt.
 
 Other tools:

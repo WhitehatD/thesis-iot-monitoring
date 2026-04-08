@@ -1015,8 +1015,8 @@ int main(void)
                 diff += 86400;
             }
 
-            /* Within 5 seconds before or 5 seconds after (86395) the target time */
-            if (diff <= 5 || diff >= 86395)
+            /* Within 30 seconds of the target time (handles late schedule arrival) */
+            if (diff <= 30 || diff >= 86370)
             {
                 /* ── Time reached — execute this task ── */
                 LOG_INFO(TAG_SCHED, "Executing task %u: %02u:%02u:%02u '%s'",
