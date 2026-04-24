@@ -1,0 +1,24 @@
+# crag:auto-start
+# Generated from governance.md by crag — https://crag.sh
+# Regenerate: crag compile --target circleci
+version: 2.1
+
+jobs:
+  crag-audit:
+    docker:
+      - image: cimg/node:lts
+    steps:
+      - checkout
+      - run:
+          name: Run crag governance audit
+          command: npx @whitehatd/crag audit
+
+workflows:
+  governance:
+    jobs:
+      - crag-audit:
+          filters:
+            branches:
+              only: /.*/
+
+# crag:auto-end

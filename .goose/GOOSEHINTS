@@ -1,0 +1,25 @@
+<!-- crag:auto-start -->
+# Project Hints
+
+> Generated from governance.md by crag — https://crag.sh
+> Regenerate: `crag compile --target goose`
+
+## Quality Gates
+
+### Server (working-directory: server)
+- `python -m pytest tests/ -v --tb=short`
+
+### Dashboard (working-directory: dashboard)
+- `npx biome check --no-errors-on-unmatched --diagnostic-level=error`
+- `npx tsc --noEmit`
+- `npm run build`
+
+### Firmware (working-directory: firmware)
+- `make -j8`
+
+## Stack
+
+- **Stack:** python, typescript, c, docker
+- **Runtimes:** node, python
+
+<!-- crag:auto-end -->

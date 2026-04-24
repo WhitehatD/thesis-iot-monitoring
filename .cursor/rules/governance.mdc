@@ -1,0 +1,39 @@
+---
+description: Governance rules for thesis-iot-monitoring — quality gates, security, conventions
+globs:
+  - "**/*.ts"
+  - "**/*.tsx"
+  - "**/*.js"
+  - "**/*.jsx"
+  - "**/*.py"
+alwaysApply: true
+---
+
+# Governance — thesis-iot-monitoring
+
+> Generated from governance.md by [crag](https://crag.sh). Regenerate: `crag compile --target cursor`
+
+**Stack:** python, typescript, c, docker
+
+## Quality Gates
+
+Run these checks in order before committing:
+### Server (working-directory: server)
+- `python -m pytest tests/ -v --tb=short`
+
+### Dashboard (working-directory: dashboard)
+- `npx biome check --no-errors-on-unmatched --diagnostic-level=error`
+- `npx tsc --noEmit`
+- `npm run build`
+
+### Firmware (working-directory: firmware)
+- `make -j8`
+## Security
+
+- No hardcoded secrets — grep for sk_live, AKIA, password= before commit
+
+## Conventions
+
+- Conventional commits (feat:, fix:, docs:, etc.)
+- Commit trailer: Co-Authored-By: Claude <noreply@anthropic.com>
+- Runtimes: node, python

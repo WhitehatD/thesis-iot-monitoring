@@ -1,0 +1,17 @@
+# crag:auto-start
+# Generated from governance.md by crag — https://crag.sh
+# Regenerate: crag compile --target coderabbit
+version: "2"
+language: "en-US"
+reviews:
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        Enforce these quality gates from governance.md:
+        - `python -m pytest tests/ -v --tb=short`
+        - `npx biome check --no-errors-on-unmatched --diagnostic-level=error`
+        - `npx tsc --noEmit`
+        - `npm run build`
+        - `make -j8`
+
+# crag:auto-end

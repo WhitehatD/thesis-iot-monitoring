@@ -1,0 +1,18 @@
+#!/bin/sh
+# crag:auto-start
+# Generated from governance.md by crag — https://crag.sh
+# Regenerate: crag compile --target husky
+set -e
+
+# server (working-directory: server)
+python -m pytest tests/ -v --tb=short || exit 1
+
+# dashboard (working-directory: dashboard)
+npx biome check --no-errors-on-unmatched --diagnostic-level=error || exit 1
+npx tsc --noEmit || exit 1
+npm run build || exit 1
+
+# firmware (working-directory: firmware)
+make -j8 || exit 1
+
+# crag:auto-end

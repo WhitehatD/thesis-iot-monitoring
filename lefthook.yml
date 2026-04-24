@@ -1,0 +1,17 @@
+# crag:auto-start
+# Generated from governance.md by crag — https://crag.sh
+# Regenerate: crag compile --target lefthook
+pre-commit:
+  commands:
+    gate-0:
+      run: python -m pytest tests/ -v --tb=short
+    gate-1:
+      run: npx biome check --no-errors-on-unmatched --diagnostic-level=error
+    gate-2:
+      run: npx tsc --noEmit
+    gate-3:
+      run: npm run build
+    gate-4:
+      run: make -j8
+
+# crag:auto-end

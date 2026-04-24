@@ -1,0 +1,24 @@
+# crag:auto-start
+# Generated from governance.md by crag — https://crag.sh
+# Regenerate: crag compile --target azuredevops
+trigger:
+  - main
+  - master
+
+pr:
+  - main
+  - master
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: NodeTool@0
+    inputs:
+      versionSpec: '20.x'
+    displayName: 'Install Node.js'
+
+  - script: npx @whitehatd/crag audit
+    displayName: 'Run crag governance audit'
+
+# crag:auto-end
