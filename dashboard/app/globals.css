@@ -2263,6 +2263,135 @@ body {
 	white-space: nowrap;
 }
 
+/* ── Schedule Actions ──────────────────────────────── */
+.schedule-actions {
+	display: flex;
+	gap: 5px;
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
+	flex-wrap: wrap;
+}
+
+.btn-sched-action {
+	padding: 2px 8px;
+	font-size: 0.68rem;
+	border-radius: 3px;
+	border: 1px solid var(--border);
+	background: transparent;
+	color: var(--muted);
+	cursor: pointer;
+	transition:
+		color 0.15s,
+		border-color 0.15s;
+}
+.btn-sched-action:hover {
+	color: var(--fg);
+	border-color: var(--fg);
+}
+.btn-sched-action.accent {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+.btn-sched-action.accent:hover {
+	background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.btn-sched-action.danger {
+	color: #e06c75;
+	border-color: #e06c75;
+}
+.btn-sched-action.danger:hover {
+	background: rgba(224, 108, 117, 0.1);
+}
+.btn-sched-action:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
+}
+.btn-action.active {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+/* ── Schedule Edit Modal ──────────────────────────── */
+.schedule-edit-modal {
+	background: var(--surface);
+	border: 1px solid var(--border);
+	border-radius: 8px;
+	padding: 24px;
+	width: 480px;
+	max-width: 95vw;
+	max-height: 80vh;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+.modal-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+}
+.modal-header h3 {
+	font-size: 1rem;
+	font-weight: 600;
+	margin: 0;
+}
+.modal-label {
+	font-size: 0.75rem;
+	color: var(--muted);
+	display: block;
+	margin-bottom: 4px;
+}
+.modal-field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+.modal-input {
+	background: var(--bg);
+	border: 1px solid var(--border);
+	border-radius: 4px;
+	padding: 6px 10px;
+	color: var(--fg);
+	font-size: 0.85rem;
+	width: 100%;
+	box-sizing: border-box;
+}
+.modal-input:focus {
+	outline: none;
+	border-color: var(--accent);
+}
+.modal-input.time-input {
+	width: 100px;
+	flex-shrink: 0;
+}
+.modal-input.flex-1 {
+	flex: 1;
+}
+.modal-tasks {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.modal-tasks-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 4px;
+}
+.modal-task-row {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+}
+.modal-footer {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+	padding-top: 8px;
+	border-top: 1px solid var(--border);
+}
+
 /* ── Responsive ── */
 @media (max-width: 1024px) {
 	.agent-layout {

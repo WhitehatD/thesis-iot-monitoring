@@ -84,6 +84,13 @@ export default function BoardPage({
 		Record<number, { status: string; updatedAt: number }>
 	>({});
 	const [actionLoading, setActionLoading] = useState<string | null>(null);
+	const [sleepMode, setSleepMode] = useState(false);
+	const [editingSchedule, setEditingSchedule] = useState<{
+		id: number;
+		name: string;
+		description: string;
+		tasks: Array<{ time: string; objective: string }>;
+	} | null>(null);
 
 	const logIdRef = useRef(0);
 	const addLog = useCallback(
@@ -122,6 +129,17 @@ export default function BoardPage({
 							date: img.date,
 							timestamp: img.timestamp,
 							isNew: false,
+							analysis: img.analysis
+								? {
+										objective: img.analysis.objective ?? "",
+										objectiveMet: img.analysis.objective_met ?? false,
+										description: img.analysis.description ?? "",
+										findings: img.analysis.findings ?? "",
+										recommendation: img.analysis.recommendation ?? "",
+										model: img.analysis.model ?? "",
+										inferenceMs: img.analysis.inference_ms ?? 0,
+									}
+								: undefined,
 						})),
 					);
 				}
@@ -307,7 +325,7 @@ export default function BoardPage({
 					);
 					break;
 				case "capturing":
-					addLog("camera", "CAM", "Capturing frame (VGA RGB565)", taskMeta);
+					addLog("camera", "CAM", "Capturing frame", taskMeta);
 					break;
 				case "captured":
 					addLog(
@@ -471,6 +489,105 @@ export default function BoardPage({
 		fetchSchedules();
 	};
 
+	const handleSleepToggle = async () => {
+		const next = !sleepMode;
+		setSleepMode(next);
+		addLog(
+			"system",
+			"PWR",
+			next ? "Sending sleep command..." : "Sending wake command...",
+		);
+		try {
+			await fetch(`${apiBase}/api/schedules/sleep-mode?enabled=${next}`, {
+				method: "POST",
+			});
+			addLog("system", "PWR", next ? "Sleep mode ON" : "Sleep mode OFF");
+		} catch (err) {
+			setSleepMode(!next);
+			addLog("error", "PWR", `Sleep toggle failed: ${err}`);
+		}
+	};
+
+	const handleActivateSchedule = async (scheduleId: number) => {
+		setActionLoading(`activate-${scheduleId}`);
+		try {
+			const res = await fetch(
+				`${apiBase}/api/schedules/${scheduleId}/activate`,
+				{ method: "POST" },
+			);
+			if (!res.ok) throw new Error(await res.text());
+			addLog("success", "SCHED", `Schedule activated`, `id=${scheduleId}`);
+			fetchSchedules();
+		} catch (err) {
+			addLog("error", "SCHED", `Activate failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const handleDeactivateSchedule = async (scheduleId: number) => {
+		setActionLoading(`deactivate-${scheduleId}`);
+		try {
+			await fetch(`${apiBase}/api/schedules/${scheduleId}/deactivate`, {
+				method: "POST",
+			});
+			addLog("info", "SCHED", `Schedule deactivated`, `id=${scheduleId}`);
+			fetchSchedules();
+		} catch (err) {
+			addLog("error", "SCHED", `Deactivate failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const handleDeleteSchedule = async (scheduleId: number, name: string) => {
+		if (!confirm(`Delete schedule "${name}"? This cannot be undone.`)) return;
+		setActionLoading(`delete-${scheduleId}`);
+		try {
+			await fetch(`${apiBase}/api/schedules/${scheduleId}`, {
+				method: "DELETE",
+			});
+			setSchedules((prev) => prev.filter((s: any) => s.id !== scheduleId));
+			addLog("info", "SCHED", `Schedule "${name}" deleted`);
+		} catch (err) {
+			addLog("error", "SCHED", `Delete failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
+	const handleSaveSchedule = async () => {
+		if (!editingSchedule) return;
+		setActionLoading("save-schedule");
+		try {
+			const res = await fetch(
+				`${apiBase}/api/schedules/${editingSchedule.id}`,
+				{
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						name: editingSchedule.name,
+						description: editingSchedule.description,
+						tasks: editingSchedule.tasks.map((t, i) => ({
+							time: t.time,
+							objective: t.objective,
+							action: "CAPTURE_IMAGE",
+							order: i,
+						})),
+					}),
+				},
+			);
+			if (!res.ok) throw new Error(await res.text());
+			addLog("success", "SCHED", `Schedule "${editingSchedule.name}" updated`);
+			setEditingSchedule(null);
+			fetchSchedules();
+		} catch (err) {
+			addLog("error", "SCHED", `Save failed: ${err}`);
+		} finally {
+			setActionLoading(null);
+		}
+	};
+
 	const sortedImages = [...images].sort((a, b) => b.timestamp - a.timestamp);
 
 	return (
@@ -505,6 +622,12 @@ export default function BoardPage({
 						disabled={actionLoading !== null}
 					>
 						{actionLoading === "setup" ? "Sending..." : "Setup"}
+					</button>
+					<button
+						className={`btn-action${sleepMode ? " active" : ""}`}
+						onClick={handleSleepToggle}
+					>
+						{sleepMode ? "Wake" : "Sleep"}
 					</button>
 					<button className="btn-action" onClick={handleRefresh}>
 						Refresh
@@ -712,6 +835,58 @@ export default function BoardPage({
 														);
 													})}
 												</div>
+												<div className="schedule-actions">
+													{!sched.is_active && !allDone && (
+														<button
+															className="btn-sched-action accent"
+															disabled={actionLoading !== null}
+															onClick={() => handleActivateSchedule(sched.id)}
+														>
+															{actionLoading === `activate-${sched.id}`
+																? "…"
+																: "Activate"}
+														</button>
+													)}
+													{sched.is_active && (
+														<button
+															className="btn-sched-action"
+															disabled={actionLoading !== null}
+															onClick={() => handleDeactivateSchedule(sched.id)}
+														>
+															{actionLoading === `deactivate-${sched.id}`
+																? "…"
+																: "Deactivate"}
+														</button>
+													)}
+													<button
+														className="btn-sched-action"
+														disabled={actionLoading !== null}
+														onClick={() =>
+															setEditingSchedule({
+																id: sched.id,
+																name: sched.name,
+																description: sched.description || "",
+																tasks: (sched.tasks || []).map((t: any) => ({
+																	time: t.time,
+																	objective: t.objective || t.action || "",
+																})),
+															})
+														}
+													>
+														Edit
+													</button>
+													<button
+														className="btn-sched-action danger"
+														disabled={actionLoading !== null}
+														onClick={() =>
+															handleDeleteSchedule(sched.id, sched.name)
+														}
+													>
+														{actionLoading === `delete-${sched.id}`
+															? "…"
+															: "Delete"}
+													</button>
+												</div>
 											</div>
 										);
 									})
@@ -827,6 +1002,134 @@ export default function BoardPage({
 								</div>
 							</div>
 						)}
+					</div>
+				</div>
+			)}
+
+			{/* Schedule Edit Modal */}
+			{editingSchedule && (
+				<div
+					className="lightbox-overlay"
+					onClick={() => setEditingSchedule(null)}
+				>
+					<div
+						className="schedule-edit-modal"
+						onClick={(e) => e.stopPropagation()}
+					>
+						<div className="modal-header">
+							<h3>Edit Schedule</h3>
+							<button
+								className="lightbox-close"
+								onClick={() => setEditingSchedule(null)}
+							>
+								&times;
+							</button>
+						</div>
+
+						<div className="modal-field">
+							<label className="modal-label" htmlFor="sched-edit-name">
+								Name
+							</label>
+							<input
+								id="sched-edit-name"
+								className="modal-input"
+								value={editingSchedule.name}
+								onChange={(e) =>
+									setEditingSchedule((prev) =>
+										prev ? { ...prev, name: e.target.value } : prev,
+									)
+								}
+							/>
+						</div>
+
+						<div className="modal-tasks">
+							<div className="modal-tasks-header">
+								<span className="modal-label">Tasks</span>
+								<button
+									className="btn-sched-action accent"
+									onClick={() =>
+										setEditingSchedule((prev) =>
+											prev
+												? {
+														...prev,
+														tasks: [
+															...prev.tasks,
+															{ time: "09:00", objective: "" },
+														],
+													}
+												: prev,
+										)
+									}
+								>
+									+ Add
+								</button>
+							</div>
+							{editingSchedule.tasks.map((task, idx) => (
+								<div key={idx} className="modal-task-row">
+									<input
+										className="modal-input time-input"
+										type="time"
+										value={task.time.substring(0, 5)}
+										onChange={(e) =>
+											setEditingSchedule((prev) => {
+												if (!prev) return prev;
+												const tasks = [...prev.tasks];
+												tasks[idx] = { ...tasks[idx], time: e.target.value };
+												return { ...prev, tasks };
+											})
+										}
+									/>
+									<input
+										className="modal-input flex-1"
+										placeholder="Objective (e.g. Check if door is open)"
+										value={task.objective}
+										onChange={(e) =>
+											setEditingSchedule((prev) => {
+												if (!prev) return prev;
+												const tasks = [...prev.tasks];
+												tasks[idx] = {
+													...tasks[idx],
+													objective: e.target.value,
+												};
+												return { ...prev, tasks };
+											})
+										}
+									/>
+									<button
+										className="btn-sched-action danger"
+										onClick={() =>
+											setEditingSchedule((prev) => {
+												if (!prev) return prev;
+												return {
+													...prev,
+													tasks: prev.tasks.filter((_, i) => i !== idx),
+												};
+											})
+										}
+									>
+										×
+									</button>
+								</div>
+							))}
+						</div>
+
+						<div className="modal-footer">
+							<button
+								className="btn btn-secondary"
+								onClick={() => setEditingSchedule(null)}
+							>
+								Cancel
+							</button>
+							<button
+								className="btn btn-primary"
+								disabled={actionLoading === "save-schedule"}
+								onClick={handleSaveSchedule}
+							>
+								{actionLoading === "save-schedule"
+									? "Saving…"
+									: "Save Schedule"}
+							</button>
+						</div>
 					</div>
 				</div>
 			)}

@@ -258,6 +258,7 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
                 objective=objective,
                 analysis=analysis.get("findings", ""),
                 recommendation=analysis.get("recommendation", ""),
+                objective_met=analysis.get("objective_met", False),
                 model_used=analysis.get("model_used", model_key),
                 inference_time_ms=analysis.get("inference_time_ms", 0),
             )
@@ -294,7 +295,7 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
 # ── Image Serving ────────────────────────────────────────
 
 @router.get("/images")
-async def list_images():
+async def list_images(db: AsyncSession = Depends(get_db)):
     """
     List all uploaded images, newest first.
     """
@@ -318,6 +319,29 @@ async def list_images():
                         "timestamp": int(img_file.stat().st_mtime),
                     })
 
+    # Enrich with analysis results from DB
+    task_ids = [img["task_id"] for img in images if img["task_id"]]
+    analysis_map: dict = {}
+    if task_ids:
+        ar = await db.execute(
+            select(AnalysisResult)
+            .where(AnalysisResult.task_id.in_(task_ids))
+            .order_by(AnalysisResult.created_at.desc())
+        )
+        for row in ar.scalars().all():
+            if row.task_id not in analysis_map:
+                analysis_map[row.task_id] = {
+                    "objective": row.objective,
+                    "objective_met": row.objective_met,
+                    "description": row.analysis,
+                    "findings": row.analysis,
+                    "recommendation": row.recommendation,
+                    "model": row.model_used,
+                    "inference_ms": row.inference_time_ms,
+                }
+    for img in images:
+        img["analysis"] = analysis_map.get(img["task_id"])
+
     return {"images": images}
 
 
@@ -333,19 +357,30 @@ async def serve_image(date: str, filename: str):
 
 
 @router.delete("/images/{date}/{filename}")
-async def delete_image(date: str, filename: str):
+async def delete_image(date: str, filename: str, db: AsyncSession = Depends(get_db)):
     """
     Delete an uploaded image file from the server.
     """
     filepath = Path(settings.upload_dir) / date / filename
     if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
-    
+
     try:
         os.remove(filepath)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete image: {str(e)}")
-    
+
+    # Clean up analysis from DB
+    parts = Path(filename).stem.split("_")
+    if len(parts) >= 2:
+        try:
+            task_id_del = int(parts[1])
+            from sqlalchemy import delete as sql_delete
+            await db.execute(sql_delete(AnalysisResult).where(AnalysisResult.task_id == task_id_del))
+            await db.commit()
+        except (ValueError, IndexError):
+            pass
+
     return {"status": "success", "message": "Image deleted"}
 
 

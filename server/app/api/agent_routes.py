@@ -323,6 +323,63 @@ AGENT_TOOLS = [
             "required": ["prompt"],
         },
     },
+    {
+        "name": "sleep_mode",
+        "description": (
+            "Toggle the board's sleep mode. Use when the user says 'sleep', 'standby', "
+            "'low power', 'wake up', or 'wake the board'. "
+            "Pass enabled=true to sleep, enabled=false to wake."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "True to put the board to sleep, False to wake it up.",
+                },
+            },
+            "required": ["enabled"],
+        },
+    },
+    {
+        "name": "delete_schedule",
+        "description": (
+            "Permanently DELETE a monitoring schedule from the database. "
+            "Use when the user says 'delete schedule', 'remove schedule', or 'get rid of schedule X'. "
+            "This is permanent — use deactivate_schedule to just stop it without deleting."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "schedule_id": {
+                    "type": "integer",
+                    "description": "ID of the schedule to delete.",
+                },
+            },
+            "required": ["schedule_id"],
+        },
+    },
+    {
+        "name": "delete_image",
+        "description": (
+            "Delete a captured image and its AI analysis from storage and the database. "
+            "Use when the user says 'delete image', 'remove photo', or refers to a specific image file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Date folder of the image, e.g. '2026-04-25'.",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Image filename, e.g. 'task_42_1745000000.jpg'.",
+                },
+            },
+            "required": ["date", "filename"],
+        },
+    },
 ]
 
 AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent — an action-first operator controlling a physical STM32 camera board over MQTT. Be decisive, concise, and always prefer DOING over explaining.
@@ -354,7 +411,11 @@ create_schedule (duration 2+ min, minute-level intervals ONLY):
 
 Other tools:
 - deactivate_schedule: "stop" / "cancel" / "deactivate" / "turn off" / "disable" schedule
+- delete_schedule: "delete schedule" / "remove schedule" / "get rid of schedule" (permanent removal)
 - modify_schedule: "change the schedule" / "update monitoring" / "reschedule" / "adjust" / "shift" an EXISTING schedule
+- sleep_mode(enabled=true): "sleep" / "standby" / "low power" / "hibernate"
+- sleep_mode(enabled=false): "wake up" / "wake the board" / "turn on"
+- delete_image: "delete image" / "remove photo" / "delete the picture" (needs date + filename)
 - ping_board: "ping" / "alive" / "responsive"
 - start_portal: "setup" / "portal" / "wifi config"
 - get_board_status: "status" / "health" / "firmware" / "uptime"
@@ -506,7 +567,10 @@ def _tool_label(name: str, inp: dict) -> str:
         "capture_now": "Sending capture command to board...",
         "capture_sequence": f"Sending {inp.get('count', '?')}-shot sequence...",
         "deactivate_schedule": "Deactivating schedule...",
+        "delete_schedule": f"Deleting schedule #{inp.get('schedule_id', '?')}...",
         "modify_schedule": f"Updating schedule: \"{inp.get('prompt', '')[:50]}\"",
+        "sleep_mode": "Sleeping board..." if inp.get("enabled") else "Waking board...",
+        "delete_image": f"Deleting {inp.get('filename', 'image')}...",
         "ping_board": "Pinging board...",
         "analyze_latest": "Fetching latest AI analysis...",
         "get_board_status": "Checking board status...",
@@ -764,6 +828,12 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
         return await _tool_board_status()
     elif name == "synthesize_schedule":
         return await _tool_synthesize(inp)
+    elif name == "sleep_mode":
+        return await _tool_sleep_mode(inp)
+    elif name == "delete_schedule":
+        return await _tool_delete_schedule(inp)
+    elif name == "delete_image":
+        return await _tool_delete_image(inp)
     else:
         return {"success": False, "summary": f"Unknown tool: {name}", "detail": ""}
 
@@ -1168,6 +1238,86 @@ async def _tool_synthesize(inp: dict) -> dict:
     }
 
 
+async def _tool_sleep_mode(inp: dict) -> dict:
+    enabled = inp.get("enabled", True)
+    payload = json.dumps({"type": "sleep_mode", "enabled": enabled})
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    state = "sleep" if enabled else "wake"
+    return {
+        "success": True,
+        "summary": f"Board {state} command sent",
+        "detail": f"**Board is now {'sleeping' if enabled else 'awake'}.**",
+    }
+
+
+async def _tool_delete_schedule(inp: dict) -> dict:
+    from app.db.database import async_session
+    from app.scheduler.service import get_schedule, delete_schedule as svc_delete
+    from app.scheduler.notify import notify_schedule_update
+
+    schedule_id = inp.get("schedule_id")
+    if not schedule_id:
+        return {"success": False, "summary": "schedule_id required", "detail": ""}
+
+    async with async_session() as db:
+        try:
+            schedule = await get_schedule(db, int(schedule_id))
+            name = schedule.name
+            await svc_delete(db, int(schedule_id))
+        except Exception as e:
+            return {"success": False, "summary": f"Delete failed: {e}", "detail": ""}
+
+    payload = json.dumps({"type": "delete_schedule", "schedule_id": schedule_id})
+    mqtt_client.publish(settings.mqtt_topic_commands, payload)
+    await notify_schedule_update()
+
+    return {
+        "success": True,
+        "summary": f"Deleted: {name}",
+        "detail": f"**Schedule deleted:** \"{name}\"",
+    }
+
+
+async def _tool_delete_image(inp: dict) -> dict:
+    from pathlib import Path
+    from sqlalchemy import delete as sql_delete
+    from app.analysis.models import AnalysisResult
+    from app.db.database import async_session
+
+    date = inp.get("date", "")
+    filename = inp.get("filename", "")
+
+    if not date or not filename:
+        return {"success": False, "summary": "date and filename required", "detail": ""}
+
+    # Prevent path traversal
+    if any(c in date + filename for c in ("/", "\\", "..")):
+        return {"success": False, "summary": "Invalid path characters", "detail": ""}
+
+    img_path = Path(settings.upload_dir) / date / filename
+    if not img_path.exists():
+        return {"success": False, "summary": f"{filename} not found", "detail": f"Image `{filename}` not found in {date}/"}
+
+    img_path.unlink()
+
+    # Delete matching AnalysisResult row (filename: task_{id}_{ts}.jpg)
+    parts = Path(filename).stem.split("_")
+    if len(parts) >= 2:
+        try:
+            task_id = int(parts[1])
+            async with async_session() as db:
+                await db.execute(sql_delete(AnalysisResult).where(AnalysisResult.task_id == task_id))
+                await db.commit()
+        except (ValueError, IndexError):
+            pass
+
+    return {
+        "success": True,
+        "summary": f"Deleted {filename}",
+        "detail": f"**Image deleted:** `{filename}` ({date})",
+    }
+
+
 # ── Fallback: rule-based dispatch when no API key ────────
 
 async def _fallback_dispatch(message: str, session_id: str):
@@ -1194,6 +1344,17 @@ async def _fallback_dispatch(message: str, session_id: str):
         result = await _tool_deactivate_schedule({})
     elif any(w in msg for w in ["change schedule", "update schedule", "modify schedule", "reschedule", "adjust schedule"]):
         result = await _tool_modify_schedule({"prompt": message})
+    elif any(w in msg for w in ["delete schedule", "remove schedule"]):
+        # best-effort: extract numeric id from message
+        ids = re.findall(r"\d+", message)
+        if ids:
+            result = await _tool_delete_schedule({"schedule_id": int(ids[0])})
+        else:
+            result = {"success": False, "summary": "Schedule ID required", "detail": "Please specify which schedule to delete (e.g. 'delete schedule 3')."}
+    elif any(w in msg for w in ["sleep", "standby"]):
+        result = await _tool_sleep_mode({"enabled": True})
+    elif any(w in msg for w in ["wake up", "wake the board"]):
+        result = await _tool_sleep_mode({"enabled": False})
     elif any(w in msg for w in ["monitor", "schedule", "every", "between", "watch"]):
         result = await _tool_create_schedule({"prompt": message})
     else:

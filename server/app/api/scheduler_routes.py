@@ -53,7 +53,11 @@ async def get_schedule(schedule_id: int, db: AsyncSession = Depends(get_db)):
 async def update_schedule(
     schedule_id: int, body: ScheduleCreate, db: AsyncSession = Depends(get_db)
 ):
-    """Update a schedule's name, description, and tasks."""
+    """Update a schedule's name, description, and tasks.
+
+    If the schedule is currently active, re-publishes the updated task list
+    to the board via MQTT so it takes effect immediately.
+    """
     schedule = await service.update_schedule(
         db,
         schedule_id=schedule_id,
@@ -61,6 +65,15 @@ async def update_schedule(
         description=body.description,
         tasks=[t.model_dump() for t in body.tasks],
     )
+
+    # Re-publish to board if active
+    if schedule.is_active:
+        mqtt_payload = await service.activate_schedule(db, schedule_id)
+        mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(mqtt_payload))
+        # activate_schedule commits and expires the session — re-fetch with eager-loaded tasks
+        schedule = await service.get_schedule(db, schedule_id)
+
+    await notify_schedule_update()
     return _schedule_to_dict(schedule)
 
 
