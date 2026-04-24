@@ -33,6 +33,14 @@ async def lifespan(app: FastAPI):
     await mqtt_client.connection()
     print(f"[OK] MQTT connected to {settings.mqtt_broker_host}:{settings.mqtt_broker_port}")
 
+    # Clean up stale quick-capture sequences and old completed schedules
+    from app.db.database import async_session
+    from app.scheduler.service import cleanup_stale_schedules
+    async with async_session() as db:
+        cleaned = await cleanup_stale_schedules(db)
+        if cleaned:
+            print(f"[OK] Cleaned {cleaned} stale schedule(s)")
+
     yield
 
     # Disconnect MQTT

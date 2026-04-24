@@ -98,6 +98,35 @@ __attribute__((unused)) static uint32_t _raw_frame_size(CameraResolution_t res)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ *  JPEG End-Marker Scanner
+ *
+ *  OV5640 JPEG frames always end with bytes 0xFF 0xD9.
+ *  Scanning for this marker gives the actual JPEG payload size without
+ *  needing DMA CNDTR register access.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#if CAMERA_JPEG_MODE
+/**
+ * @brief  Scan buffer for JPEG end-of-image marker (0xFF 0xD9).
+ * @param  buf   Buffer containing the JPEG bitstream
+ * @param  max   Maximum bytes to scan (buffer_size)
+ * @return Actual JPEG size in bytes (includes the 0xFF 0xD9 bytes),
+ *         or 0 if the end marker is not found.
+ */
+static uint32_t _find_jpeg_size(const uint8_t *buf, uint32_t max)
+{
+    if (!buf || max < 2)
+        return 0;
+    for (uint32_t i = 0; i + 1 < max; i++)
+    {
+        if (buf[i] == 0xFF && buf[i + 1] == 0xD9)
+            return i + 2;   /* include the 2-byte EOI marker */
+    }
+    return 0;   /* marker not found — truncated or bad capture */
+}
+#endif /* CAMERA_JPEG_MODE */
+
+/* ═══════════════════════════════════════════════════════════════════════════
  *  AEC Convergence Polling (replaces fixed HAL_Delay)
  *
  *  Enterprise practice: poll the ISP's current exposure level register
@@ -272,6 +301,37 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     /* ── Adaptive AEC convergence (replaces fixed 2s delay) ── */
     _wait_aec_converge();
 
+#if CAMERA_JPEG_MODE
+    /* ── Enable OV5640 JPEG output + DCMI JPEG mode ──────────────────────
+     *
+     * These writes override the RGB565 format that BSP_CAMERA_Init configured.
+     * Must come after BSP init so the OV5640 register table has been loaded.
+     *
+     * Key registers:
+     *   0x4300 FORMAT_CTRL00    : 0x30 = select JPEG encoder output
+     *   0x501F ISP_FORMAT_MUX   : 0x03 = route sensor → JPEG engine → DCMI
+     *   0x4407 JPEG_QS          : quality scale (0=best/largest … 0xFF=worst/tiny)
+     *
+     * DCMI_CR[3] JPEG bit: hardware ignores line/frame counters and
+     * terminates the DMA transfer on VSYNC fall (end of JPEG frame).
+     */
+    val = 0x30;  /* FORMAT_CTRL00: JPEG output */
+    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4300, &val, 1);
+
+    val = 0x03;  /* ISP_FORMAT_MUX: bypass ISP, feed JPEG engine */
+    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x501F, &val, 1);
+
+    val = (uint8_t)CAMERA_JPEG_QUALITY;  /* JPEG_QS: quality scale */
+    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4407, &val, 1);
+
+    /* Set DCMI JPEG mode — safe while DCMI is disabled (between Init and Start) */
+    DCMI->CR |= DCMI_CR_JPEG;
+
+    LOG_INFO(TAG_CAM, "JPEG mode: OV5640 encoder active (buffer=%lu KB, QS=%d)",
+             (unsigned long)(CAMERA_FRAME_BUFFER_SIZE / 1024),
+             (int)CAMERA_JPEG_QUALITY);
+#endif /* CAMERA_JPEG_MODE */
+
     LOG_INFO(TAG_CAM, "Camera initialized OK (raw frame size: %lu bytes, VTS=0x%04X)",
              (unsigned long)_raw_frame_size(resolution),
              (unsigned)CAMERA_VTS_DEFAULT);
@@ -317,6 +377,15 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
                   (unsigned long)CAMERA_FRAME_BUFFER_SIZE);
         return CAMERA_ERROR_CAPTURE;
     }
+
+#if CAMERA_JPEG_MODE
+    /* In JPEG mode the DCMI JPEG protocol requires snapshot mode (variable frame
+     * size with VSYNC-terminated transfer). The continuous-mode warmup path
+     * assumes fixed-size frames and does not work reliably with JPEG output.
+     * AEC is already settled from Camera_Init, so no warmup is needed. */
+    LOG_INFO(TAG_CAM, "JPEG mode: delegating to Camera_WarmCapture (single snapshot)");
+    return Camera_WarmCapture(buffer, buffer_size, captured_size);
+#endif
 
     const uint32_t TOTAL_FRAMES = CAMERA_WARMUP_FRAMES + 1;  /* warm-up + final */
     int32_t ret;
@@ -549,6 +618,29 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
             if (copy_size > buffer_size)
                 copy_size = buffer_size;
 
+#if CAMERA_JPEG_MODE
+            /* Scan for JPEG End-Of-Image marker (0xFF 0xD9) to find actual size.
+             * If not found, the capture is incomplete — retry. */
+            uint32_t jpeg_size = _find_jpeg_size(buffer, copy_size);
+            if (jpeg_size == 0)
+            {
+                LOG_ERROR(TAG_CAM,
+                          "JPEG EOI marker not found (attempt %lu/%lu) — bad capture",
+                          (unsigned long)attempt, (unsigned long)MAX_ATTEMPTS);
+                BSP_LED_Off(LED_RED);
+                s_active_buffer = NULL;
+                if (attempt < MAX_ATTEMPTS)
+                {
+                    HAL_Delay(50);
+                    continue;
+                }
+                return CAMERA_ERROR_CAPTURE;
+            }
+            copy_size = jpeg_size;
+            LOG_INFO(TAG_CAM, "JPEG size: %lu bytes (EOI at offset %lu)",
+                     (unsigned long)jpeg_size, (unsigned long)(jpeg_size - 2));
+#endif /* CAMERA_JPEG_MODE */
+
             *captured_size = copy_size;
 
             /* SEC-09: Enterprise Cache Coherency */
@@ -613,8 +705,15 @@ void BSP_CAMERA_FrameEventCallback(uint32_t Instance)
         BSP_CAMERA_Suspend(0);
     }
 
-    /* Raw RGB565 frame — always use full buffer */
+#if CAMERA_JPEG_MODE
+    /* JPEG mode: actual frame size is variable; determined post-capture by
+     * scanning for the 0xFF 0xD9 EOI marker. Set to 0 so callers fall back
+     * to scanning the full buffer. */
+    s_frame_size = 0;
+#else
+    /* RGB565: always a fixed, known size */
     s_frame_size = CAMERA_FRAME_BUFFER_SIZE;
+#endif
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════

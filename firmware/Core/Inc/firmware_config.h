@@ -73,16 +73,32 @@
 #define CAMERA_DEFAULT_RESOLUTION   CAMERA_RES_VGA    /* 640×480 */
 #define CAMERA_CAPTURE_TIMEOUT_MS   5000
 
+/* ── JPEG Output Mode ─────────────────────────────────── */
+/*
+ * When CAMERA_JPEG_MODE = 1, the OV5640's built-in JPEG encoder is enabled.
+ * The board sends compressed JPEG directly instead of raw RGB565.
+ *
+ * Benefits:  ~50 KB vs 614 KB upload (12× reduction), ~0.4 s vs 4.5 s per image.
+ * Requirements: server upload handler auto-detects JPEG (already supported).
+ *
+ * Set to 0 to revert to raw RGB565 (for debugging or LLM benchmarks needing raw).
+ */
+#define CAMERA_JPEG_MODE            1     /* 1 = JPEG output, 0 = RGB565 */
+#define CAMERA_JPEG_QUALITY         4     /* OV5640 QS: 0=best/largest, higher=worse/smaller (4 ≈ 80% quality) */
+
 /*
  * Frame buffer size:
- *   VGA (640×480) RGB565  = 614,400 bytes
- *   QVGA (320×240) RGB565 = 153,600 bytes
- *   VGA JPEG               ≈ 30–80 KB (compressed)
+ *   RGB565 VGA  = 640 × 480 × 2 = 614,400 bytes
+ *   RGB565 QVGA = 320 × 240 × 2 = 153,600 bytes
+ *   JPEG VGA    ≈ 30–80 KB (128 KB provides a safe upper bound)
  *
- * Currently using CAMERA_PF_RGB565 at VGA resolution.
- * STM32U585AI has 768 KB SRAM — this buffer fits comfortably.
+ * STM32U585AI has 768 KB SRAM — both sizes fit comfortably.
  */
-#define CAMERA_FRAME_BUFFER_SIZE    (640 * 480 * 2)  /* 614,400 bytes — VGA RGB565 */
+#if CAMERA_JPEG_MODE
+#define CAMERA_FRAME_BUFFER_SIZE    (128 * 1024)      /* 131,072 bytes — JPEG VGA (30–80 KB typical) */
+#else
+#define CAMERA_FRAME_BUFFER_SIZE    (640 * 480 * 2)   /* 614,400 bytes — RGB565 VGA */
+#endif
 
 /* ── Fast-Capture Tuning ──────────────────────────────── */
 #define CAMERA_WARMUP_FRAMES        3                 /* Frames to discard for AEC convergence (cold start only) */

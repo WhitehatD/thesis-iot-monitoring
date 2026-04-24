@@ -61,7 +61,7 @@ flowchart LR
 
     subgraph Analysis ["Cloud — Vision Analysis"]
         Convert["RGB565 → JPEG"]
-        LLM["Multimodal LLM\nGemini 3 / Qwen3-VL"]
+        LLM["Multimodal LLM\nClaude · Gemini 3 · Qwen3-VL"]
         Result["Findings +\nRecommendation"]
         Convert --> LLM --> Result
     end
@@ -76,7 +76,8 @@ flowchart LR
     Result --> Dashboard
 ```
 
-Three LLM backends are compared for thesis evaluation:
+Four LLM backends are compared for thesis evaluation:
+- **Claude Sonnet 4 / Haiku 4.5** via Anthropic API — primary backend (planning + analysis + agent)
 - **Qwen3-VL-30B-A3B** via vLLM — open-weight, self-hosted
 - **Qwen2.5-VL-3B** via vLLM — lightweight edge candidate
 - **Gemini 3 Flash** via API — commercial baseline
@@ -104,7 +105,7 @@ graph TD
         MQTT["Mosquitto\nMQTT 3.1.1"]
         API["FastAPI\nAI Planner · Image Pipeline"]
         DB[("SQLite\nAsync")]
-        LLM["Multimodal LLMs\nGemini 3 · Qwen3-VL"]
+        LLM["Multimodal LLMs\nClaude · Gemini 3 · Qwen3-VL"]
 
         MQTT <-- "Pub/Sub" --> API
         API <--> DB

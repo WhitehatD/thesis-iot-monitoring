@@ -3,6 +3,8 @@ Thesis IoT Server — Scheduler CRUD Service
 Business logic for creating, updating, and activating monitoring schedules.
 """
 
+from datetime import datetime
+
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,6 +95,71 @@ async def deactivate_schedule(db: AsyncSession, schedule_id: int) -> Schedule:
     await db.commit()
     await db.refresh(schedule, attribute_names=["tasks"])
     return schedule
+
+
+def _schedule_span_hours(tasks: list) -> float:
+    """Return hours between first and last task time (handles midnight wrap)."""
+    if not tasks or len(tasks) < 2:
+        return 0.0
+    try:
+        fmt = lambda t: datetime.strptime(t.time[:5], "%H:%M")
+        first = fmt(tasks[0])
+        last = fmt(tasks[-1])
+        diff = (last - first).total_seconds() / 3600
+        return diff if diff >= 0 else 24 + diff
+    except Exception:
+        return 0.0
+
+
+async def cleanup_stale_schedules(db: AsyncSession) -> int:
+    """
+    Delete stale inactive schedules.
+
+    Rules (never deletes active schedules):
+    - "Quick:" sequences — delete after 4 h inactive (they accumulate fast)
+    - Any schedule where all tasks are completed — delete after 7 days
+    - Long schedules (span > 2 h) that are still incomplete — never auto-delete
+    - Short incomplete schedules — delete after 48 h inactive
+
+    Returns count of deleted schedules.
+    """
+    schedules = await list_schedules(db)
+    deleted = 0
+    now = datetime.now()
+
+    for schedule in schedules:
+        if schedule.is_active:
+            continue
+
+        age_hours = (now - schedule.created_at).total_seconds() / 3600
+
+        if schedule.name.startswith("Quick:"):
+            if age_hours > 4:
+                await db.delete(schedule)
+                deleted += 1
+            continue
+
+        all_done = schedule.tasks and all(t.completed_at is not None for t in schedule.tasks)
+
+        if all_done:
+            # Fully completed schedules: clean up after 7 days
+            if age_hours > 168:
+                await db.delete(schedule)
+                deleted += 1
+        else:
+            span = _schedule_span_hours(schedule.tasks)
+            if span > 2:
+                # Long / multi-hour monitoring: keep — user may want to re-activate
+                pass
+            else:
+                # Short incomplete schedule: clean up after 48 h
+                if age_hours > 48:
+                    await db.delete(schedule)
+                    deleted += 1
+
+    if deleted:
+        await db.commit()
+    return deleted
 
 
 async def activate_schedule(db: AsyncSession, schedule_id: int) -> dict:

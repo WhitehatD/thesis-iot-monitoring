@@ -300,6 +300,29 @@ AGENT_TOOLS = [
             },
         },
     },
+    {
+        "name": "modify_schedule",
+        "description": (
+            "Modify an EXISTING monitoring schedule — change its times, frequency, or objective. "
+            "Use when user says 'change', 'update', 'reschedule', 'adjust', 'shift', or 'modify' "
+            "a schedule that already exists. Re-generates the schedule from a new prompt. "
+            "DO NOT use to create a brand-new schedule — use create_schedule for that."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "New monitoring request to replace the schedule with.",
+                },
+                "schedule_id": {
+                    "type": "integer",
+                    "description": "ID of the schedule to modify. If omitted, modifies the currently active schedule.",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
 ]
 
 AGENT_SYSTEM_PROMPT = """You are the IoT Visual Monitoring Agent — an action-first operator controlling a physical STM32 camera board over MQTT. Be decisive, concise, and always prefer DOING over explaining.
@@ -331,6 +354,7 @@ create_schedule (duration 2+ min, minute-level intervals ONLY):
 
 Other tools:
 - deactivate_schedule: "stop" / "cancel" / "deactivate" / "turn off" / "disable" schedule
+- modify_schedule: "change the schedule" / "update monitoring" / "reschedule" / "adjust" / "shift" an EXISTING schedule
 - ping_board: "ping" / "alive" / "responsive"
 - start_portal: "setup" / "portal" / "wifi config"
 - get_board_status: "status" / "health" / "firmware" / "uptime"
@@ -421,10 +445,17 @@ async def agent_chat(request: Request):
                             await _persist_message(session_id, "assistant", pipeline_reply)
                         continue
                     elif tool_name == "capture_sequence":
-                        yield _sse_event("tool_call", {"id": tool_name, "label": _tool_label(tool_name, tool_input)})
-                        result = await _tool_capture_sequence(tool_input)
-                        yield _sse_event("tool_result", {"id": tool_name, "success": result["success"], "summary": result["summary"]})
-                        reply_parts.append(result.get("detail", ""))
+                        pipeline_reply = ""
+                        async for ev in _capture_sequence_pipeline(tool_input):
+                            yield ev
+                            if '"event": "reply"' in ev:
+                                try:
+                                    ev_data = json.loads(ev.split("data: ", 1)[1].strip())
+                                    pipeline_reply = ev_data.get("text", "")
+                                except Exception:
+                                    pass
+                        if pipeline_reply and session_id:
+                            await _persist_message(session_id, "assistant", pipeline_reply)
                         continue
                     else:
                         yield _sse_event("tool_call", {
@@ -468,6 +499,7 @@ def _tool_label(name: str, inp: dict) -> str:
         "capture_now": "Sending capture command to board...",
         "capture_sequence": f"Sending {inp.get('count', '?')}-shot sequence...",
         "deactivate_schedule": "Deactivating schedule...",
+        "modify_schedule": f"Updating schedule: \"{inp.get('prompt', '')[:50]}\"",
         "ping_board": "Pinging board...",
         "analyze_latest": "Fetching latest AI analysis...",
         "get_board_status": "Checking board status...",
@@ -576,6 +608,132 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     yield _sse_event("reply", {"text": detail})
 
 
+async def _capture_sequence_pipeline(tool_input: dict):
+    """
+    Proper agentic sequence pipeline:
+      1. Create DB schedule (real task IDs for objective lookup)
+      2. Send MQTT capture_sequence with first task's DB ID
+      3. Poll for all N analysis results as they arrive
+      4. Stream per-image SSE events in real time
+
+    This replaces the old fire-and-forget _tool_capture_sequence path.
+    """
+    from app.analysis.models import AnalysisResult
+    from app.scheduler.service import create_schedule, activate_schedule
+    from app.scheduler.notify import notify_schedule_update
+
+    count = max(2, min(tool_input.get("count", 3), 16))
+    interval = max(500, tool_input.get("interval_ms", 2000))
+    objective = tool_input.get("objective", "Quick monitoring sequence")
+    total_s = (count - 1) * interval / 1000
+
+    # Create DB schedule so every upload can look up its objective by task_id
+    now = datetime.now()
+    tasks = []
+    for i in range(count):
+        offset_s = i * interval / 1000
+        task_time = now + timedelta(seconds=offset_s)
+        tasks.append({
+            "time": task_time.strftime("%H:%M:%S"),
+            "action": "CAPTURE_IMAGE",
+            "objective": objective,
+        })
+
+    async with async_session() as db:
+        schedule = await create_schedule(
+            db,
+            name=f"Quick: {count} shots over {total_s:.0f}s",
+            description=f"Automated {count}-capture sequence at {interval}ms intervals",
+            tasks=tasks,
+        )
+        await activate_schedule(db, schedule.id)
+
+    await notify_schedule_update()
+
+    first_task_id = schedule.tasks[0].id
+    delays = [i * interval for i in range(count)]
+    command = json.dumps({
+        "type": "capture_sequence",
+        "task_id": first_task_id,
+        "delays_ms": delays,
+    })
+
+    yield _sse_event("tool_call", {
+        "id": "capture",
+        "label": f"Sending {count}-shot sequence ({interval}ms apart)...",
+    })
+    mqtt_client.publish(settings.mqtt_topic_commands, command)
+    yield _sse_event("tool_result", {
+        "id": "capture",
+        "success": True,
+        "summary": f"Sequence started (task #{first_task_id})",
+    })
+
+    # Poll for N analyses — all uploads arrive with task_id = first_task_id
+    start_time = datetime.now()
+    total_seq_ms = delays[-1] + 5000  # last capture + upload + analysis headroom
+    timeout_polls = max(15, (total_seq_ms // 2000) + (count * 15))
+    analyses = []
+    seen_ids: set[int] = set()
+
+    yield _sse_event("tool_call", {
+        "id": "upload",
+        "label": f"Waiting for {count} image{'s' if count > 1 else ''}...",
+    })
+
+    for _ in range(int(timeout_polls)):
+        await asyncio.sleep(2)
+        async with async_session() as db:
+            result = await db.execute(
+                select(AnalysisResult)
+                .where(AnalysisResult.created_at >= start_time)
+                .where(AnalysisResult.task_id == first_task_id)
+                .order_by(AnalysisResult.created_at.asc())
+            )
+            new_results = [r for r in result.scalars().all() if r.id not in seen_ids]
+
+        for a in new_results:
+            seen_ids.add(a.id)
+            analyses.append(a)
+            yield _sse_event("tool_result", {
+                "id": f"img_{len(analyses)}",
+                "success": True,
+                "summary": f"Image {len(analyses)}/{count} analyzed (task #{a.task_id})",
+            })
+
+        if len(analyses) >= count:
+            break
+
+    if not analyses:
+        yield _sse_event("tool_result", {
+            "id": "upload",
+            "success": False,
+            "summary": "Timeout — board may be offline",
+        })
+        yield _sse_event("reply", {
+            "text": "**Sequence sent** but no images received yet. The board may be offline or busy.",
+        })
+        return
+
+    yield _sse_event("tool_result", {
+        "id": "upload",
+        "success": True,
+        "summary": f"{len(analyses)}/{count} image{'s' if count > 1 else ''} analyzed",
+    })
+
+    # Build per-image report
+    parts = [f"**Sequence Complete** — {len(analyses)}/{count} images analyzed\n"]
+    for i, a in enumerate(analyses, 1):
+        snippet = a.analysis[:120] + ("..." if len(a.analysis) > 120 else "")
+        parts.append(f"**#{i}**: {snippet}")
+    if analyses[-1].recommendation:
+        parts.append(f"\n**Recommendation:** {analyses[-1].recommendation}")
+    avg_ms = sum(a.inference_time_ms for a in analyses) / len(analyses)
+    parts.append(f"\n*{analyses[-1].model_used} | avg {avg_ms:.0f}ms*")
+
+    yield _sse_event("reply", {"text": "\n\n".join(parts)})
+
+
 async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
     """Execute a tool and return {success, summary, detail}."""
 
@@ -587,6 +745,8 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
         return await _tool_capture_sequence(inp)
     elif name == "deactivate_schedule":
         return await _tool_deactivate_schedule(inp)
+    elif name == "modify_schedule":
+        return await _tool_modify_schedule(inp)
     elif name == "ping_board":
         return await _tool_ping()
     elif name == "start_portal":
@@ -699,6 +859,92 @@ async def _tool_deactivate_schedule(inp: dict) -> dict:
         "success": True,
         "summary": f"Deactivated: {name}",
         "detail": f"**Schedule deactivated:** \"{name}\"\n\nThe board has been told to clear its schedule.",
+    }
+
+
+async def _tool_modify_schedule(inp: dict) -> dict:
+    """Re-plan and update an existing schedule in-place."""
+    from app.db.database import async_session
+    from app.scheduler.service import get_schedule, list_schedules, update_schedule, activate_schedule
+    from app.scheduler.notify import notify_schedule_update
+
+    prompt = inp.get("prompt", "")
+    schedule_id = inp.get("schedule_id")
+
+    # Find the target schedule
+    async with async_session() as db:
+        if schedule_id:
+            try:
+                schedule = await get_schedule(db, int(schedule_id))
+            except Exception:
+                return {"success": False, "summary": f"Schedule #{schedule_id} not found", "detail": ""}
+        else:
+            schedules = await list_schedules(db)
+            active = [s for s in schedules if s.is_active]
+            if not active:
+                # Fall back to most recently created
+                if schedules:
+                    schedule = schedules[0]
+                else:
+                    return {
+                        "success": False,
+                        "summary": "No schedule found to modify",
+                        "detail": "There are no schedules. Create one first with create_schedule.",
+                    }
+            else:
+                schedule = active[0]
+            schedule_id = schedule.id
+
+        was_active = schedule.is_active
+        old_name = schedule.name
+
+    # Re-generate schedule from new prompt
+    now = datetime.now()
+    enriched_prompt = (
+        f"Current time: {now.strftime('%H:%M')} on {now.strftime('%Y-%m-%d')}. "
+        f"Request: {prompt}"
+    )
+    model_key = "claude-sonnet" if settings.anthropic_api_key else "qwen3-vl"
+    try:
+        plan = await generate_plan(enriched_prompt, model_key)
+    except Exception as e:
+        return {"success": False, "summary": f"Re-planning failed: {e}", "detail": ""}
+
+    if not plan.tasks:
+        return {"success": False, "summary": "Planner returned empty schedule", "detail": ""}
+
+    # Update DB (replaces tasks atomically)
+    async with async_session() as db:
+        await update_schedule(
+            db,
+            schedule_id=int(schedule_id),
+            name=f"Agent: {prompt[:50]}",
+            description=prompt,
+            tasks=[t.model_dump() for t in plan.tasks],
+        )
+        if was_active:
+            mqtt_payload = await activate_schedule(db, int(schedule_id))
+
+    if was_active:
+        mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(mqtt_payload))
+
+    await notify_schedule_update()
+
+    times = [t.time for t in plan.tasks]
+    task_list = "\n".join(
+        f"| {t.id} | {t.time} | {t.action} | {t.objective} |"
+        for t in plan.tasks
+    )
+    detail = (
+        f"**Schedule updated** (was: \"{old_name}\")\n\n"
+        f"**New plan:** {len(plan.tasks)} tasks, {times[0]}–{times[-1]}\n\n"
+        f"| ID | Time | Action | Objective |\n|---|---|---|---|\n{task_list}"
+        + (f"\n\n*Board notified with updated schedule.*" if was_active else "")
+    )
+    return {
+        "success": True,
+        "summary": f"Schedule #{schedule_id} updated: {len(plan.tasks)} tasks ({times[0]}–{times[-1]})",
+        "detail": detail,
     }
 
 
@@ -939,6 +1185,8 @@ async def _fallback_dispatch(message: str, session_id: str):
         result = await _tool_board_status()
     elif any(w in msg for w in ["stop", "cancel", "deactivate", "disable", "turn off"]):
         result = await _tool_deactivate_schedule({})
+    elif any(w in msg for w in ["change schedule", "update schedule", "modify schedule", "reschedule", "adjust schedule"]):
+        result = await _tool_modify_schedule({"prompt": message})
     elif any(w in msg for w in ["monitor", "schedule", "every", "between", "watch"]):
         result = await _tool_create_schedule({"prompt": message})
     else:
