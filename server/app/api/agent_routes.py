@@ -265,6 +265,26 @@ AGENT_TOOLS = [
         },
     },
     {
+        "name": "activate_schedule",
+        "description": (
+            "Activate an existing (currently inactive) monitoring schedule. "
+            "Use when the user says 'activate schedule', 'start schedule', 'resume schedule', "
+            "'turn on schedule', or 'run schedule X'. "
+            "This deactivates any other active schedule first. "
+            "For brand-new schedules use create_schedule instead."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "schedule_id": {
+                    "type": "integer",
+                    "description": "ID of the schedule to activate.",
+                },
+            },
+            "required": ["schedule_id"],
+        },
+    },
+    {
         "name": "deactivate_schedule",
         "description": (
             "Deactivate (stop) a currently active monitoring schedule. "
@@ -410,6 +430,7 @@ create_schedule (duration 2+ min, minute-level intervals ONLY):
 - YOU decide frequency. Pass duration+frequency as prompt.
 
 Other tools:
+- activate_schedule: "activate schedule X" / "start schedule" / "resume schedule" / "run schedule X"
 - deactivate_schedule: "stop" / "cancel" / "deactivate" / "turn off" / "disable" schedule
 - delete_schedule: "delete schedule" / "remove schedule" / "get rid of schedule" (permanent removal)
 - modify_schedule: "change the schedule" / "update monitoring" / "reschedule" / "adjust" / "shift" an EXISTING schedule
@@ -566,6 +587,7 @@ def _tool_label(name: str, inp: dict) -> str:
         "create_schedule": f"Generating schedule: \"{inp.get('prompt', '')[:60]}\"",
         "capture_now": "Sending capture command to board...",
         "capture_sequence": f"Sending {inp.get('count', '?')}-shot sequence...",
+        "activate_schedule": f"Activating schedule #{inp.get('schedule_id', '?')}...",
         "deactivate_schedule": "Deactivating schedule...",
         "delete_schedule": f"Deleting schedule #{inp.get('schedule_id', '?')}...",
         "modify_schedule": f"Updating schedule: \"{inp.get('prompt', '')[:50]}\"",
@@ -814,6 +836,8 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
         return await _tool_capture_now()
     elif name == "capture_sequence":
         return await _tool_capture_sequence(inp)
+    elif name == "activate_schedule":
+        return await _tool_activate_schedule(inp)
     elif name == "deactivate_schedule":
         return await _tool_deactivate_schedule(inp)
     elif name == "modify_schedule":
@@ -903,6 +927,33 @@ async def _tool_create_schedule(inp: dict) -> dict:
         "success": True,
         "summary": f"{task_count} tasks scheduled ({times[0]}–{times[-1]})",
         "detail": detail,
+    }
+
+
+async def _tool_activate_schedule(inp: dict) -> dict:
+    from app.db.database import async_session
+    from app.scheduler.service import activate_schedule, get_schedule
+    from app.scheduler.notify import notify_schedule_update
+
+    schedule_id = inp.get("schedule_id")
+    if not schedule_id:
+        return {"success": False, "summary": "schedule_id required", "detail": ""}
+
+    async with async_session() as db:
+        try:
+            mqtt_payload = await activate_schedule(db, int(schedule_id))
+            schedule = await get_schedule(db, int(schedule_id))
+            name = schedule.name
+        except Exception as e:
+            return {"success": False, "summary": f"Activate failed: {e}", "detail": ""}
+
+    mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(mqtt_payload))
+    await notify_schedule_update()
+
+    return {
+        "success": True,
+        "summary": f"Activated: {name}",
+        "detail": f"**Schedule activated:** \"{name}\"\n\nThe board has been sent the updated task list.",
     }
 
 
@@ -1340,6 +1391,12 @@ async def _fallback_dispatch(message: str, session_id: str):
         result = await _tool_ping()
     elif any(w in msg for w in ["status", "online", "health", "uptime"]):
         result = await _tool_board_status()
+    elif any(w in msg for w in ["activate schedule", "start schedule", "run schedule", "resume schedule"]):
+        ids = re.findall(r"\d+", message)
+        if ids:
+            result = await _tool_activate_schedule({"schedule_id": int(ids[0])})
+        else:
+            result = {"success": False, "summary": "Schedule ID required", "detail": "Please specify which schedule to activate (e.g. 'activate schedule 3')."}
     elif any(w in msg for w in ["stop", "cancel", "deactivate", "disable", "turn off"]):
         result = await _tool_deactivate_schedule({})
     elif any(w in msg for w in ["change schedule", "update schedule", "modify schedule", "reschedule", "adjust schedule"]):
