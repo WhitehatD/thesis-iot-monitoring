@@ -94,6 +94,31 @@ benchmarks/images/*.jpg
 benchmarks/images/*.png
 
 # ============================================
+# crag-generated agent/IDE configs (not tracked — only .github/workflows/gates.yml kept)
+# ============================================
+.agent/
+.agents/
+.amazonq/
+.circleci/
+.clinerules
+.coderabbit.yaml
+.continuerules
+.cursor/
+.forgejo/
+.github/copilot-instructions.md
+.gitlab-ci.yml
+.goose/
+.junie/
+.kiro/
+.rules
+.windsurf/
+AGENTS.md
+CONVENTIONS.md
+GEMINI.md
+azure-pipelines.yml
+lefthook.yml
+
+# ============================================
 # LaTeX build artifacts
 # ============================================
 docs/latex/*.aux
