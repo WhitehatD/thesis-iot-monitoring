@@ -94,6 +94,14 @@ benchmarks/images/*.jpg
 benchmarks/images/*.png
 
 # ============================================
+# Claude Code runtime (session state, caches — not user content)
+.claude/.tmp/
+.claude/.discovery-cache.json
+.claude/.session-state.json
+.claude/.session-name
+.claude/governance.md.bak.*
+.claude/settings.local.json
+
 # crag-generated agent/IDE configs (not tracked — only .github/workflows/gates.yml kept)
 # ============================================
 .agent/
