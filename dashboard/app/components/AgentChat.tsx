@@ -53,6 +53,7 @@ export default function AgentChat({
 	const [activeId, setActiveId] = useState<number | null>(null);
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [input, setInput] = useState("");
+	const [selectedModel, setSelectedModel] = useState("claude-haiku");
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -232,6 +233,7 @@ export default function AgentChat({
 				body: JSON.stringify({
 					message: msg,
 					sessionId: sessionId,
+					model: selectedModel,
 				}),
 			});
 
@@ -468,6 +470,24 @@ export default function AgentChat({
 					rows={1}
 					disabled={isStreaming}
 				/>
+				<select
+					value={selectedModel}
+					onChange={(e) => setSelectedModel(e.target.value)}
+					disabled={isStreaming}
+					style={{
+						padding: "0 6px",
+						fontSize: "0.75rem",
+						height: "32px",
+						border: "1px solid #333",
+						borderRadius: "4px",
+						background: "#1a1a1a",
+						color: "#ccc",
+						cursor: "pointer",
+					}}
+				>
+					<option value="claude-haiku">Haiku (fast)</option>
+					<option value="claude-sonnet">Sonnet</option>
+				</select>
 				<button
 					className="agent-send-btn"
 					onClick={() => handleSend()}

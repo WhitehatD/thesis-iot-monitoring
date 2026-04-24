@@ -380,6 +380,13 @@ async def agent_chat(request: Request):
     body = await request.json()
     message = body.get("message", "").strip()
     session_id = body.get("sessionId")  # DB integer ID
+    model_key = body.get("model", "claude-haiku")
+
+    MODEL_MAP = {
+        "claude-haiku": settings.claude_haiku_model,
+        "claude-sonnet": settings.claude_sonnet_model,
+    }
+    resolved_model = MODEL_MAP.get(model_key, settings.claude_haiku_model)
 
     if not message:
         return StreamingResponse(
@@ -416,7 +423,7 @@ async def agent_chat(request: Request):
             client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
             response = await client.messages.create(
-                model=settings.claude_haiku_model,
+                model=resolved_model,
                 max_tokens=1024,
                 system=AGENT_SYSTEM_PROMPT,
                 tools=AGENT_TOOLS,
