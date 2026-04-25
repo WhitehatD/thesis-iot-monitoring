@@ -325,12 +325,28 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     val = (uint8_t)CAMERA_JPEG_QUALITY;
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, OV5640_JPEG_CTRL07, &val, 1);
 
-    /* Explicitly re-confirm polarity after format switch.
-     * OV5640 reg 0x4740 encoding: (PCLK<<5)|(HREF<<1)|VSYNC (per ov5640.c:953).
-     * 0x23 = PCLK_HIGH | HREF_HIGH | VSYNC_HIGH — matches DCMI PCKPOL=1,HSPOL=1,VSPOL=1.
-     * NOTE: BSP_CAMERA_SetPixelFormat does not call SetPolarities, so writing
-     * 0x4740 here guards against any polarity regression during format switch. */
-    val = 0x23;
+    /* CRITICAL: OV5640 POLARITY_CTRL (0x4740) override for JPEG mode.
+     *
+     * The BSP_CAMERA_Init pipeline writes 0x23 (HREF bit[1]=1) which counter-
+     * intuitively INVERTS the HREF output in OV5640 silicon — the SetPolarities
+     * macro OV5640_POLARITY_HREF_HIGH=1 maps to bit1=1 but that bit selects
+     * "inverted polarity" in the actual register.  Result: sensor outputs
+     * HREF=LOW during data-valid periods.  DCMI is configured HSPOL=1 (active
+     * HIGH) so it sees the inverted HREF as "line not active" and captures
+     * nothing — buffer stays all zeros (proven by buf[0..7]=0000... + CDAR
+     * stuck at buffer_start + CBR1_BNDT=0 in v1.0.245 capture log).
+     *
+     * In RGB565 mode this mismatch is harmless because DCMI uses byte-count
+     * DMA and doesn't strictly need HREF.  In JPEG mode HREF MUST be correct
+     * because each PCLK byte is gated by HREF=active.
+     *
+     * Fix: write 0x21 — bit[1]=0 makes HREF "normal polarity" (active HIGH),
+     * matching DCMI HSPOL=1.  This is the value confirmed working at commit
+     * 4e0db7a (partial JPEG captured, only EOI was lost to FIFO race).
+     *   bit[5]=1 → PCLK rising-edge sample (matches DCMI PCKPOL=1)
+     *   bit[1]=0 → HREF active HIGH        (matches DCMI HSPOL=1)
+     *   bit[0]=1 → VSYNC active HIGH       (matches DCMI VSPOL=1) */
+    val = 0x21;
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, OV5640_POLARITY_CTRL, &val, 1);
 
     /* Allow OV5640 ISP pipeline to flush after format switch (RGB565→JPEG). */
