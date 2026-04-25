@@ -362,6 +362,8 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
         BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, OV5640_FORMAT_CTRL00, &rv, 1);
         LOG_DEBUG(TAG_CAM, "JPEG regs: FMT_CTRL =0x%02X DCMI_CR=0x%08lX (expect FMT=0x30 CR.bit3=1)",
                   (unsigned)rv, (unsigned long)DCMI->CR);
+        BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, OV5640_FORMAT_MUX_CTRL, &rv, 1);
+        LOG_DEBUG(TAG_CAM, "JPEG regs: FMT_MUX  =0x%02X (expect 0x00 = JPEG path)", (unsigned)rv);
     }
 #endif /* CAMERA_JPEG_MODE */
 
@@ -597,8 +599,23 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
          * Recovers from any previous abnormal suspend/stale DMA state. */
         BSP_CAMERA_Stop(0);
 
-        /* Start snapshot capture */
-        int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_SNAPSHOT);
+        /* Start continuous capture — not snapshot.
+         *
+         * The OV5640 in JPEG mode alternates between two frame types:
+         *   Frame A (silent) : sensor exposes + JPEG encodes → no DVP output,
+         *                      HREF stays low, VSYNC cycles normally.
+         *   Frame B (output) : JPEG encoder streams previous frame via DVP,
+         *                      HREF pulses for each byte.
+         *
+         * When BSP_CAMERA_Start is called mid-frame-B (evidenced by LINE_RIS
+         * being set while waiting in snapshot mode), DCMI snapshot skips frame B
+         * and captures the NEXT frame (A) which has no output → 0 bytes every
+         * attempt, regardless of retries.
+         *
+         * Fix: use CONTINUOUS mode and wait for s_frame_count >= 2.
+         *   - Frame 1 (A): 0 bytes, s_frame_count=1  — discarded
+         *   - Frame 2 (B): JPEG data,  s_frame_count=2 — captured */
+        int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_CONTINUOUS);
         if (ret != BSP_ERROR_NONE)
         {
             LOG_ERROR(TAG_CAM, "BSP_CAMERA_Start failed (err=%ld, attempt %lu/%lu)",
@@ -623,21 +640,21 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
          * Fix: enable DCMI_IT_FRAME explicitly right after DMA is started. */
         DCMI->IER |= DCMI_IT_FRAME;
 
-        /* ── DCMI diagnostic: check if sensor is outputting VSYNC/HSYNC ── */
+        /* ── DCMI diagnostic: sample SR/CR after first frame starts ── */
         if (attempt == 1)
         {
             HAL_Delay(50);
-            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (snapshot attempt 1)",
+            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (continuous attempt 1)",
                      (unsigned long)DCMI->SR, (unsigned long)DCMI->CR);
         }
 
-        /* Wait for exactly 1 frame-complete interrupt */
+        /* Wait for 2 complete frames: skip the silent frame (A), capture output frame (B) */
         uint32_t start_tick = HAL_GetTick();
         uint8_t  got_frame = 0;
 
         while ((HAL_GetTick() - start_tick) <= WARM_TIMEOUT_MS)
         {
-            if (s_frame_count >= 1)
+            if (s_frame_count >= 2)
             {
                 /* Fix: drain DCMI FIFO before stopping DMA.
                  * FRAME ISR fires on VSYNC fall — the FIFO may still hold
