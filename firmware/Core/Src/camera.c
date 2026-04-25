@@ -599,6 +599,15 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
             return CAMERA_ERROR_CAPTURE;
         }
 
+        /* Fix: HAL_DCMI_Start_DMA (double-buffer path, Length > 0xFFFF) only
+         * enables DCMI_IT_FRAME when XferCount reaches 0 — after ALL DMA nodes
+         * are exhausted.  For JPEG snapshot the actual frame (~30-80 KB) is far
+         * smaller than the 614 KB DMA window, so XferCount never hits 0 and
+         * FRAME IT is never armed.  The VSYNC falling edge that ends the frame
+         * is silently discarded → s_frame_count stays 0 → 1-second timeout × 3.
+         * Fix: enable DCMI_IT_FRAME explicitly right after DMA is started. */
+        DCMI->IER |= DCMI_IT_FRAME;
+
         /* ── DCMI diagnostic: check if sensor is outputting VSYNC/HSYNC ── */
         if (attempt == 1)
         {
