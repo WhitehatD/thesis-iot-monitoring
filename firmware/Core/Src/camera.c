@@ -599,7 +599,7 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
          * Recovers from any previous abnormal suspend/stale DMA state. */
         BSP_CAMERA_Stop(0);
 
-        int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_CONTINUOUS);
+        int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_SNAPSHOT);
         if (ret != BSP_ERROR_NONE)
         {
             LOG_ERROR(TAG_CAM, "BSP_CAMERA_Start failed (err=%ld, attempt %lu/%lu)",
@@ -628,30 +628,21 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
         if (attempt == 1)
         {
             HAL_Delay(50);
-            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (during silent frame 1)",
+            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (snapshot attempt 1)",
                      (unsigned long)DCMI->SR, (unsigned long)DCMI->CR);
         }
 
-        /* OV5640 JPEG pipeline is 2-frame deep:
-         *   Frame 1 (VSYNC 1): sensor exposes + ISP processes + JPEG encodes —
-         *                      DVP output is silent (HREF stays low), s_frame_count=1.
-         *   Frame 2 (VSYNC 2): encoder streams the compressed frame out via DVP,
-         *                      HREF pulses carry the JPEG bytes, s_frame_count=2.
-         *
-         * BSP_CAMERA_Start only arms DCMI — it does NOT restart OV5640_Start (no
-         * I2C).  The sensor is already streaming continuously from Camera_Init.
-         * Catching the first VSYNC (s_frame_count >= 1) gives a silent frame with
-         * zero bytes.  Waiting for the second (s_frame_count >= 2) gives the data.
-         *
-         * SYSREM_RESET02 pulses must NOT be used here: they reset the encoder mid-
-         * stream and force the next VSYNC to be silent, then take one full frame
-         * period (~83 ms) before data reappears — exactly one cycle too late. */
+        /* SNAPSHOT mode: DCMI captures exactly ONE VSYNC active period then stops.
+         * The OV5640 in JPEG mode streams frames continuously from Camera_Init.
+         * BSP_CAMERA_Start (snapshot) arms DCMI; the next JPEG frame from the
+         * OV5640 (within one frame period, ~83 ms at 12 fps) fills the buffer
+         * via GPDMA.  FRAME ISR fires when VSYNC deasserts → s_frame_count = 1. */
         uint32_t start_tick = HAL_GetTick();
         uint8_t  got_frame = 0;
 
         while ((HAL_GetTick() - start_tick) <= WARM_TIMEOUT_MS)
         {
-            if (s_frame_count >= 2)
+            if (s_frame_count >= 1)
             {
                 /* Fix: drain DCMI FIFO before stopping DMA.
                  * FRAME ISR fires on VSYNC fall — the FIFO may still hold
