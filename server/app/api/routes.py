@@ -158,15 +158,15 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
         if len(content) in RGB565_SIZES:
             width, height = RGB565_SIZES[len(content)]
 
-            # OV5640 FORMAT_CTRL00=0x6F outputs BGR565 (little-endian):
-            #   Byte0: B[4:0]G[5:3]  Byte1: G[2:0]R[4:0]
-            # As LE uint16: bits[15:11]=Blue, bits[10:5]=Green, bits[4:0]=Red
+            # OV5640 FORMAT_CTRL00=0x6F has byte_swap=1 (bit0=1):
+            #   Sensor sends LOW byte first, so DCMI packs as LE uint16 = standard RGB565
+            #   bits[15:11]=Red, bits[10:5]=Green, bits[4:0]=Blue
             #
             # IMPORTANT: Do NOT cast to uint8 before scaling — uint8 * 255 overflows!
             pixels = np.frombuffer(content, dtype=np.uint16)
-            b = (((pixels >> 11) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+            r = (((pixels >> 11) & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
             g = (((pixels >> 5) & 0x3F).astype(np.uint16) * 255 // 63).astype(np.uint8)
-            r = ((pixels & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
+            b = ((pixels & 0x1F).astype(np.uint16) * 255 // 31).astype(np.uint8)
 
             rgb = np.stack([r, g, b], axis=-1).reshape(height, width, 3)
             img = Image.fromarray(rgb, "RGB")

@@ -1489,7 +1489,7 @@ static void _do_button_capture(void)
 
     /* Upload via HTTP POST */
     WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
-        SERVER_UPLOAD_URL, (uint16_t)s_button_task_id,
+        SERVER_UPLOAD_URL, s_button_task_id,
         s_image_buffer, captured_size);
 
     uint32_t total_ms = HAL_GetTick() - perf_start;
@@ -1619,7 +1619,7 @@ static void _do_capture_now(void)
     /* Upload via HTTP POST (blocking, but _socket_send_all now
      * calls MQTT_ProcessLoop every 2s to keep the broker alive) */
     WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
-        SERVER_UPLOAD_URL, (uint16_t)task_id,
+        SERVER_UPLOAD_URL, task_id,
         s_image_buffer, captured_size);
 
     uint32_t total_ms = HAL_GetTick() - perf_start;
@@ -1759,7 +1759,7 @@ static void _do_capture_sequence(void)
 
         /* Upload immediately */
         WiFiStatus_t wifi_ret = WiFi_HttpPostImage(
-            SERVER_UPLOAD_URL, (uint16_t)task_id,
+            SERVER_UPLOAD_URL, task_id,
             s_image_buffer, captured_size);
 
         snprintf(status_msg, sizeof(status_msg),

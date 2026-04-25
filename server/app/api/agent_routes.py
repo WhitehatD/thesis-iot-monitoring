@@ -631,7 +631,7 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     # Wait for analysis results — one for single capture, N for sequence
     start_time = datetime.now()
     # Timeout: sequence duration + 30s per expected image for upload+analysis
-    timeout_polls = max(15, (total_seq_ms // 2000) + (expected * 15))
+    timeout_polls = max(25, (total_seq_ms // 2000) + (expected * 15))
     analyses = []
     seen_ids = set()
 
@@ -765,7 +765,7 @@ async def _capture_sequence_pipeline(tool_input: dict):
     # Poll for N analyses — all uploads arrive with task_id = first_task_id
     start_time = datetime.now()
     total_seq_ms = delays[-1] + 5000  # last capture + upload + analysis headroom
-    timeout_polls = max(15, (total_seq_ms // 2000) + (count * 15))
+    timeout_polls = max(25, (total_seq_ms // 2000) + (count * 15))
     analyses = []
     seen_ids: set[int] = set()
 
