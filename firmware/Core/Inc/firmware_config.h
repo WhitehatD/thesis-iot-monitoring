@@ -83,7 +83,7 @@
  *
  * Set to 0 to revert to raw RGB565 (for debugging or LLM benchmarks needing raw).
  */
-#define CAMERA_JPEG_MODE            1     /* 1 = JPEG output, 0 = RGB565 */
+#define CAMERA_JPEG_MODE            0     /* 0 = RGB565, server converts to JPEG */
 #define CAMERA_JPEG_QUALITY         4     /* OV5640 QS: 0=best/largest, higher=worse/smaller (4 ≈ 80% quality) */
 
 /*
