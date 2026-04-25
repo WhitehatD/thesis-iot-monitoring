@@ -309,7 +309,9 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
      *
      * Key registers:
      *   0x4300 FORMAT_CTRL00    : 0x30 = select JPEG encoder output
-     *   0x501F ISP_FORMAT_MUX   : 0x03 = route sensor → JPEG engine → DCMI
+     *   0x501F ISP_FORMAT_MUX   : 0x00 = standard ISP output path (matches ST BSP
+     *                             OV5640_PF_JPEG reference — 0x03 is wrong, it routes
+     *                             to raw/test output and breaks VSYNC framing)
      *   0x4407 JPEG_QS          : quality scale (0=best/largest … 0xFF=worst/tiny)
      *
      * DCMI_CR[3] JPEG bit: hardware ignores line/frame counters and
@@ -318,11 +320,15 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     val = 0x30;  /* FORMAT_CTRL00: JPEG output */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4300, &val, 1);
 
-    val = 0x03;  /* ISP_FORMAT_MUX: bypass ISP, feed JPEG engine */
+    val = 0x00;  /* ISP_FORMAT_MUX: standard ISP output (ST BSP OV5640_PF_JPEG ref) */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x501F, &val, 1);
 
     val = (uint8_t)CAMERA_JPEG_QUALITY;  /* JPEG_QS: quality scale */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4407, &val, 1);
+
+    /* Allow OV5640 ISP pipeline to flush after format switch (RGB565→JPEG).
+     * Without this delay the first capture attempt races the pipeline settling. */
+    HAL_Delay(100);
 
     /* Set DCMI JPEG mode — safe while DCMI is disabled (between Init and Start) */
     DCMI->CR |= DCMI_CR_JPEG;

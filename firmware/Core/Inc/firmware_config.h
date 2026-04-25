@@ -129,8 +129,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Low Power Configuration
  * ═══════════════════════════════════════════════════════════════════════════ */
-#define LOW_POWER_MODE_ENABLED      1      /* 1 = STOP2 between tasks, 0 = active wait */
-#define DEEP_SLEEP_ON_COMPLETE      1      /* 1 = Standby after all tasks done */
+#define LOW_POWER_MODE_ENABLED      0      /* 0 = stay awake — agent sends sleep_mode to engage STOP2 */
+#define DEEP_SLEEP_ON_COMPLETE      0      /* 0 = no automatic standby — agent-controlled only */
 
 /* ═══════════════════════════════════════════════════════════════════════════
  *  Heartbeat & Observability (PWR-02, OBS-01)
