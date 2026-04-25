@@ -304,53 +304,36 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
 #if CAMERA_JPEG_MODE
     /* ── Enable OV5640 JPEG output + DCMI JPEG mode ──────────────────────
      *
-     * These writes override the RGB565 format that BSP_CAMERA_Init configured.
-     * Must come after BSP init so the OV5640 register table has been loaded.
+     * Use BSP_CAMERA_SetPixelFormat(OV5640_JPEG) instead of raw I2C writes.
+     * The ST OV5640 driver's SetPixelFormat(JPEG) does 5 operations:
+     *   1. FORMAT_CTRL00 = 0x30  (JPEG output select)
+     *   2. FORMAT_MUX_CTRL = 0x00
+     *   3. TIMING_TC_REG21 |= (1<<5)     — enable JPEG timing
+     *   4. SYSREM_RESET02  &= ~0x1C      — de-assert JPEG module resets
+     *   5. CLOCK_ENABLE02  |= 0x28       — enable JPEG clocks
      *
-     * Key registers:
-     *   0x4300 FORMAT_CTRL00  : 0x30 = select JPEG encoder output
-     *   0x501F ISP_FORMAT_MUX : 0x00 = standard ISP output path
-     *   0x4407 JPEG_QS        : quality scale (0=best … 0xFF=worst/tiny)
-     *
-     * ─── CRITICAL: 0x4740 POLARITY_CTRL ──────────────────────────────────
-     * The ST BSP initialises 0x4740=0x22 (bit[0]=0 = VSYNC active LOW).
-     * DCMI is configured with VSPOL=1 (VSYNC active HIGH).  In RGB565 mode
-     * this mismatch is harmless — fixed-frame DMA uses a byte count, not
-     * VSYNC edges.  In JPEG snapshot mode the DCMI MUST see a VSYNC active
-     * edge to start and stop the variable-length transfer (STM32U5 RM §DCMI,
-     * AN5020 §8.3.7).  With the wrong polarity VSYNC stays LOW in SR forever
-     * and the capture never begins.
-     *
-     * Fix: write 0x21 (TI E2E OV5640 JPEG reference value):
-     *   bit[5]=1 → PCLK falling edge (unchanged from BSP)
-     *   bit[1]=0 → HREF active HIGH  (matches DCMI HSPOL=1)
-     *   bit[0]=1 → VSYNC active HIGH (matches DCMI VSPOL=1)  ← THE FIX
-     */
-    val = 0x30;  /* FORMAT_CTRL00: select JPEG encoder output */
-    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4300, &val, 1);
+     * Steps 3–5 were missing from prior raw-register code, leaving the JPEG
+     * encoder in reset with no clock — causing all-zero captures (camera
+     * outputting RGB565 black pixels = 0x0000 in a dark scene). */
+    if (BSP_CAMERA_SetPixelFormat(0, OV5640_JPEG) != BSP_ERROR_NONE)
+    {
+        LOG_ERROR(TAG_CAM, "OV5640 SetPixelFormat(JPEG) failed");
+    }
 
-    val = 0x00;  /* ISP_FORMAT_MUX: standard ISP output path */
-    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x501F, &val, 1);
+    /* Quality scale: 0 = best quality / largest file, 0xFF = worst / smallest.
+     * BSP does not expose a quality API, so write directly. */
+    val = (uint8_t)CAMERA_JPEG_QUALITY;
+    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, OV5640_JPEG_CTRL07, &val, 1);
 
-    val = (uint8_t)CAMERA_JPEG_QUALITY;  /* JPEG_QS: quality scale */
-    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4407, &val, 1);
+    /* Explicitly re-confirm polarity after format switch.
+     * OV5640 reg 0x4740 encoding: (PCLK<<5)|(HREF<<1)|VSYNC (per ov5640.c:953).
+     * 0x23 = PCLK_HIGH | HREF_HIGH | VSYNC_HIGH — matches DCMI PCKPOL=1,HSPOL=1,VSPOL=1.
+     * NOTE: BSP_CAMERA_SetPixelFormat does not call SetPolarities, so writing
+     * 0x4740 here guards against any polarity regression during format switch. */
+    val = 0x23;
+    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, OV5640_POLARITY_CTRL, &val, 1);
 
-    /* OV5640 reg 0x4740 encoding (per OV5640_SetPolarities + ov5640.c:953):
-     *   tmp = (PclkPolarity<<5) | (HrefPolarity<<1) | VsyncPolarity
-     *   bit[5]=1 → PCLK active HIGH (rising-edge sample, matches DCMI PCKPOL=1)
-     *   bit[1]=1 → HREF active HIGH (matches DCMI HSPOL=1)
-     *   bit[0]=1 → VSYNC active HIGH (matches DCMI VSPOL=1)
-     * The BSP OV5640_Init already calls OV5640_SetPolarities(PCLK_HIGH, HREF_HIGH,
-     * VSYNC_HIGH) = 0x23, but write it explicitly here to survive any format switch
-     * that could reset polarities.
-     * NOTE: Earlier code wrote 0x21 (bit[1]=0 = HREF active LOW), which caused
-     * DCMI to sample during HREF-blanking intervals instead of pixel data, giving
-     * repeated 0x03/0x13/0x1D bytes in the capture buffer. */
-    val = 0x23;  /* POLARITY_CTRL: PCLK HIGH, HREF active-HIGH, VSYNC active-HIGH */
-    BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4740, &val, 1);
-
-    /* Allow OV5640 ISP pipeline to flush after format switch (RGB565→JPEG).
-     * Without this delay the first capture attempt races the pipeline settling. */
+    /* Allow OV5640 ISP pipeline to flush after format switch (RGB565→JPEG). */
     HAL_Delay(100);
 
     /* Set DCMI JPEG mode — safe while DCMI is disabled (between Init and Start) */
