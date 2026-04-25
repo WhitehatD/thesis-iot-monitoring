@@ -305,6 +305,20 @@ export default function AgentChat({
 										summary: data.summary,
 									};
 								}
+							} else if (event === "tool_update") {
+								// Heartbeat: update label of an in-progress step without changing its status
+								const idx = bot.blocks.findIndex(
+									(b) =>
+										b.type === "step" &&
+										b.id === data.id &&
+										b.status === "running",
+								);
+								if (idx >= 0) {
+									bot.blocks[idx] = {
+										...(bot.blocks[idx] as Extract<Block, { type: "step" }>),
+										label: data.label,
+									};
+								}
 							} else if (event === "reply") {
 								bot.blocks.push({
 									type: "text",

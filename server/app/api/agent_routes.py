@@ -628,22 +628,29 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     mqtt_client.publish(settings.mqtt_topic_commands, command)
     yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
 
-    # Wait for analysis results — one for single capture, N for sequence
+    # Wait for analysis results — one for single capture, N for sequence.
+    # Poll every 1s. Timeout: 20s for single shot; sequence duration + 10s/image.
     start_time = datetime.now()
-    # Timeout: sequence duration + 30s per expected image for upload+analysis
-    timeout_polls = max(25, (total_seq_ms // 2000) + (expected * 15))
+    timeout_polls = max(20, (total_seq_ms // 1000) + (expected * 10))
     analyses = []
     seen_ids = set()
+    wait_label = f"Waiting for {'image' if expected == 1 else f'{expected} images'}..."
 
-    yield _sse_event("tool_call", {
-        "id": "upload",
-        "label": f"Waiting for {'image' if expected == 1 else f'{expected} images'}...",
-    })
+    yield _sse_event("tool_call", {"id": "upload", "label": wait_label})
 
-    for _ in range(timeout_polls):
-        await asyncio.sleep(2)
+    for poll_idx in range(timeout_polls):
+        await asyncio.sleep(1)
+        elapsed = poll_idx + 1
+
+        # Heartbeat every 5s so the client knows the server is still alive
+        if elapsed % 5 == 0 and elapsed < timeout_polls:
+            yield _sse_event("tool_update", {
+                "id": "upload",
+                "label": f"{wait_label} ({elapsed}s)",
+            })
+
         async with async_session() as db:
-            # Filter by task_id to avoid picking up results from other captures
+            # Filter by task_id to avoid picking up stale results from other captures
             query = (
                 select(AnalysisResult)
                 .where(AnalysisResult.created_at >= start_time)
@@ -667,8 +674,8 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
             break
 
     if not analyses:
-        yield _sse_event("tool_result", {"id": "upload", "success": False, "summary": "Timeout waiting for image (board may be offline)"})
-        yield _sse_event("reply", {"text": "**Capture sent** but the board hasn't responded yet. It may be offline or busy."})
+        yield _sse_event("tool_result", {"id": "upload", "success": False, "summary": f"Timeout after {timeout_polls}s — board may be offline or capture failed"})
+        yield _sse_event("reply", {"text": "**Capture timed out.** The board didn't upload an image within the expected window. Check that it's online and the firmware is current."})
         return
 
     yield _sse_event("tool_result", {
@@ -765,17 +772,23 @@ async def _capture_sequence_pipeline(tool_input: dict):
     # Poll for N analyses — all uploads arrive with task_id = first_task_id
     start_time = datetime.now()
     total_seq_ms = delays[-1] + 5000  # last capture + upload + analysis headroom
-    timeout_polls = max(25, (total_seq_ms // 2000) + (count * 15))
+    timeout_polls = max(20, (total_seq_ms // 1000) + (count * 10))
     analyses = []
     seen_ids: set[int] = set()
+    seq_label = f"Waiting for {count} image{'s' if count > 1 else ''}..."
 
-    yield _sse_event("tool_call", {
-        "id": "upload",
-        "label": f"Waiting for {count} image{'s' if count > 1 else ''}...",
-    })
+    yield _sse_event("tool_call", {"id": "upload", "label": seq_label})
 
-    for _ in range(int(timeout_polls)):
-        await asyncio.sleep(2)
+    for poll_idx in range(int(timeout_polls)):
+        await asyncio.sleep(1)
+        elapsed = poll_idx + 1
+
+        if elapsed % 5 == 0 and elapsed < timeout_polls:
+            yield _sse_event("tool_update", {
+                "id": "upload",
+                "label": f"{seq_label} ({elapsed}s, {len(analyses)}/{count})",
+            })
+
         async with async_session() as db:
             result = await db.execute(
                 select(AnalysisResult)

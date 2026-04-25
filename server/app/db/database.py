@@ -12,7 +12,8 @@ from app.config import settings
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
-    connect_args={"check_same_thread": False},
+    # timeout: seconds aiosqlite waits before raising OperationalError on lock
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -30,6 +31,11 @@ async def create_tables():
     import app.scheduler.models  # noqa: F401 — register scheduler models
     import app.agent.models  # noqa: F401 — register agent chat models
     async with engine.begin() as conn:
+        import sqlalchemy as sa
+        # WAL mode: concurrent readers + writer (prevents poll SELECT blocking behind
+        # _run_analysis INSERT/COMMIT). busy_timeout: retry on lock for up to 5s.
+        await conn.execute(sa.text("PRAGMA journal_mode=WAL"))
+        await conn.execute(sa.text("PRAGMA busy_timeout=5000"))
         await conn.run_sync(Base.metadata.create_all)
         # Lightweight column migrations for SQLite (ALTER TABLE ADD COLUMN is safe)
         await conn.run_sync(_migrate_columns)
