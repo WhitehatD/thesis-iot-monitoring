@@ -335,7 +335,18 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     val = (uint8_t)CAMERA_JPEG_QUALITY;  /* JPEG_QS: quality scale */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4407, &val, 1);
 
-    val = 0x21;  /* POLARITY_CTRL: PCLK fall, HREF act-HIGH, VSYNC act-HIGH */
+    /* OV5640 reg 0x4740 encoding (per OV5640_SetPolarities + ov5640.c:953):
+     *   tmp = (PclkPolarity<<5) | (HrefPolarity<<1) | VsyncPolarity
+     *   bit[5]=1 → PCLK active HIGH (rising-edge sample, matches DCMI PCKPOL=1)
+     *   bit[1]=1 → HREF active HIGH (matches DCMI HSPOL=1)
+     *   bit[0]=1 → VSYNC active HIGH (matches DCMI VSPOL=1)
+     * The BSP OV5640_Init already calls OV5640_SetPolarities(PCLK_HIGH, HREF_HIGH,
+     * VSYNC_HIGH) = 0x23, but write it explicitly here to survive any format switch
+     * that could reset polarities.
+     * NOTE: Earlier code wrote 0x21 (bit[1]=0 = HREF active LOW), which caused
+     * DCMI to sample during HREF-blanking intervals instead of pixel data, giving
+     * repeated 0x03/0x13/0x1D bytes in the capture buffer. */
+    val = 0x23;  /* POLARITY_CTRL: PCLK HIGH, HREF active-HIGH, VSYNC active-HIGH */
     BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x4740, &val, 1);
 
     /* Allow OV5640 ISP pipeline to flush after format switch (RGB565→JPEG).
