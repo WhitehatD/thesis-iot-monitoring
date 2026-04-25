@@ -794,6 +794,13 @@ void BSP_CAMERA_FrameEventCallback(uint32_t Instance)
     (void)Instance;
     s_frame_count++;
 
+    /* HAL_DCMI_IRQHandler disables DCMI_IT_FRAME after every FRAME ISR.
+     * Re-arm it here so subsequent frames keep firing callbacks.
+     * In snapshot mode this is a no-op (we stop immediately after s_frame_count=1).
+     * In continuous mode (including the 2-frame JPEG warm path) this is essential
+     * to receive the second (and later) frame interrupt. */
+    DCMI->IER |= DCMI_IT_FRAME;
+
     /* Suspend DCMI only during continuous captures, and only after all
      * needed frames (warmup + final) are complete. This prevents DMA
      * overrun into the next unwanted frame.
