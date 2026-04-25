@@ -624,6 +624,19 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
         {
             if (s_frame_count >= 1)
             {
+                /* Fix: drain DCMI FIFO before stopping DMA.
+                 * FRAME ISR fires on VSYNC fall — the FIFO may still hold
+                 * the last bytes of the JPEG stream, including the EOI
+                 * marker (0xFF 0xD9).  HAL_DMA_Abort called immediately
+                 * afterwards drops those bytes, so _find_jpeg_size finds
+                 * no EOI and returns 0.
+                 *
+                 * The GPDMA drains the 16-byte DCMI FIFO in << 1 µs, so
+                 * this loop is effectively a memory barrier.  5 ms ceiling
+                 * guards against any unexpected hardware stall. */
+                uint32_t drain_t0 = HAL_GetTick();
+                while ((DCMI->SR & DCMI_SR_FNE) != 0U &&
+                       (HAL_GetTick() - drain_t0) < 5U) {}
                 got_frame = 1;
                 break;
             }
