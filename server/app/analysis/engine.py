@@ -4,10 +4,10 @@ Thesis IoT Server — Multimodal Visual Analysis Engine
 Core agentic layer: takes a captured image + the original monitoring objective
 and produces a structured analysis with actionable recommendations.
 
-Primary backend: Claude Sonnet (Anthropic API — native vision)
-Legacy backends (for thesis benchmarking):
-  - Qwen3-VL-30B-A3B (via vLLM)
-  - Gemini 3 Flash (via Google GenAI API)
+Thesis multi-backend benchmark — all backends equal weight in evaluation:
+  - Claude Sonnet / Haiku (Anthropic API — native vision)
+  - Gemini 3 Flash (Google GenAI API)
+  - Qwen3-VL-30B-A3B / Qwen2.5-VL-3B (local vLLM)
 """
 
 import base64

@@ -180,7 +180,7 @@
  * ═══════════════════════════════════════════════════════════════════════════*/
 /* Firmware Versioning */
 #ifndef FW_VERSION
-#define __FW_VERSION_STR            "1.0.164"
+#define __FW_VERSION_STR            "1.0.165"
 #define FW_VERSION                  __FW_VERSION_STR          /* Current firmware version string */
 #endif
 #define OTA_CHECK_INTERVAL_MS       (1 * 60 * 1000)   /* Check every 1 minute */

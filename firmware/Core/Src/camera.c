@@ -618,6 +618,18 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
             if (copy_size > buffer_size)
                 copy_size = buffer_size;
 
+            /* SEC-09: Enterprise Cache Coherency — MUST happen before ANY CPU read of
+             * the buffer. DMA writes directly to physical SRAM, bypassing the D-Cache.
+             * Without invalidation the CPU reads stale cached data (zeros or last frame).
+             *
+             * In JPEG mode this must come before _find_jpeg_size() or the EOI scan
+             * reads stale cache and always returns 0, causing spurious retries. */
+            LL_DCACHE_SetCommand(DCACHE1, LL_DCACHE_COMMAND_INVALIDATE_BY_ADDR);
+            LL_DCACHE_SetStartAddress(DCACHE1, (uint32_t)buffer);
+            LL_DCACHE_SetEndAddress(DCACHE1, (uint32_t)buffer + copy_size - 1);
+            LL_DCACHE_StartCommand(DCACHE1);
+            while (LL_DCACHE_IsActiveFlag_BUSYCMD(DCACHE1));
+
 #if CAMERA_JPEG_MODE
             /* Scan for JPEG End-Of-Image marker (0xFF 0xD9) to find actual size.
              * If not found, the capture is incomplete — retry. */
@@ -642,13 +654,6 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
 #endif /* CAMERA_JPEG_MODE */
 
             *captured_size = copy_size;
-
-            /* SEC-09: Enterprise Cache Coherency */
-            LL_DCACHE_SetCommand(DCACHE1, LL_DCACHE_COMMAND_INVALIDATE_BY_ADDR);
-            LL_DCACHE_SetStartAddress(DCACHE1, (uint32_t)buffer);
-            LL_DCACHE_SetEndAddress(DCACHE1, (uint32_t)buffer + copy_size - 1);
-            LL_DCACHE_StartCommand(DCACHE1);
-            while (LL_DCACHE_IsActiveFlag_BUSYCMD(DCACHE1));
 
             LOG_INFO(TAG_CAM, "[PERF] Warm capture: %lums, %lu bytes (attempt %lu/%lu)",
                      (unsigned long)(HAL_GetTick() - perf_start),
