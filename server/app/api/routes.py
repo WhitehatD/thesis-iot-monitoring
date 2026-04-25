@@ -245,8 +245,13 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
 
         print(f"[AI] Analyzing task {task_id}: objective='{objective}'")
 
-        # Choose model — prefer Claude Sonnet, fall back to vLLM
-        model_key = "claude-sonnet" if settings.anthropic_api_key else "qwen3-vl"
+        # Choose model — Claude → Gemini → vLLM (in order of preference)
+        if settings.anthropic_api_key:
+            model_key = "claude-sonnet"
+        elif settings.gemini_api_key:
+            model_key = "gemini-3"
+        else:
+            model_key = "qwen3-vl"
 
         analysis = await analyze_image(image_path, objective, model_key)
 
@@ -289,7 +294,39 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
         )
 
     except Exception as e:
-        print(f"[ERR] Analysis failed for task {task_id}: {e}")
+        err_msg = f"{type(e).__name__}: {e}"
+        print(f"[ERR] Analysis failed for task {task_id}: {err_msg}")
+        # Create a fallback row so the agent pipeline doesn't timeout waiting
+        try:
+            async with async_session() as db:
+                fallback = AnalysisResult(
+                    task_id=task_id,
+                    image_path=image_path,
+                    objective="General visual inspection",
+                    analysis=f"Analysis unavailable — backend error: {err_msg[:200]}",
+                    recommendation="Check AI backend configuration (ANTHROPIC_API_KEY, GEMINI_API_KEY, or vLLM endpoint).",
+                    objective_met=False,
+                    model_used="error",
+                    inference_time_ms=0,
+                )
+                db.add(fallback)
+                await db.commit()
+            mqtt_client.publish(settings.mqtt_topic_dashboard_analysis, json.dumps({
+                "task_id": task_id,
+                "filename": filename,
+                "date": date_dir,
+                "url": f"/api/images/{date_dir}/{filename}",
+                "objective": "General visual inspection",
+                "objective_met": False,
+                "description": "Analysis backend unavailable.",
+                "findings": f"Error: {err_msg[:200]}",
+                "recommendation": "Check AI backend configuration.",
+                "model": "error",
+                "inference_ms": 0,
+                "timestamp": int(time.time()),
+            }))
+        except Exception as fallback_err:
+            print(f"[ERR] Failed to persist analysis fallback: {fallback_err}")
 
 
 # ── Image Serving ────────────────────────────────────────

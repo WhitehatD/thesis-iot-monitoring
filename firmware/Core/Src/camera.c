@@ -491,6 +491,14 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
         HAL_Delay(1);
     }
 
+    /* Diagnostic: capture RISR before Stop clears peripheral state.
+     * OVR_RIS (bit1) = FIFO overrun — PCLK outpaced DMA → pixel(s) dropped → black line.
+     * ERR_RIS (bit2) = sync error   — VSYNC/HSYNC mismatch → corrupt frame. */
+    LOG_DEBUG(TAG_CAM, "DCMI RISR=0x%08lX (OVR=%lu ERR=%lu)",
+              (unsigned long)DCMI->RISR,
+              (unsigned long)((DCMI->RISR >> 1) & 1U),
+              (unsigned long)((DCMI->RISR >> 2) & 1U));
+
     /* Stop continuous capture — the buffer now has the final frame */
     BSP_CAMERA_Stop(0);
     BSP_LED_Off(LED_RED);
@@ -522,6 +530,17 @@ CameraStatus_t Camera_CaptureFrame(uint8_t *buffer, uint32_t buffer_size,
     LL_DCACHE_SetEndAddress(DCACHE1, (uint32_t)buffer + copy_size - 1);
     LL_DCACHE_StartCommand(DCACHE1);
     while (LL_DCACHE_IsActiveFlag_BUSYCMD(DCACHE1));
+
+    /* Diagnostic: log first 8 bytes to confirm DMA wrote real data.
+     * RGB565 first pixel typically non-zero — all zeros = DMA didn't write.
+     * Black-line artifact: if px[0..639] = 0x0000, first row is black (overrun). */
+    LOG_DEBUG(TAG_CAM,
+              "buf[0..7]=%02X%02X %02X%02X %02X%02X %02X%02X (px[0]=0x%04X)",
+              (unsigned)buffer[0], (unsigned)buffer[1],
+              (unsigned)buffer[2], (unsigned)buffer[3],
+              (unsigned)buffer[4], (unsigned)buffer[5],
+              (unsigned)buffer[6], (unsigned)buffer[7],
+              (unsigned)(((uint16_t)buffer[0] << 8) | buffer[1]));
 
     LOG_INFO(TAG_CAM, "Captured in %lums: %lu bytes (%lu frames)",
              (unsigned long)(HAL_GetTick() - start_tick),
