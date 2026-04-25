@@ -342,6 +342,27 @@ CameraStatus_t Camera_Init(CameraResolution_t resolution)
     LOG_INFO(TAG_CAM, "JPEG mode: OV5640 encoder active (buffer=%lu KB, QS=%d)",
              (unsigned long)(CAMERA_FRAME_BUFFER_SIZE / 1024),
              (int)CAMERA_JPEG_QUALITY);
+
+    /* ── Reg readback: verify JPEG encoder state ────────────────────────
+     * Read back 4 registers to confirm I2C writes landed.
+     * Expected values:
+     *   TC_REG21 bit5 = 1  (JPEG timing enabled)
+     *   RESET02  [4:2]= 0  (JPEG/JFIFO/SFIFO out of reset)
+     *   CLOCK02  bit5,3=1  (JPEG clocks on)
+     *   FMT_CTRL00 = 0x30  (JPEG format selected)
+     *   DCMI_CR  bit3  = 1  (DCMI in JPEG mode) */
+    {
+        uint8_t rv;
+        BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, OV5640_TIMING_TC_REG21, &rv, 1);
+        LOG_DEBUG(TAG_CAM, "JPEG regs: TC_REG21=0x%02X (expect bit5=1)", (unsigned)rv);
+        BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, OV5640_SYSREM_RESET02, &rv, 1);
+        LOG_DEBUG(TAG_CAM, "JPEG regs: RESET02  =0x%02X (expect bits[4:2]=0)", (unsigned)rv);
+        BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, OV5640_CLOCK_ENABLE02, &rv, 1);
+        LOG_DEBUG(TAG_CAM, "JPEG regs: CLOCK02  =0x%02X (expect bits[5,3]=1)", (unsigned)rv);
+        BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, OV5640_FORMAT_CTRL00, &rv, 1);
+        LOG_DEBUG(TAG_CAM, "JPEG regs: FMT_CTRL =0x%02X DCMI_CR=0x%08lX (expect FMT=0x30 CR.bit3=1)",
+                  (unsigned)rv, (unsigned long)DCMI->CR);
+    }
 #endif /* CAMERA_JPEG_MODE */
 
     LOG_INFO(TAG_CAM, "Camera initialized OK (raw frame size: %lu bytes, VTS=0x%04X)",
@@ -631,6 +652,13 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
                 uint32_t drain_t0 = HAL_GetTick();
                 while ((DCMI->SR & DCMI_SR_FNE) != 0U &&
                        (HAL_GetTick() - drain_t0) < 5U) {}
+                /* Capture RISR before Stop clears flags.
+                 * OVR_RIS (bit1) = FIFO overrun — means PCLK too fast
+                 * ERR_RIS (bit2) = sync error — means VSYNC/HSYNC mismatch */
+                LOG_DEBUG(TAG_CAM, "DCMI RISR=0x%08lX (OVR=%lu ERR=%lu)",
+                          (unsigned long)DCMI->RISR,
+                          (unsigned long)((DCMI->RISR >> 1) & 1U),
+                          (unsigned long)((DCMI->RISR >> 2) & 1U));
                 got_frame = 1;
                 break;
             }
@@ -667,13 +695,19 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
 #if CAMERA_JPEG_MODE
             /* Diagnostic: log first 8 bytes so we can see what DMA actually wrote.
              * Expected: FF D8 FF ... (JPEG SOI).  All-zeros = DMA didn't write. */
+            /* GPDMA1_Channel12->CDAR = address DMA last wrote to.
+             * If CDAR == &buffer[0], DMA transferred 0 bytes → OV5640 output empty.
+             * If CDAR > &buffer[0], CDAR - buffer = bytes written so far. */
             LOG_DEBUG(TAG_CAM,
-                      "buf[0..7]=%02X%02X %02X%02X %02X%02X %02X%02X frame_cnt=%lu",
+                      "buf[0..7]=%02X%02X %02X%02X %02X%02X %02X%02X "
+                      "frame_cnt=%lu CDAR=0x%08lX CBR1_BNDT=%lu",
                       (unsigned)buffer[0], (unsigned)buffer[1],
                       (unsigned)buffer[2], (unsigned)buffer[3],
                       (unsigned)buffer[4], (unsigned)buffer[5],
                       (unsigned)buffer[6], (unsigned)buffer[7],
-                      (unsigned long)s_frame_count);
+                      (unsigned long)s_frame_count,
+                      (unsigned long)GPDMA1_Channel12->CDAR,
+                      (unsigned long)(GPDMA1_Channel12->CBR1 & 0xFFFFU));
 
             /* Scan for JPEG End-Of-Image marker (0xFF 0xD9) to find actual size.
              * If not found, the capture is incomplete — retry. */
