@@ -123,7 +123,13 @@ jobs:
 
       - name: Build Firmware
         working-directory: firmware
-        run: make -j8
+        run: |
+          # Pin the build epoch here so the binary and the upload share the exact
+          # same timestamp — prevents version mismatch between embedded FW_VERSION
+          # and the version string stored in firmware.json on the server.
+          BUILD_EPOCH=$(date +%s)
+          echo "BUILD_EPOCH=${BUILD_EPOCH}" >> $GITHUB_ENV
+          make -j8 BUILD_EPOCH=${BUILD_EPOCH}
 
       - name: Upload Firmware to Server
         env:
@@ -134,12 +140,13 @@ jobs:
             echo "⚠️  DEPLOY_SERVER_URL secret not configured — skipping upload"
             exit 0
           fi
-          
-          # ── Enterprise Semantic Versioning Mapping ──
-          # Format: 1.0.<commit_count>
-          # This maps linearly increasing commit depth to the firmware patch version.
+
+          # Version format: 1.0.<commit_count>.<build_epoch>
+          # The epoch was set in the Build step and exported via $GITHUB_ENV.
+          # Every CI build gets a unique version so boards always see a newer
+          # candidate — even when the same commit is re-run (workflow re-run).
           COMMIT_COUNT=$(git rev-list --count HEAD)
-          FW_VERSION="1.0.${COMMIT_COUNT}"
+          FW_VERSION="1.0.${COMMIT_COUNT}.${BUILD_EPOCH}"
           echo "📤 Uploading firmware v${FW_VERSION}..."
           
           HTTP_CODE=$(curl -s -o /tmp/upload_resp.json -w "%{http_code}" \

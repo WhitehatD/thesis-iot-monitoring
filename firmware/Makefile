@@ -89,7 +89,11 @@ C_INCLUDES = \
 # ── Defines ───────────────────────────────────────────
 GIT_COMMIT_COUNT := $(shell git rev-list --count HEAD)
 GIT_HASH := $(shell git rev-parse --short HEAD)
-FW_VER_STR := 1.0.$(GIT_COMMIT_COUNT)
+# BUILD_EPOCH: injected by CI ("make BUILD_EPOCH=...") so the binary and the
+# server upload share the exact same timestamp.  Falls back to current time
+# for local developer builds.
+BUILD_EPOCH       ?= $(shell date +%s)
+FW_VER_STR        := 1.0.$(GIT_COMMIT_COUNT).$(BUILD_EPOCH)
 
 C_DEFS = \
 -DSTM32U585xx \

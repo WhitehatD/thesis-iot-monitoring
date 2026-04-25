@@ -87,27 +87,29 @@ static uint32_t _crc32_update(uint32_t crc, const uint8_t *data, uint32_t len)
 
 static int _is_version_newer(const char *candidate, const char *current)
 {
-    int c_major = 0, c_minor = 0, c_patch = 0;
-    int n_major = 0, n_minor = 0, n_patch = 0;
+    /* Format: major.minor.patch.build
+     * - major/minor/patch: semantic version components
+     * - build: Unix epoch injected at compile-time (CI passes it via make BUILD_EPOCH=...)
+     *          so every CI build has a unique version even when patch is unchanged.
+     * Boards without a build component default to 0 (old firmware — always updatable).
+     */
+    int c_major = 0, c_minor = 0, c_patch = 0, c_build = 0;
+    int n_major = 0, n_minor = 0, n_patch = 0, n_build = 0;
 
-    int c_parsed = sscanf(current,   "%d.%d.%d", &c_major, &c_minor, &c_patch);
-    int n_parsed = sscanf(candidate, "%d.%d.%d", &n_major, &n_minor, &n_patch);
-    (void)c_parsed;
-    (void)n_parsed;
+    sscanf(current,   "%d.%d.%d.%d", &c_major, &c_minor, &c_patch, &c_build);
+    sscanf(candidate, "%d.%d.%d.%d", &n_major, &n_minor, &n_patch, &n_build);
 
-    /* If both versions are valid format strings containing '.', perform semantic comparison */
-    if (strchr(current, '.') != NULL && strchr(candidate, '.') != NULL)
+    if (strchr(current, '.') == NULL || strchr(candidate, '.') == NULL)
     {
-        if (n_major > c_major) return 1;
-        if (n_major == c_major && n_minor > c_minor) return 1;
-        if (n_major == c_major && n_minor == c_minor && n_patch > c_patch) return 1;
-        return 0;  /* Equal or older */
+        /* Non-semantic fallback: reject equal strings to prevent infinite loop */
+        return (strcmp(candidate, current) != 0) ? 1 : 0;
     }
 
-    /* Fallback for git hashes / non-semantic versions.
-       Reject equal strings to prevent infinite looping. */
-    if (strcmp(candidate, current) == 0) return 0;
-    return 1;
+    if (n_major > c_major) return 1;
+    if (n_major == c_major && n_minor > c_minor) return 1;
+    if (n_major == c_major && n_minor == c_minor && n_patch > c_patch) return 1;
+    if (n_major == c_major && n_minor == c_minor && n_patch == c_patch && n_build > c_build) return 1;
+    return 0;  /* Equal or older */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
