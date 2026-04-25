@@ -599,22 +599,37 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
          * Recovers from any previous abnormal suspend/stale DMA state. */
         BSP_CAMERA_Stop(0);
 
-        /* Start continuous capture — not snapshot.
+        /* Re-trigger OV5640 JPEG encoder before arming DCMI.
          *
-         * The OV5640 in JPEG mode alternates between two frame types:
-         *   Frame A (silent) : sensor exposes + JPEG encodes → no DVP output,
-         *                      HREF stays low, VSYNC cycles normally.
-         *   Frame B (output) : JPEG encoder streams previous frame via DVP,
-         *                      HREF pulses for each byte.
+         * Root cause (confirmed by register trace):
+         *   SetPixelFormat(JPEG) causes the OV5640 encoder to output exactly
+         *   ONE JPEG frame on the DVP.  After that frame the encoder idles —
+         *   HREF stays low on every subsequent VSYNC cycle, so DCMI always
+         *   captures silence.  SR=0x3 (VSYNC=1, HREF=1) seen at our 50ms
+         *   diagnostic confirms the encoder IS running right after Camera_Init,
+         *   but by the time BSP_CAMERA_Start is called that window has passed.
+         *   RISR=0 on every captured frame confirms this.
          *
-         * When BSP_CAMERA_Start is called mid-frame-B (evidenced by LINE_RIS
-         * being set while waiting in snapshot mode), DCMI snapshot skips frame B
-         * and captures the NEXT frame (A) which has no output → 0 bytes every
-         * attempt, regardless of retries.
-         *
-         * Fix: use CONTINUOUS mode and wait for s_frame_count >= 2.
-         *   - Frame 1 (A): 0 bytes, s_frame_count=1  — discarded
-         *   - Frame 2 (B): JPEG data,  s_frame_count=2 — captured */
+         * Fix: pulse SYSREM_RESET02 bits[4:2] (JPEG+JFIFO+SFIFO reset) before
+         * every capture attempt.  This restarts the encoder pipeline; the OV5640
+         * then produces a new JPEG frame on the next VSYNC cycle.  DCMI is armed
+         * immediately after the deassert, so it is already waiting when the
+         * frame arrives.  Wait for s_frame_count >= 1 (one triggered frame). */
+        {
+            uint8_t rst02 = 0;
+            if (BSP_I2C1_ReadReg16(OV5640_I2C_ADDR, 0x3002U, &rst02, 1) == BSP_ERROR_NONE)
+            {
+                uint8_t assert_val   = rst02 |   0x1CU;  /* set   bits[4:2] = assert reset */
+                uint8_t deassert_val = rst02 & ~(0x1CU); /* clear bits[4:2] = release reset */
+                BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x3002U, &assert_val,   1);
+                HAL_Delay(2);
+                BSP_I2C1_WriteReg16(OV5640_I2C_ADDR, 0x3002U, &deassert_val, 1);
+                /* encoder pipeline now running; JPEG frame arrives within one
+                 * VSYNC period (~83 ms at 12 fps). No extra delay needed here —
+                 * the WARM_TIMEOUT_MS=1000 polling loop below covers it. */
+            }
+        }
+
         int32_t ret = BSP_CAMERA_Start(0, buffer, CAMERA_MODE_CONTINUOUS);
         if (ret != BSP_ERROR_NONE)
         {
@@ -644,17 +659,19 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
         if (attempt == 1)
         {
             HAL_Delay(50);
-            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (continuous attempt 1)",
+            LOG_DEBUG(TAG_CAM, "DCMI SR=0x%08lX CR=0x%08lX (post-trigger attempt 1)",
                      (unsigned long)DCMI->SR, (unsigned long)DCMI->CR);
         }
 
-        /* Wait for 2 complete frames: skip the silent frame (A), capture output frame (B) */
+        /* Wait for the JPEG frame triggered by the SYSREM_RESET02 pulse above.
+         * The OV5640 delivers exactly one JPEG frame after encoder deassert.
+         * First VSYNC after BSP_CAMERA_Start brings that frame. */
         uint32_t start_tick = HAL_GetTick();
         uint8_t  got_frame = 0;
 
         while ((HAL_GetTick() - start_tick) <= WARM_TIMEOUT_MS)
         {
-            if (s_frame_count >= 2)
+            if (s_frame_count >= 1)
             {
                 /* Fix: drain DCMI FIFO before stopping DMA.
                  * FRAME ISR fires on VSYNC fall — the FIFO may still hold
