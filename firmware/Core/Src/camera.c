@@ -671,6 +671,16 @@ CameraStatus_t Camera_WarmCapture(uint8_t *buffer, uint32_t buffer_size,
             while (LL_DCACHE_IsActiveFlag_BUSYCMD(DCACHE1));
 
 #if CAMERA_JPEG_MODE
+            /* Diagnostic: log first 8 bytes so we can see what DMA actually wrote.
+             * Expected: FF D8 FF ... (JPEG SOI).  All-zeros = DMA didn't write. */
+            LOG_DEBUG(TAG_CAM,
+                      "buf[0..7]=%02X%02X %02X%02X %02X%02X %02X%02X frame_cnt=%lu",
+                      (unsigned)buffer[0], (unsigned)buffer[1],
+                      (unsigned)buffer[2], (unsigned)buffer[3],
+                      (unsigned)buffer[4], (unsigned)buffer[5],
+                      (unsigned)buffer[6], (unsigned)buffer[7],
+                      (unsigned long)s_frame_count);
+
             /* Scan for JPEG End-Of-Image marker (0xFF 0xD9) to find actual size.
              * If not found, the capture is incomplete — retry. */
             uint32_t jpeg_size = _find_jpeg_size(buffer, copy_size);
