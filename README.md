@@ -259,7 +259,7 @@ Chat sessions are stored in SQLite (`chat_sessions` + `chat_messages` tables). E
 ### CI/CD
 
 - **Path-based filtering** — `dorny/paths-filter` detects which components changed. A firmware-only change skips dashboard builds.
-- **Full pipeline**: pytest (51 tests) → Biome lint → TypeScript check → Next.js build → ARM GCC cross-compile → Docker build → VPS deploy → OTA firmware upload.
+- **Full pipeline**: pytest (57 tests) → Biome lint → TypeScript check → Next.js build → ARM GCC cross-compile → Docker build → VPS deploy → OTA firmware upload.
 - **Watchtower auto-update** — production containers poll GHCR every 5 minutes and restart on new images (`nickfedor/watchtower`, the maintained fork compatible with Docker API ≥1.40).
 
 ---
@@ -290,7 +290,7 @@ thesis-iot-monitoring/
       analysis/           Multimodal LLM analysis pipeline
       planning/           NL prompt to schedule generation
       mqtt/               Async MQTT client + auto-deactivation
-    tests/                51 pytest tests (async, in-memory SQLite)
+    tests/                57 pytest tests (async, in-memory SQLite)
 
   dashboard/              Next.js 16 frontend (TypeScript, React 19)
     app/

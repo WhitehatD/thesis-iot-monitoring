@@ -22,7 +22,6 @@ class AnalysisResult(Base):
     objective: Mapped[str] = mapped_column(Text, default="")
     analysis: Mapped[str] = mapped_column(Text, nullable=False)
     recommendation: Mapped[str] = mapped_column(Text, default="")
-    objective_met: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, server_default="0")
     model_used: Mapped[str] = mapped_column(String(64), nullable=False)
     inference_time_ms: Mapped[float] = mapped_column(Float, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

@@ -30,18 +30,6 @@ async def lifespan(app: FastAPI):
     await create_tables()
     print("[OK] Database tables ready")
 
-    # Migrate: add objective_met column to analysis_results if missing
-    from app.db.database import engine
-    from sqlalchemy import text
-    async with engine.begin() as conn:
-        result = await conn.execute(text("PRAGMA table_info(analysis_results)"))
-        cols = {row[1] for row in result.fetchall()}
-        if "objective_met" not in cols:
-            await conn.execute(
-                text("ALTER TABLE analysis_results ADD COLUMN objective_met BOOLEAN NOT NULL DEFAULT 0")
-            )
-            print("[OK] Migrated analysis_results: added objective_met column")
-
     # Connect MQTT
     await mqtt_client.connection()
     print(f"[OK] MQTT connected to {settings.mqtt_broker_host}:{settings.mqtt_broker_port}")

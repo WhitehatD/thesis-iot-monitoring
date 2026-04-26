@@ -292,7 +292,6 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
                 objective=objective,
                 analysis=analysis.get("findings", ""),
                 recommendation=analysis.get("recommendation", ""),
-                objective_met=analysis.get("objective_met", False),
                 model_used=analysis.get("model_used", model_key),
                 inference_time_ms=analysis.get("inference_time_ms", 0),
             )
@@ -306,7 +305,6 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
             "date": date_dir,
             "url": f"/api/images/{date_dir}/{filename}",
             "objective": objective,
-            "objective_met": analysis.get("objective_met", False),
             "description": analysis.get("description", ""),
             "findings": analysis.get("findings", ""),
             "recommendation": analysis.get("recommendation", ""),
@@ -318,8 +316,7 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
 
         print(
             f"[AI] Analysis complete for task {task_id} "
-            f"({analysis.get('inference_time_ms', 0):.0f}ms, {model_key}): "
-            f"objective_met={analysis.get('objective_met')}"
+            f"({analysis.get('inference_time_ms', 0):.0f}ms, {model_key})"
         )
 
     except Exception as e:
@@ -334,7 +331,6 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
                     objective="General visual inspection",
                     analysis=f"Analysis unavailable — backend error: {err_msg[:200]}",
                     recommendation="Check AI backend configuration (ANTHROPIC_API_KEY, GEMINI_API_KEY, or vLLM endpoint).",
-                    objective_met=False,
                     model_used="error",
                     inference_time_ms=0,
                 )
@@ -346,7 +342,6 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
                 "date": date_dir,
                 "url": f"/api/images/{date_dir}/{filename}",
                 "objective": "General visual inspection",
-                "objective_met": False,
                 "description": "Analysis backend unavailable.",
                 "findings": f"Error: {err_msg[:200]}",
                 "recommendation": "Check AI backend configuration.",
@@ -399,8 +394,6 @@ async def list_images(board_id: str | None = None, db: AsyncSession = Depends(ge
             if row.task_id not in analysis_map:
                 analysis_map[row.task_id] = {
                     "objective": row.objective,
-                    "objective_met": row.objective_met,
-                    "description": row.analysis,
                     "findings": row.analysis,
                     "recommendation": row.recommendation,
                     "model": row.model_used,
