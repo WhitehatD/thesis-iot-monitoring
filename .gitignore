@@ -101,6 +101,7 @@ benchmarks/images/*.png
 .claude/.session-name
 .claude/governance.md.bak.*
 .claude/settings.local.json
+scratchpad_*.json
 
 # crag-generated agent/IDE configs (not tracked — only .github/workflows/gates.yml kept)
 # ============================================
