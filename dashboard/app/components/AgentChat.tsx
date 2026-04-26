@@ -55,6 +55,12 @@ export default function AgentChat({
 	const [messages, setMessages] = useState<Message[]>([]);
 	const [input, setInput] = useState("");
 	const [selectedModel, setSelectedModel] = useState("claude-haiku");
+	const [availableModels, setAvailableModels] = useState<
+		{ key: string; label: string }[]
+	>([
+		{ key: "claude-haiku", label: "Haiku (fast)" },
+		{ key: "claude-sonnet", label: "Sonnet" },
+	]);
 	const [isStreaming, setIsStreaming] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -64,6 +70,20 @@ export default function AgentChat({
 	useEffect(() => {
 		fetchSessions();
 	}, [boardId]);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: fetch available AI models once on mount
+	useEffect(() => {
+		fetch(`${apiBase}/api/agent/models`)
+			.then((r) => r.json())
+			.then((data: { key: string; label: string }[]) => {
+				if (Array.isArray(data) && data.length > 0) {
+					setAvailableModels(data);
+				}
+			})
+			.catch(() => {
+				/* keep defaults */
+			});
+	}, [apiBase]);
 
 	const fetchSessions = async () => {
 		try {
@@ -503,8 +523,11 @@ export default function AgentChat({
 						cursor: "pointer",
 					}}
 				>
-					<option value="claude-haiku">Haiku (fast)</option>
-					<option value="claude-sonnet">Sonnet</option>
+					{availableModels.map((m) => (
+						<option key={m.key} value={m.key}>
+							{m.label}
+						</option>
+					))}
 				</select>
 				<button
 					className="agent-send-btn"

@@ -457,6 +457,26 @@ def _sse_event(event: str, data: dict) -> str:
     return f"data: {json.dumps({'event': event, **data})}\n\n"
 
 
+@router.get("/models")
+async def list_models():
+    """Return AI backends available based on configured API keys."""
+    models = []
+    if settings.anthropic_api_key:
+        models.append({"key": "claude-haiku", "label": "Haiku (fast)"})
+        models.append({"key": "claude-sonnet", "label": "Sonnet"})
+    if settings.gemini_api_key:
+        models.append({"key": "gemini-3", "label": "Gemini Flash"})
+    if getattr(settings, "vllm_base_url", None):
+        models.append({"key": "qwen3-vl", "label": "Qwen3-VL (local)"})
+    # Always return at least the claude defaults so the UI isn't empty
+    if not models:
+        models = [
+            {"key": "claude-haiku", "label": "Haiku (fast)"},
+            {"key": "claude-sonnet", "label": "Sonnet"},
+        ]
+    return models
+
+
 @router.post("/chat")
 async def agent_chat(request: Request):
     body = await request.json()
@@ -464,11 +484,12 @@ async def agent_chat(request: Request):
     session_id = body.get("sessionId")  # DB integer ID
     model_key = body.get("model", "claude-haiku")
 
-    MODEL_MAP = {
+    # Agent reasoning always uses Claude; Gemini/vLLM keys are only for image analysis
+    CLAUDE_MODEL_MAP = {
         "claude-haiku": settings.claude_haiku_model,
         "claude-sonnet": settings.claude_sonnet_model,
     }
-    resolved_model = MODEL_MAP.get(model_key, settings.claude_haiku_model)
+    resolved_model = CLAUDE_MODEL_MAP.get(model_key) or settings.claude_haiku_model
 
     if not message:
         return StreamingResponse(
