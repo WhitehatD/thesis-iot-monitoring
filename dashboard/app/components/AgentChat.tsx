@@ -626,6 +626,29 @@ function parseMarkdown(text: string): React.ReactNode[] {
 
 		flushTable();
 
+		// Markdown image: ![alt](url)
+		const imgMatch = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+		if (imgMatch) {
+			const imgSrc = imgMatch[2];
+			nodes.push(
+				<img
+					key={`img-${i}`}
+					src={imgSrc}
+					alt={imgMatch[1] || "Captured"}
+					style={{
+						maxWidth: "280px",
+						borderRadius: "6px",
+						border: "1px solid #333",
+						cursor: "pointer",
+						display: "block",
+						margin: "6px 0",
+					}}
+					onClick={() => window.open(imgSrc, "_blank")}
+				/>,
+			);
+			continue;
+		}
+
 		if (line.trim() === "") {
 			nodes.push(<br key={`br-${i}`} />);
 		} else {

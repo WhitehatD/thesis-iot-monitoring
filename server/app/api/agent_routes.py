@@ -733,11 +733,14 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
         "summary": f"{len(analyses)}/{expected} image{'s' if expected > 1 else ''} analyzed",
     })
 
-    # Build report
+    # Build report — embed image URL(s) in reply text so they persist after page refresh
     if len(analyses) == 1:
         a = analyses[0]
+        _img_url = f"/api/images/{new_files[0].parent.name}/{new_files[0].name}" if new_files else ""
+        _img_md = f"![Captured]({_img_url})\n\n" if _img_url else ""
         detail = (
             f"**Capture & Analysis Complete** (task #{a.task_id})\n\n"
+            f"{_img_md}"
             f"**Objective:** {a.objective}\n\n"
             f"**Findings:** {a.analysis}\n\n"
             f"**Recommendation:** {a.recommendation}\n\n"
@@ -745,9 +748,11 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
         )
     else:
         parts = [f"**Sequence Complete** — {len(analyses)}/{expected} images analyzed\n"]
-        for i, a in enumerate(analyses, 1):
+        for i, (a, nf) in enumerate(zip(analyses, new_files), 1):
+            _img_url = f"/api/images/{nf.parent.name}/{nf.name}"
             parts.append(
-                f"**#{i}** (task {a.task_id}): {a.analysis[:120]}{'...' if len(a.analysis) > 120 else ''}"
+                f"**#{i}** (task {a.task_id}): {a.analysis[:120]}{'...' if len(a.analysis) > 120 else ''}\n"
+                f"![Image {i}]({_img_url})"
             )
         if analyses[-1].recommendation:
             parts.append(f"\n**Recommendation:** {analyses[-1].recommendation}")
