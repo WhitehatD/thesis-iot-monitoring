@@ -601,9 +601,17 @@ def _tool_label(name: str, inp: dict) -> str:
 
 
 async def _capture_pipeline(tool_name: str, tool_input: dict):
-    """Full agentic pipeline: capture → wait for upload(s) → analysis → report."""
+    """Full agentic pipeline: capture → wait for upload(s) → analysis → report.
+
+    Two-phase design:
+      Phase 1 (20s): watch uploads directory for new .jpg files — detects upload
+                     independently of task_id format (firmware may truncate to uint16).
+      Phase 2 (60s): poll DB for AnalysisResult — Claude Sonnet vision takes 10-30s,
+                     so this timeout is well above the old single 20s window that caused
+                     false "board offline" errors when analysis was still in flight.
+    """
     from pathlib import Path
-    from sqlalchemy import select, func
+    from sqlalchemy import select
     from app.analysis.models import AnalysisResult
     from app.db.database import async_session
 
@@ -629,32 +637,56 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     mqtt_client.publish(settings.mqtt_topic_commands, command)
     yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
 
-    # Wait for analysis results — one for single capture, N for sequence.
-    # Poll every 1s. Timeout: 20s for single shot; sequence duration + 10s/image.
+    # ── Phase 1: wait for image file(s) to land on disk (20s) ────────────────
     start_time = datetime.now()
-    timeout_polls = max(20, (total_seq_ms // 1000) + (expected * 10))
-    analyses = []
-    seen_ids = set()
-    wait_label = f"Waiting for {'image' if expected == 1 else f'{expected} images'}..."
+    today = start_time.strftime("%Y-%m-%d")
+    upload_dir = Path(f"./data/uploads/{today}")
+    existing_files = set(upload_dir.glob("*.jpg")) if upload_dir.exists() else set()
 
+    wait_label = f"Waiting for {'image' if expected == 1 else f'{expected} images'}..."
     yield _sse_event("tool_call", {"id": "upload", "label": wait_label})
 
-    for poll_idx in range(timeout_polls):
+    image_received = False
+    for poll_idx in range(20):
         await asyncio.sleep(1)
         elapsed = poll_idx + 1
 
-        # Heartbeat every 5s so the client knows the server is still alive
-        if elapsed % 5 == 0 and elapsed < timeout_polls:
-            yield _sse_event("tool_update", {
-                "id": "upload",
-                "label": f"{wait_label} ({elapsed}s)",
-            })
+        if elapsed % 5 == 0:
+            yield _sse_event("tool_update", {"id": "upload", "label": f"{wait_label} ({elapsed}s)"})
+
+        if upload_dir.exists():
+            current_files = set(upload_dir.glob("*.jpg"))
+            if len(current_files - existing_files) >= expected:
+                image_received = True
+                break
+
+    if not image_received:
+        yield _sse_event("tool_result", {
+            "id": "upload",
+            "success": False,
+            "summary": "Timeout after 20s — board may be offline or firmware not current",
+        })
+        yield _sse_event("reply", {"text": "**Capture timed out.** The board didn't upload an image within the expected window. Check that it's online and the firmware is current."})
+        return
+
+    yield _sse_event("tool_result", {"id": "upload", "success": True, "summary": "Image received"})
+
+    # ── Phase 2: wait for AnalysisResult in DB (up to 60s) ───────────────────
+    analyze_timeout = max(60, (total_seq_ms // 1000) + (expected * 30))
+    analyses = []
+    seen_ids = set()
+    analyze_label = "Analyzing image..." if expected == 1 else f"Analyzing {expected} images..."
+
+    yield _sse_event("tool_call", {"id": "analyze", "label": analyze_label})
+
+    for poll_idx in range(analyze_timeout):
+        await asyncio.sleep(1)
+        elapsed = poll_idx + 1
+
+        if elapsed % 5 == 0 and len(analyses) < expected:
+            yield _sse_event("tool_update", {"id": "analyze", "label": f"{analyze_label} ({elapsed}s)"})
 
         async with async_session() as db:
-            # Filter by created_at only — task_id from time.time() may be truncated
-            # to uint16 by the firmware before upload, making task_id >= match fail.
-            # start_time is set just before the MQTT command, so any result created
-            # after that point belongs to this capture on a single-board deployment.
             query = (
                 select(AnalysisResult)
                 .where(AnalysisResult.created_at >= start_time)
@@ -685,12 +717,16 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
             break
 
     if not analyses:
-        yield _sse_event("tool_result", {"id": "upload", "success": False, "summary": f"Timeout after {timeout_polls}s — board may be offline or capture failed"})
-        yield _sse_event("reply", {"text": "**Capture timed out.** The board didn't upload an image within the expected window. Check that it's online and the firmware is current."})
+        yield _sse_event("tool_result", {
+            "id": "analyze",
+            "success": False,
+            "summary": f"Analysis timed out after {analyze_timeout}s",
+        })
+        yield _sse_event("reply", {"text": "**Image captured** but analysis timed out. The image is in the gallery — check AI backend configuration (ANTHROPIC_API_KEY)."})
         return
 
     yield _sse_event("tool_result", {
-        "id": "upload",
+        "id": "analyze",
         "success": True,
         "summary": f"{len(analyses)}/{expected} image{'s' if expected > 1 else ''} analyzed",
     })
