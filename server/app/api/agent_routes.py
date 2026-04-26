@@ -651,11 +651,13 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
             })
 
         async with async_session() as db:
-            # Filter by task_id to avoid picking up stale results from other captures
+            # Filter by created_at only — task_id from time.time() may be truncated
+            # to uint16 by the firmware before upload, making task_id >= match fail.
+            # start_time is set just before the MQTT command, so any result created
+            # after that point belongs to this capture on a single-board deployment.
             query = (
                 select(AnalysisResult)
                 .where(AnalysisResult.created_at >= start_time)
-                .where(AnalysisResult.task_id >= task_id)
                 .order_by(AnalysisResult.created_at.asc())
             )
             result = await db.execute(query)
