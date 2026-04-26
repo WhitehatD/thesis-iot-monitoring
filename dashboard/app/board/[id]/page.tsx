@@ -118,7 +118,10 @@ export default function BoardPage({
 
 	const fetchImages = useCallback(() => {
 		fetch(`${apiBase}/api/images?board_id=${boardId}`)
-			.then((res) => res.json())
+			.then((res) => {
+				if (!res.ok) throw new Error(res.statusText);
+				return res.json();
+			})
 			.then((data) => {
 				if (data.images) {
 					setImages(
@@ -231,7 +234,21 @@ export default function BoardPage({
 			// Real-time schedule/task updates
 			if (topic === "dashboard/schedules/updated") {
 				if (data.schedules) {
-					setSchedules(data.schedules);
+					setSchedules((prev) => {
+						if (prev.length === 0) return data.schedules;
+						const prevMap = new Map(
+							prev.flatMap((s: any) =>
+								(s.tasks || []).map((t: any) => [t.id, t.completed_at]),
+							),
+						);
+						return data.schedules.map((s: any) => ({
+							...s,
+							tasks: (s.tasks || []).map((t: any) => ({
+								...t,
+								completed_at: t.completed_at || prevMap.get(t.id) || null,
+							})),
+						}));
+					});
 					addLog(
 						"mqtt",
 						"SCHED",
@@ -444,6 +461,7 @@ export default function BoardPage({
 		addLog("info", "CMD", "Sending capture command...");
 		try {
 			const res = await fetch(`${apiBase}/api/capture`, { method: "POST" });
+			if (!res.ok) throw new Error(await res.text());
 			const data = await res.json();
 			addLog("success", "CMD", "Capture command sent", `task #${data.task_id}`);
 		} catch (err) {
@@ -457,7 +475,8 @@ export default function BoardPage({
 		setActionLoading("ping");
 		addLog("info", "CMD", "Sending ping to board...");
 		try {
-			await fetch(`${apiBase}/api/ping`, { method: "POST" });
+			const res = await fetch(`${apiBase}/api/ping`, { method: "POST" });
+			if (!res.ok) throw new Error(await res.text());
 			addLog("success", "CMD", "Ping sent — LED sequence triggered");
 		} catch (err) {
 			addLog("error", "CMD", `Ping failed: ${err}`);
@@ -470,7 +489,8 @@ export default function BoardPage({
 		setActionLoading("setup");
 		addLog("warning", "CMD", "Entering WiFi setup mode...");
 		try {
-			await fetch(`${apiBase}/api/erase-wifi`, { method: "POST" });
+			const res = await fetch(`${apiBase}/api/erase-wifi`, { method: "POST" });
+			if (!res.ok) throw new Error(await res.text());
 			addLog(
 				"success",
 				"CMD",
@@ -498,9 +518,11 @@ export default function BoardPage({
 			next ? "Sending sleep command..." : "Sending wake command...",
 		);
 		try {
-			await fetch(`${apiBase}/api/schedules/sleep-mode?enabled=${next}`, {
-				method: "POST",
-			});
+			const res = await fetch(
+				`${apiBase}/api/schedules/sleep-mode?enabled=${next}`,
+				{ method: "POST" },
+			);
+			if (!res.ok) throw new Error(await res.text());
 			addLog("system", "PWR", next ? "Sleep mode ON" : "Sleep mode OFF");
 		} catch (err) {
 			setSleepMode(!next);
@@ -528,9 +550,11 @@ export default function BoardPage({
 	const handleDeactivateSchedule = async (scheduleId: number) => {
 		setActionLoading(`deactivate-${scheduleId}`);
 		try {
-			await fetch(`${apiBase}/api/schedules/${scheduleId}/deactivate`, {
-				method: "POST",
-			});
+			const res = await fetch(
+				`${apiBase}/api/schedules/${scheduleId}/deactivate`,
+				{ method: "POST" },
+			);
+			if (!res.ok) throw new Error(await res.text());
 			addLog("info", "SCHED", `Schedule deactivated`, `id=${scheduleId}`);
 			fetchSchedules();
 		} catch (err) {
@@ -544,9 +568,10 @@ export default function BoardPage({
 		if (!confirm(`Delete schedule "${name}"? This cannot be undone.`)) return;
 		setActionLoading(`delete-${scheduleId}`);
 		try {
-			await fetch(`${apiBase}/api/schedules/${scheduleId}`, {
+			const res = await fetch(`${apiBase}/api/schedules/${scheduleId}`, {
 				method: "DELETE",
 			});
+			if (!res.ok) throw new Error(await res.text());
 			setSchedules((prev) => prev.filter((s: any) => s.id !== scheduleId));
 			addLog("info", "SCHED", `Schedule "${name}" deleted`);
 		} catch (err) {

@@ -463,7 +463,7 @@ async def get_analysis(task_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/analyses")
-async def list_analyses(limit: int = 50, db: AsyncSession = Depends(get_db)):
+async def list_analyses(board_id: str | None = None, limit: int = 50, db: AsyncSession = Depends(get_db)):
     """
     List recent analysis results, newest first.
     """
