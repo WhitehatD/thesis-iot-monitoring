@@ -638,8 +638,8 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
 
     # ── Phase 1: wait for image file(s) to land on disk (20s) ────────────────
-    start_time = datetime.now()
-    today = start_time.strftime("%Y-%m-%d")
+    start_time = datetime.utcnow()   # SQLite stores UTC via func.now(); local time would miss rows
+    today = datetime.now().strftime("%Y-%m-%d")  # filesystem path uses local date
     upload_dir = Path(f"./data/uploads/{today}")
     existing_files = set(upload_dir.glob("*.jpg")) if upload_dir.exists() else set()
 
