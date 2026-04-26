@@ -29,7 +29,6 @@ You receive images captured by an STM32 microcontroller camera and the user's or
 Analyze the image and produce a JSON response with exactly these fields:
 {
   "description": "<2-3 sentence factual description of what is visible in the image>",
-  "objective_met": true/false,
   "findings": "<specific observations related to the monitoring objective>",
   "recommendation": "<one actionable recommendation based on what you see>"
 }
@@ -55,7 +54,7 @@ async def analyze_image(
         model_key: Which AI backend to use.
 
     Returns:
-        Dict with: description, objective_met, findings, recommendation, model_used, inference_time_ms
+        Dict with: description, findings, recommendation, model_used, inference_time_ms
     """
     start = time.monotonic()
 
@@ -198,14 +197,12 @@ def _parse_analysis(raw_output: str) -> dict:
     except json.JSONDecodeError:
         return {
             "description": text[:500],
-            "objective_met": False,
             "findings": text,
             "recommendation": "Unable to parse structured analysis — review image manually.",
         }
 
     return {
         "description": data.get("description", ""),
-        "objective_met": data.get("objective_met", False),
         "findings": data.get("findings", ""),
         "recommendation": data.get("recommendation", ""),
     }

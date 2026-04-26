@@ -772,7 +772,6 @@ async def _capture_pipeline(
                 "findings": f"Analysis error: {_analysis_error}",
                 "recommendation": "Check AI backend configuration (ANTHROPIC_API_KEY, GEMINI_API_KEY, or vLLM).",
                 "description": "",
-                "objective_met": False,
                 "model_used": model_key,
                 "inference_time_ms": 0,
             }
@@ -784,7 +783,6 @@ async def _capture_pipeline(
                 objective="General visual inspection",
                 analysis=analysis_result.get("findings", ""),
                 recommendation=analysis_result.get("recommendation", ""),
-                objective_met=analysis_result.get("objective_met", False),
                 model_used=analysis_result.get("model_used", model_key),
                 inference_time_ms=analysis_result.get("inference_time_ms", 0),
             )

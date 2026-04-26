@@ -45,8 +45,6 @@ interface ImageCapture {
 	isNew: boolean;
 	analysis?: {
 		objective: string;
-		objectiveMet: boolean;
-		description: string;
 		findings: string;
 		recommendation: string;
 		model: string;
@@ -135,8 +133,6 @@ export default function BoardPage({
 							analysis: img.analysis
 								? {
 										objective: img.analysis.objective ?? "",
-										objectiveMet: img.analysis.objective_met ?? false,
-										description: img.analysis.description ?? "",
 										findings: img.analysis.findings ?? "",
 										recommendation: img.analysis.recommendation ?? "",
 										model: img.analysis.model ?? "",
@@ -210,8 +206,6 @@ export default function BoardPage({
 									...img,
 									analysis: {
 										objective: data.objective || "",
-										objectiveMet: data.objective_met || false,
-										description: data.description || "",
 										findings: data.findings || "",
 										recommendation: data.recommendation || "",
 										model: data.model || "",
@@ -221,12 +215,11 @@ export default function BoardPage({
 							: img,
 					),
 				);
-				const met = data.objective_met;
 				addLog(
-					met ? "success" : "warning",
+					"info",
 					"AI",
-					`Vision analysis: ${met ? "objective met" : "objective not met"}`,
-					`${data.model || "?"} · ${data.inference_ms || 0}ms · task #${data.task_id}`,
+					`Vision analysis: ${data.model || "?"} · ${data.inference_ms || 0}ms`,
+					`task #${data.task_id}`,
 				);
 				return;
 			}
@@ -726,11 +719,7 @@ export default function BoardPage({
 											className="sidebar-image-card"
 											onClick={() => setSelectedImage(img)}
 										>
-											{img.analysis && (
-												<div
-													className={`analysis-indicator ${img.analysis.objectiveMet ? "met" : "unmet"}`}
-												/>
-											)}
+											{img.analysis && <div className="analysis-indicator" />}
 											<div className="sidebar-image-wrapper">
 												<img
 													src={img.url}
@@ -999,13 +988,6 @@ export default function BoardPage({
 						{selectedImage.analysis && (
 							<div className="analysis-panel">
 								<div className="analysis-header">
-									<span
-										className={`analysis-badge ${selectedImage.analysis.objectiveMet ? "badge-met" : "badge-unmet"}`}
-									>
-										{selectedImage.analysis.objectiveMet
-											? "Objective Met"
-											: "Objective Not Met"}
-									</span>
 									<span className="analysis-meta">
 										{selectedImage.analysis.model} &middot;{" "}
 										{selectedImage.analysis.inferenceMs.toFixed(0)}ms
