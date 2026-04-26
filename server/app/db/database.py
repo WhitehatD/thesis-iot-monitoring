@@ -27,7 +27,7 @@ class Base(DeclarativeBase):
 async def create_tables():
     """Create all tables that don't exist yet, then run lightweight migrations."""
     import app.db.wifi_models  # noqa: F401 — register WiFi config model
-    import app.analysis.models  # noqa: F401 — register analysis result model
+    import app.analysis.models  # noqa: F401 — register analysis result + CaptureLatency models
     import app.scheduler.models  # noqa: F401 — register scheduler models
     import app.agent.models  # noqa: F401 — register agent chat models
     async with engine.begin() as conn:

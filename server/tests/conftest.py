@@ -17,6 +17,7 @@ import app.api.scheduler_routes  # noqa: F401
 import app.api.firmware_routes  # noqa: F401
 import app.api.wifi_routes  # noqa: F401
 import app.api.agent_routes  # noqa: F401
+import app.api.benchmark_routes  # noqa: F401
 import app.mqtt.client  # noqa: F401
 import app.db.database  # noqa: F401
 

@@ -26,6 +26,7 @@ from app.db.database import get_db, async_session
 from app.mqtt.client import mqtt_client
 from app.planning.engine import generate_plan
 from app.scheduler.models import ScheduleTask
+from app.benchmark import timing as _timing
 
 router = APIRouter()
 
@@ -138,6 +139,11 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail="Failed to read upload payload")
 
+    # ── Benchmark: upload received ────────────────────────────────────────────
+    asyncio.create_task(
+        _timing.record(task_id, t_upload_received=time.time(), image_size_bytes=len(content))
+    )
+
     if len(content) == 0:
         raise HTTPException(status_code=422, detail="Empty upload — no image data received")
 
@@ -187,6 +193,15 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
             status_code=422,
             detail=f"Image processing failed: {str(e)} (received {len(content)} bytes)"
         )
+
+    # ── Benchmark: JPEG written to disk ──────────────────────────────────────
+    try:
+        _jpeg_size = os.path.getsize(filepath)
+    except OSError:
+        _jpeg_size = None
+    asyncio.create_task(
+        _timing.record(task_id, t_jpeg_converted=time.time(), jpeg_size_bytes=_jpeg_size)
+    )
 
     # Notify dashboard via MQTT
     image_meta = {

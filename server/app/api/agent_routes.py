@@ -40,6 +40,7 @@ from app.config import settings
 from app.db.database import async_session
 from app.mqtt.client import mqtt_client
 from app.planning.engine import generate_plan
+from app.benchmark import timing as _timing
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -516,6 +517,12 @@ async def agent_chat(request: Request):
 
             yield _sse_event("thinking", {"text": f"Processing: \"{message}\""})
 
+            # ── Benchmark: generate run_id + pre-allocate task_id for capture_now ──
+            # task_id is generated here (not in _capture_pipeline) so the planning
+            # latency (t_plan_start/t_plan_end) can be correlated with the same row.
+            _bench_run_id = _timing.new_run_id()
+            _bench_task_id = int(time.time())
+
             # ── Call Claude with tools ──
             if not settings.anthropic_api_key:
                 async for ev in _fallback_dispatch(message, session_id):
@@ -525,6 +532,7 @@ async def agent_chat(request: Request):
 
             client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
+            _t_plan_start = time.time()
             response = await client.messages.create(
                 model=resolved_model,
                 max_tokens=1024,
@@ -532,6 +540,16 @@ async def agent_chat(request: Request):
                 tools=AGENT_TOOLS,
                 messages=history,
                 temperature=0.1,
+            )
+            _t_plan_end = time.time()
+
+            # Persist planning timestamps; capture_type/model_key filled in by pipeline
+            await _timing.record(
+                _bench_task_id,
+                run_id=_bench_run_id,
+                t_plan_start=_t_plan_start,
+                t_plan_end=_t_plan_end,
+                model_key=model_key,
             )
 
             # Process response blocks
@@ -546,7 +564,10 @@ async def agent_chat(request: Request):
 
                     if tool_name == "capture_now":
                         pipeline_reply = ""
-                        async for ev in _capture_pipeline(tool_name, tool_input, model_key):
+                        async for ev in _capture_pipeline(
+                            tool_name, tool_input, model_key,
+                            bench_task_id=_bench_task_id, bench_run_id=_bench_run_id,
+                        ):
                             yield ev
                             if '"event": "reply"' in ev:
                                 ev_data = json.loads(ev.split("data: ", 1)[1].strip())
@@ -556,7 +577,10 @@ async def agent_chat(request: Request):
                         continue
                     elif tool_name == "capture_sequence":
                         pipeline_reply = ""
-                        async for ev in _capture_sequence_pipeline(tool_input):
+                        async for ev in _capture_sequence_pipeline(
+                            tool_input,
+                            bench_run_id=_bench_run_id,
+                        ):
                             yield ev
                             if '"event": "reply"' in ev:
                                 try:
@@ -621,7 +645,13 @@ def _tool_label(name: str, inp: dict) -> str:
     return labels.get(name, f"Executing {name}...")
 
 
-async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "claude-sonnet"):
+async def _capture_pipeline(
+    tool_name: str,
+    tool_input: dict,
+    model_key: str = "claude-sonnet",
+    bench_task_id: int | None = None,
+    bench_run_id: str | None = None,
+):
     """Full agentic pipeline: capture → wait for upload(s) → analysis → report.
 
     Two-phase design:
@@ -631,6 +661,9 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
                the selected chat model (Haiku / Sonnet) also drives image analysis,
                enabling thesis benchmarking. The background _run_analysis task in
                routes.py skips files already analyzed by the pipeline.
+
+    bench_task_id / bench_run_id: passed from event_stream so planning timestamps
+    (recorded there) and pipeline timestamps land in the same CaptureLatency row.
     """
     import re as _re
     from pathlib import Path
@@ -639,7 +672,21 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
     from app.analysis.engine import analyze_image as _analyze_image
     from app.db.database import async_session
 
-    task_id = int(time.time())
+    # Use the pre-allocated task_id from event_stream when available so all
+    # benchmark timestamps (planning + pipeline) share the same row.
+    task_id = bench_task_id if bench_task_id is not None else int(time.time())
+    run_id = bench_run_id if bench_run_id is not None else _timing.new_run_id()
+
+    # ── Benchmark: record pipeline entry ─────────────────────────────────────
+    _t_request = time.time()
+    await _timing.record(
+        task_id,
+        run_id=run_id,
+        capture_type="single",
+        model_key=model_key,
+        t_request=_t_request,
+    )
+
     expected = 1
 
     if tool_name == "capture_sequence":
@@ -659,6 +706,9 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
         yield _sse_event("tool_call", {"id": "capture", "label": "Sending capture command to board..."})
 
     mqtt_client.publish(settings.mqtt_topic_commands, command)
+    # ── Benchmark: MQTT sent ──────────────────────────────────────────────────
+    await _timing.record(task_id, t_mqtt_sent=time.time())
+
     yield _sse_event("tool_result", {"id": "capture", "success": True, "summary": f"Capture command sent (task #{task_id})"})
 
     # ── Phase 1: wait for image file(s) to land on disk (20s) ────────────────
@@ -686,6 +736,7 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
                 break
 
     if not image_received:
+        await _timing.record(task_id, success=False, error="Timeout after 20s waiting for upload")
         yield _sse_event("tool_result", {
             "id": "upload",
             "success": False,
@@ -704,6 +755,10 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
     analyses = []
     yield _sse_event("tool_call", {"id": "analyze", "label": f"Analyzing with {model_key}..."})
 
+    # ── Benchmark: analysis start ─────────────────────────────────────────────
+    await _timing.record(task_id, t_analysis_start=time.time())
+
+    _analysis_error: str | None = None
     for idx, new_file in enumerate(new_files, 1):
         file_path = str(new_file)
         _m = _re.search(r"task_(\d+)_", new_file.name)
@@ -712,8 +767,9 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
         try:
             analysis_result = await _analyze_image(file_path, "General visual inspection", model_key)
         except Exception as exc:
+            _analysis_error = f"{type(exc).__name__}: {exc}"
             analysis_result = {
-                "findings": f"Analysis error: {type(exc).__name__}: {exc}",
+                "findings": f"Analysis error: {_analysis_error}",
                 "recommendation": "Check AI backend configuration (ANTHROPIC_API_KEY, GEMINI_API_KEY, or vLLM).",
                 "description": "",
                 "objective_met": False,
@@ -748,6 +804,14 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
             "image_url": f"/api/images/{new_file.parent.name}/{new_file.name}",
         })
 
+    # ── Benchmark: analysis end ───────────────────────────────────────────────
+    await _timing.record(
+        task_id,
+        t_analysis_end=time.time(),
+        success=(_analysis_error is None),
+        error=_analysis_error,
+    )
+
     yield _sse_event("tool_result", {
         "id": "analyze",
         "success": True,
@@ -780,10 +844,13 @@ async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "
         parts.append(f"\n*{analyses[-1].model_used} | avg {sum(a.inference_time_ms for a in analyses) / len(analyses):.0f}ms*")
         detail = "\n\n".join(parts)
 
+    # ── Benchmark: SSE delivered ──────────────────────────────────────────────
+    await _timing.record(task_id, t_sse_delivered=time.time())
+
     yield _sse_event("reply", {"text": detail})
 
 
-async def _capture_sequence_pipeline(tool_input: dict):
+async def _capture_sequence_pipeline(tool_input: dict, bench_run_id: str | None = None):
     """
     Proper agentic sequence pipeline:
       1. Create DB schedule (real task IDs for objective lookup)
@@ -792,6 +859,7 @@ async def _capture_sequence_pipeline(tool_input: dict):
       4. Stream per-image SSE events in real time
 
     This replaces the old fire-and-forget _tool_capture_sequence path.
+    bench_run_id: correlates with the planning row recorded in event_stream.
     """
     from pathlib import Path
     from app.analysis.models import AnalysisResult
@@ -827,6 +895,16 @@ async def _capture_sequence_pipeline(tool_input: dict):
     await notify_schedule_update()
 
     first_task_id = schedule.tasks[0].id
+    _bench_run_id = bench_run_id if bench_run_id is not None else _timing.new_run_id()
+
+    # ── Benchmark: record sequence pipeline entry ─────────────────────────────
+    await _timing.record(
+        first_task_id,
+        run_id=_bench_run_id,
+        capture_type="sequence",
+        t_request=time.time(),
+    )
+
     delays = [i * interval for i in range(count)]
     command = json.dumps({
         "type": "capture_sequence",
@@ -839,6 +917,9 @@ async def _capture_sequence_pipeline(tool_input: dict):
         "label": f"Sending {count}-shot sequence ({interval}ms apart)...",
     })
     mqtt_client.publish(settings.mqtt_topic_commands, command)
+    # ── Benchmark: MQTT sent ──────────────────────────────────────────────────
+    await _timing.record(first_task_id, t_mqtt_sent=time.time())
+
     yield _sse_event("tool_result", {
         "id": "capture",
         "success": True,
@@ -855,6 +936,7 @@ async def _capture_sequence_pipeline(tool_input: dict):
 
     yield _sse_event("tool_call", {"id": "upload", "label": seq_label})
 
+    _first_analysis_seen = False
     for poll_idx in range(int(timeout_polls)):
         await asyncio.sleep(1)
         elapsed = poll_idx + 1
@@ -877,6 +959,12 @@ async def _capture_sequence_pipeline(tool_input: dict):
         for a in new_results:
             seen_ids.add(a.id)
             analyses.append(a)
+
+            # ── Benchmark: record first analysis completion ───────────────────
+            if not _first_analysis_seen:
+                _first_analysis_seen = True
+                await _timing.record(first_task_id, t_analysis_end=time.time())
+
             _img_path = Path(a.image_path)
             _img_date = _img_path.parent.name
             _img_file = _img_path.name
@@ -896,6 +984,7 @@ async def _capture_sequence_pipeline(tool_input: dict):
             break
 
     if not analyses:
+        await _timing.record(first_task_id, success=False, error="Timeout — no analyses received")
         yield _sse_event("tool_result", {
             "id": "upload",
             "success": False,
@@ -921,6 +1010,9 @@ async def _capture_sequence_pipeline(tool_input: dict):
         parts.append(f"\n**Recommendation:** {analyses[-1].recommendation}")
     avg_ms = sum(a.inference_time_ms for a in analyses) / len(analyses)
     parts.append(f"\n*{analyses[-1].model_used} | avg {avg_ms:.0f}ms*")
+
+    # ── Benchmark: SSE delivered ──────────────────────────────────────────────
+    await _timing.record(first_task_id, t_sse_delivered=time.time(), success=True)
 
     yield _sse_event("reply", {"text": "\n\n".join(parts)})
 

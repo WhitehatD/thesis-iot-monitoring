@@ -14,6 +14,7 @@ from app.api.scheduler_routes import router as scheduler_router
 from app.api.firmware_routes import router as firmware_router
 from app.api.wifi_routes import router as wifi_router
 from app.api.agent_routes import router as agent_router
+from app.api.benchmark_routes import router as benchmark_router
 from app.mqtt.client import mqtt_client, mqtt_config
 from app.db.database import create_tables
 
@@ -85,6 +86,7 @@ app.include_router(scheduler_router, prefix="/api")
 app.include_router(firmware_router, prefix="/api")
 app.include_router(wifi_router, prefix="/api")
 app.include_router(agent_router, prefix="/api")
+app.include_router(benchmark_router, prefix="/api")
 
 
 @app.get("/health")
