@@ -12,6 +12,7 @@ type Block =
 			label: string;
 			status: "running" | "done" | "error";
 			summary?: string;
+			imageUrl?: string;
 	  }
 	| { type: "text"; text: string }
 	| { type: "error"; text: string };
@@ -303,6 +304,9 @@ export default function AgentChat({
 										...(bot.blocks[idx] as Extract<Block, { type: "step" }>),
 										status: data.success ? "done" : "error",
 										summary: data.summary,
+										imageUrl: data.image_url
+											? `${apiBase}${data.image_url}`
+											: undefined,
 									};
 								}
 							} else if (event === "tool_update") {
@@ -536,11 +540,26 @@ function BlockRenderer({ block }: { block: Block }) {
 							? "\u2705"
 							: "\u274C"}
 				</span>
-				<span className="step-label">
-					{block.status === "done" && block.summary
-						? block.summary
-						: block.label}
-				</span>
+				<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+					<span className="step-label">
+						{block.status === "done" && block.summary
+							? block.summary
+							: block.label}
+					</span>
+					{block.status === "done" && block.imageUrl && (
+						<img
+							src={block.imageUrl}
+							alt="Captured"
+							style={{
+								maxWidth: "280px",
+								borderRadius: "6px",
+								border: "1px solid #333",
+								cursor: "pointer",
+							}}
+							onClick={() => window.open(block.imageUrl, "_blank")}
+						/>
+					)}
+				</div>
 			</div>
 		);
 	}

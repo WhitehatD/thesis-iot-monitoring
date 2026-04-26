@@ -332,9 +332,10 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
 # ── Image Serving ────────────────────────────────────────
 
 @router.get("/images")
-async def list_images(db: AsyncSession = Depends(get_db)):
+async def list_images(board_id: str | None = None, db: AsyncSession = Depends(get_db)):
     """
     List all uploaded images, newest first.
+    board_id accepted for API contract; single-board design, all images shown regardless.
     """
     upload_root = Path(settings.upload_dir)
     images = []

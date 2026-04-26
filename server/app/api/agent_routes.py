@@ -602,6 +602,7 @@ def _tool_label(name: str, inp: dict) -> str:
 
 async def _capture_pipeline(tool_name: str, tool_input: dict):
     """Full agentic pipeline: capture → wait for upload(s) → analysis → report."""
+    from pathlib import Path
     from sqlalchemy import select, func
     from app.analysis.models import AnalysisResult
     from app.db.database import async_session
@@ -663,12 +664,20 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
         for a in new_results:
             seen_ids.add(a.id)
             analyses.append(a)
-            if expected > 1:
-                yield _sse_event("tool_result", {
-                    "id": f"img_{len(analyses)}",
-                    "success": True,
-                    "summary": f"Image {len(analyses)}/{expected} analyzed (task #{a.task_id})",
-                })
+            _img_path = Path(a.image_path)
+            _img_date = _img_path.parent.name
+            _img_file = _img_path.name
+            _img_step_id = f"img_{len(analyses)}"
+            yield _sse_event("tool_call", {
+                "id": _img_step_id,
+                "label": f"Image {len(analyses)}/{expected} received...",
+            })
+            yield _sse_event("tool_result", {
+                "id": _img_step_id,
+                "success": True,
+                "summary": f"Image {len(analyses)}/{expected} analyzed (task #{a.task_id})",
+                "image_url": f"/api/images/{_img_date}/{_img_file}",
+            })
 
         if len(analyses) >= expected:
             break
@@ -718,6 +727,7 @@ async def _capture_sequence_pipeline(tool_input: dict):
 
     This replaces the old fire-and-forget _tool_capture_sequence path.
     """
+    from pathlib import Path
     from app.analysis.models import AnalysisResult
     from app.scheduler.service import create_schedule, activate_schedule
     from app.scheduler.notify import notify_schedule_update
@@ -801,10 +811,19 @@ async def _capture_sequence_pipeline(tool_input: dict):
         for a in new_results:
             seen_ids.add(a.id)
             analyses.append(a)
+            _img_path = Path(a.image_path)
+            _img_date = _img_path.parent.name
+            _img_file = _img_path.name
+            _img_step_id = f"img_{len(analyses)}"
+            yield _sse_event("tool_call", {
+                "id": _img_step_id,
+                "label": f"Image {len(analyses)}/{count} received...",
+            })
             yield _sse_event("tool_result", {
-                "id": f"img_{len(analyses)}",
+                "id": _img_step_id,
                 "success": True,
                 "summary": f"Image {len(analyses)}/{count} analyzed (task #{a.task_id})",
+                "image_url": f"/api/images/{_img_date}/{_img_file}",
             })
 
         if len(analyses) >= count:
