@@ -525,7 +525,7 @@ async def agent_chat(request: Request):
 
                     if tool_name == "capture_now":
                         pipeline_reply = ""
-                        async for ev in _capture_pipeline(tool_name, tool_input):
+                        async for ev in _capture_pipeline(tool_name, tool_input, model_key):
                             yield ev
                             if '"event": "reply"' in ev:
                                 ev_data = json.loads(ev.split("data: ", 1)[1].strip())
@@ -600,19 +600,22 @@ def _tool_label(name: str, inp: dict) -> str:
     return labels.get(name, f"Executing {name}...")
 
 
-async def _capture_pipeline(tool_name: str, tool_input: dict):
+async def _capture_pipeline(tool_name: str, tool_input: dict, model_key: str = "claude-sonnet"):
     """Full agentic pipeline: capture → wait for upload(s) → analysis → report.
 
     Two-phase design:
       Phase 1 (20s): watch uploads directory for new .jpg files — detects upload
                      independently of task_id format (firmware may truncate to uint16).
-      Phase 2 (60s): poll DB for AnalysisResult — Claude Sonnet vision takes 10-30s,
-                     so this timeout is well above the old single 20s window that caused
-                     false "board offline" errors when analysis was still in flight.
+      Phase 2: run analysis INLINE with the user's chosen model_key. This ensures
+               the selected chat model (Haiku / Sonnet) also drives image analysis,
+               enabling thesis benchmarking. The background _run_analysis task in
+               routes.py skips files already analyzed by the pipeline.
     """
+    import re as _re
     from pathlib import Path
     from sqlalchemy import select
     from app.analysis.models import AnalysisResult
+    from app.analysis.engine import analyze_image as _analyze_image
     from app.db.database import async_session
 
     task_id = int(time.time())
@@ -647,6 +650,7 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
     yield _sse_event("tool_call", {"id": "upload", "label": wait_label})
 
     image_received = False
+    current_files = existing_files.copy()
     for poll_idx in range(20):
         await asyncio.sleep(1)
         elapsed = poll_idx + 1
@@ -669,61 +673,59 @@ async def _capture_pipeline(tool_name: str, tool_input: dict):
         yield _sse_event("reply", {"text": "**Capture timed out.** The board didn't upload an image within the expected window. Check that it's online and the firmware is current."})
         return
 
-    yield _sse_event("tool_result", {"id": "upload", "success": True, "summary": "Image received"})
+    new_files = sorted(current_files - existing_files)[:expected]
+    yield _sse_event("tool_result", {"id": "upload", "success": True, "summary": f"{len(new_files)} image{'s' if len(new_files) > 1 else ''} received"})
 
-    # ── Phase 2: wait for AnalysisResult in DB (up to 60s) ───────────────────
-    analyze_timeout = max(60, (total_seq_ms // 1000) + (expected * 30))
+    # ── Phase 2: analyze inline with the user's chosen model ─────────────────
+    # Running analysis here (not in the background upload task) ensures the selected
+    # model (Haiku / Sonnet / etc.) is used. The background _run_analysis in routes.py
+    # checks for an existing row and skips this file to avoid double-analysis.
     analyses = []
-    seen_ids = set()
-    analyze_label = "Analyzing image..." if expected == 1 else f"Analyzing {expected} images..."
+    yield _sse_event("tool_call", {"id": "analyze", "label": f"Analyzing with {model_key}..."})
 
-    yield _sse_event("tool_call", {"id": "analyze", "label": analyze_label})
+    for idx, new_file in enumerate(new_files, 1):
+        file_path = str(new_file)
+        _m = _re.search(r"task_(\d+)_", new_file.name)
+        board_task_id = int(_m.group(1)) if _m else 0
 
-    for poll_idx in range(analyze_timeout):
-        await asyncio.sleep(1)
-        elapsed = poll_idx + 1
-
-        if elapsed % 5 == 0 and len(analyses) < expected:
-            yield _sse_event("tool_update", {"id": "analyze", "label": f"{analyze_label} ({elapsed}s)"})
+        try:
+            analysis_result = await _analyze_image(file_path, "General visual inspection", model_key)
+        except Exception as exc:
+            analysis_result = {
+                "findings": f"Analysis error: {type(exc).__name__}: {exc}",
+                "recommendation": "Check AI backend configuration (ANTHROPIC_API_KEY, GEMINI_API_KEY, or vLLM).",
+                "description": "",
+                "objective_met": False,
+                "model_used": model_key,
+                "inference_time_ms": 0,
+            }
 
         async with async_session() as db:
-            query = (
-                select(AnalysisResult)
-                .where(AnalysisResult.created_at >= start_time)
-                .order_by(AnalysisResult.created_at.asc())
+            db_row = AnalysisResult(
+                task_id=board_task_id,
+                image_path=file_path,
+                objective="General visual inspection",
+                analysis=analysis_result.get("findings", ""),
+                recommendation=analysis_result.get("recommendation", ""),
+                objective_met=analysis_result.get("objective_met", False),
+                model_used=analysis_result.get("model_used", model_key),
+                inference_time_ms=analysis_result.get("inference_time_ms", 0),
             )
-            result = await db.execute(query)
-            new_results = [r for r in result.scalars().all() if r.id not in seen_ids]
+            db.add(db_row)
+            await db.commit()
+            await db.refresh(db_row)
 
-        for a in new_results:
-            seen_ids.add(a.id)
-            analyses.append(a)
-            _img_path = Path(a.image_path)
-            _img_date = _img_path.parent.name
-            _img_file = _img_path.name
-            _img_step_id = f"img_{len(analyses)}"
-            yield _sse_event("tool_call", {
-                "id": _img_step_id,
-                "label": f"Image {len(analyses)}/{expected} received...",
-            })
-            yield _sse_event("tool_result", {
-                "id": _img_step_id,
-                "success": True,
-                "summary": f"Image {len(analyses)}/{expected} analyzed (task #{a.task_id})",
-                "image_url": f"/api/images/{_img_date}/{_img_file}",
-            })
-
-        if len(analyses) >= expected:
-            break
-
-    if not analyses:
-        yield _sse_event("tool_result", {
-            "id": "analyze",
-            "success": False,
-            "summary": f"Analysis timed out after {analyze_timeout}s",
+        analyses.append(db_row)
+        yield _sse_event("tool_call", {
+            "id": f"img_{idx}",
+            "label": f"Image {idx}/{expected} received...",
         })
-        yield _sse_event("reply", {"text": "**Image captured** but analysis timed out. The image is in the gallery — check AI backend configuration (ANTHROPIC_API_KEY)."})
-        return
+        yield _sse_event("tool_result", {
+            "id": f"img_{idx}",
+            "success": True,
+            "summary": f"Image {idx}/{expected} analyzed (task #{board_task_id})",
+            "image_url": f"/api/images/{new_file.parent.name}/{new_file.name}",
+        })
 
     yield _sse_event("tool_result", {
         "id": "analyze",

@@ -233,6 +233,20 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
 async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: str):
     """Background task: analyze a captured image with the multimodal LLM."""
     try:
+        # Skip if the agent pipeline already ran inline analysis for this file
+        # (avoids double-analysis when capture_now is triggered via chat)
+        async with async_session() as db:
+            from app.analysis.models import AnalysisResult as _AR
+            existing = await db.execute(
+                select(_AR).where(_AR.image_path == image_path)
+            )
+            if existing.scalar_one_or_none():
+                print(f"[AI] Skipping {filename} — inline pipeline analysis already done")
+                return
+    except Exception:
+        pass  # guard failure must not block analysis
+
+    try:
         # Look up the monitoring objective from the schedule task
         objective = "General visual inspection"
         async with async_session() as db:
