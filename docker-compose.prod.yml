@@ -41,15 +41,13 @@ services:
   #  When a new image is detected, pulls it and restarts the container.
   #  This is the "git push → auto-deploy" mechanism.
   watchtower:
-    image: containrrr/watchtower:latest
+    image: nickfedor/watchtower:latest    # containrrr/watchtower is EOL; nickfedor fork supports Docker API ≥1.40
     container_name: thesis-watchtower
     environment:
       - WATCHTOWER_POLL_INTERVAL=300       # Check every 5 minutes
       - WATCHTOWER_CLEANUP=true            # Remove old images
       - WATCHTOWER_INCLUDE_RESTARTING=true
       - WATCHTOWER_LABEL_ENABLE=false      # Watch ALL containers
-      - WATCHTOWER_NOTIFICATIONS=shoutrrr
-      - WATCHTOWER_NOTIFICATION_URL=${WATCHTOWER_NOTIFICATION_URL:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${DOCKER_CONFIG:-~/.docker}/config.json:/config.json:ro
