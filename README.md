@@ -31,7 +31,7 @@ The project spans five layers, from register-level hardware drivers to a cloud A
 | **Infrastructure** | Docker Compose, GitHub Actions, Nginx | ~500 | Automated CI/CD, cross-compilation, OTA binary delivery, VPS deployment, container orchestration |
 | **Hardware** | STM32 B-U585I-IOT02A Discovery Kit | — | 160MHz Cortex-M33, 768KB SRAM, OV5640 5MP camera, EMW3080 WiFi (SPI), dual-bank 2MB flash |
 
-A `git push` compiles ARM firmware, runs 43 backend tests, builds Docker images, deploys to a VPS, and delivers a firmware update over-the-air to the board.
+A `git push` compiles ARM firmware, runs 51 backend tests, builds Docker images, deploys to a VPS, and delivers a firmware update over-the-air to the board.
 
 ---
 
@@ -135,7 +135,7 @@ The user types a natural language message in the chat (e.g., *"Monitor the hallw
 
 ### 2. LLM Tool Dispatch
 
-The server loads the conversation history from the database, appends the new message, and calls **Claude Haiku** with `tool_use` enabled. The system prompt defines the agent's personality (action-first, bias toward capturing fresh data) and routing rules that map user intents to specific tools.
+The server loads the conversation history from the database, appends the new message, and calls the selected vision LLM with `tool_use` enabled. The model is chosen via a dropdown in the chat UI (populated dynamically from `/api/agent/models` based on which API keys are configured). Default is **Claude Haiku**; Sonnet, Gemini 3 Flash, and Qwen3-VL are available when their keys are present. The system prompt defines the agent's personality (action-first, bias toward capturing fresh data) and routing rules that map user intents to specific tools.
 
 Claude's response contains a mix of text blocks and `tool_use` blocks. Each `tool_use` block specifies which tool to call and with what parameters. The server processes these sequentially:
 
@@ -148,19 +148,24 @@ User: "Monitor for 30 seconds"
 
 When no API key is configured, a **rule-based fallback dispatcher** maps keywords to tools directly — ensuring the system works without any LLM.
 
-### 3. The Agent's 9 Tools
+### 3. The Agent's 14 Tools
 
 | Tool | Trigger Examples | What It Does |
 |------|-----------------|--------------|
-| `capture_now` | *"take a picture"*, *"what do you see"* | Sends `capture_now` MQTT command → board captures + uploads → server converts RGB565 → JPEG → multimodal LLM analyzes → findings streamed back |
+| `capture_now` | *"take a picture"*, *"what do you see"* | Sends `capture_now` MQTT command → board captures + uploads → server converts RGB565 → JPEG → multimodal LLM analyzes → findings streamed back with inline image thumbnail |
 | `capture_sequence` | *"monitor for 30 seconds"*, *"burst of 5 shots"* | Creates a schedule in DB, sends `capture_sequence` with ms-precision delays to board, tracks per-image completion in real time |
 | `create_schedule` | *"monitor every 10 min for 2 hours"* | AI planner generates HH:MM task list → saved to DB → activated → MQTT command to board sets RTC alarms |
+| `activate_schedule` | *"activate schedule 3"*, *"resume monitoring"* | Activates an existing inactive schedule (deactivating all others first) without re-generating it |
 | `deactivate_schedule` | *"stop monitoring"*, *"cancel"* | Deactivates the active schedule in DB → sends `delete_schedule` to board → dashboard updates in real time via MQTT |
+| `modify_schedule` | *"change to every 15 min"*, *"reschedule for tomorrow"* | Re-plans an existing schedule via the AI planner — replaces its tasks in-place without creating a new record |
+| `delete_schedule` | *"delete schedule 2"*, *"remove it"* | Permanently deletes a schedule and all its tasks from the database |
 | `ping_board` | *"ping"*, *"is it alive"* | Sends `ping` MQTT command → board flashes LEDs in a pattern to confirm it's responsive |
 | `start_portal` | *"setup mode"*, *"reconfigure wifi"* | Sends `start_portal` → board starts WiFi AP at 192.168.10.1 for credential reconfiguration |
+| `sleep_mode` | *"sleep the board"*, *"wake up"* | Toggles STOP2 low-power mode on the board (2µA between tasks) |
 | `analyze_latest` | *"show last analysis"* | Fetches the most recent AI analysis result from the database |
 | `get_board_status` | *"status"*, *"uptime"* | Queries DB for analysis count, latest result, and board telemetry |
 | `synthesize_schedule` | *"summarize findings"*, *"what did you learn"* | Reads all recent analyses, feeds them to Claude for cross-observation pattern synthesis |
+| `delete_image` | *"delete that image"*, *"remove photo"* | Deletes a captured image and its AI analysis from storage and the database |
 
 ### 4. SSE Streaming Protocol
 
@@ -171,16 +176,19 @@ data: {"event":"thinking","text":"Processing: \"take a picture\""}
 data: {"event":"tool_call","id":"capture","label":"Sending capture command..."}
 data: {"event":"tool_result","id":"capture","success":true,"summary":"Capture sent (task #42)"}
 data: {"event":"tool_call","id":"upload","label":"Waiting for image..."}
-data: {"event":"tool_result","id":"upload","success":true,"summary":"1/1 image analyzed"}
+data: {"event":"tool_update","id":"upload","heartbeat":true}       ← keepalive every 5 s
+data: {"event":"tool_call","id":"img_1","label":"Image 1/1 ready…"}
+data: {"event":"tool_result","id":"img_1","success":true,"summary":"Image 1/1 analyzed (task #42)","image_url":"/api/images/2026-04-26/task_42_1777204113.jpg"}
+data: {"event":"tool_result","id":"upload","success":true,"summary":"1/1 images analyzed"}
 data: {"event":"reply","text":"**Capture complete.** The hallway is empty..."}
 data: {"event":"done"}
 ```
 
-The frontend maps these to a visual execution trace: thinking indicator → spinning steps → checkmarks → final markdown reply. For multi-shot sequences, individual image completions appear as separate steps.
+The frontend maps these to a visual execution trace: thinking indicator → spinning steps → checkmarks → final markdown reply. Each `tool_update` heartbeat keeps the SSE connection alive while the board is capturing. Per-image steps render a 280px inline thumbnail once complete; clicking opens the full image.
 
 ### 5. Real-Time MQTT Feedback
 
-While the agent executes, the board independently publishes status updates over MQTT. The dashboard subscribes to 6 topics and renders everything into a unified console:
+While the agent executes, the board independently publishes status updates over MQTT. The dashboard subscribes to 5 active topics and renders everything into a unified console:
 
 | Topic | Direction | Content |
 |-------|-----------|---------|
@@ -189,7 +197,6 @@ While the agent executes, the board independently publishes status updates over 
 | `dashboard/images/new` | Server → Dashboard | New image notification (triggers gallery refresh) |
 | `dashboard/analysis/new` | Server → Dashboard | AI analysis result (updates gallery overlay) |
 | `dashboard/schedules/updated` | Server → Dashboard | Full schedule state (activation, deactivation, task completion) |
-| `dashboard/logs` | Server → Dashboard | Server-side log events |
 
 The schedule updates topic (`dashboard/schedules/updated`) fires whenever any schedule state changes — activation, deactivation, deletion, or individual task completion. The server publishes the full schedule list, and the frontend replaces its state, giving instant real-time visibility into monitoring progress without polling.
 
@@ -236,8 +243,8 @@ Chat sessions are stored in SQLite (`chat_sessions` + `chat_messages` tables). E
 ### Backend (FastAPI + AI)
 
 - **AI planning engine** — translates natural language monitoring requests into executable HH:MM task schedules with objectives. The planner is model-agnostic (Claude, Gemini, Qwen).
-- **Agentic chat with 9 tools** — the dashboard chat is backed by Claude with tool_use. The agent can capture images, create/deactivate schedules, ping the board, enter setup mode, analyze results, and synthesize findings — all through natural language.
-- **Full capture pipeline with SSE streaming** — when the agent triggers a capture, the server streams real-time progress events (command sent, image received, analysis complete) back to the dashboard. For sequences, it tracks all N images individually.
+- **Agentic chat with 14 tools** — the dashboard chat is backed by Claude with tool_use. The agent can capture images, create/activate/deactivate/modify/delete schedules, ping the board, toggle sleep mode, enter setup mode, analyze results, synthesize findings, and delete images — all through natural language.
+- **Full capture pipeline with SSE streaming** — when the agent triggers a capture, the server streams real-time progress events (command sent, image received, per-image analysis, inline thumbnail URL) back to the dashboard. Heartbeat events every 5 s keep the SSE connection alive. For sequences, each image completion is a separate step.
 - **RGB565 to JPEG conversion** — the OV5640 outputs BGR565 little-endian. The server correctly extracts B[15:11] G[10:5] R[4:0], scales to 8-bit, and saves as JPEG.
 - **Auto-deactivation** — when the board reports `cycle_complete`, the server automatically deactivates the active schedule.
 - **Real-time schedule notifications** — every schedule state change (activate, deactivate, delete, task completion) publishes the full schedule list to `dashboard/schedules/updated` via MQTT, so the frontend updates instantly without polling.
@@ -245,15 +252,15 @@ Chat sessions are stored in SQLite (`chat_sessions` + `chat_messages` tables). E
 ### Dashboard (Next.js 16 + React 19)
 
 - **Always-visible console** — board firmware logs stream via MQTT (`device/stm32/logs`) and are parsed with the firmware's `[ms] [LEVEL] [TAG] message` format, color-coded by level.
-- **Agent chat with tool streaming** — SSE events render as a step-by-step execution trace (thinking, tool calls, results, reply).
+- **Agent chat with tool streaming** — SSE events render as a step-by-step execution trace (thinking, tool calls, results, reply). Captured images appear as inline thumbnails in the chat immediately after analysis. Model selector dropdown populated dynamically from the server.
 - **Real-time telemetry** — board status, firmware version, uptime, WiFi RSSI, capture count, connection state (online/standby/offline) all update live via MQTT WebSocket.
 - **Multi-session chat persistence** — conversations are stored in the database and survive page reloads.
 
 ### CI/CD
 
 - **Path-based filtering** — `dorny/paths-filter` detects which components changed. A firmware-only change skips dashboard builds.
-- **Full pipeline**: pytest (43 tests) -> Biome lint -> TypeScript check -> Next.js build -> ARM GCC cross-compile -> Docker build -> VPS deploy -> OTA firmware upload.
-- **Watchtower auto-update** — production containers poll GHCR every 5 minutes and restart on new images.
+- **Full pipeline**: pytest (51 tests) → Biome lint → TypeScript check → Next.js build → ARM GCC cross-compile → Docker build → VPS deploy → OTA firmware upload.
+- **Watchtower auto-update** — production containers poll GHCR every 5 minutes and restart on new images (`nickfedor/watchtower`, the maintained fork compatible with Docker API ≥1.40).
 
 ---
 
@@ -283,7 +290,7 @@ thesis-iot-monitoring/
       analysis/           Multimodal LLM analysis pipeline
       planning/           NL prompt to schedule generation
       mqtt/               Async MQTT client + auto-deactivation
-    tests/                43 pytest tests (async, in-memory SQLite)
+    tests/                51 pytest tests (async, in-memory SQLite)
 
   dashboard/              Next.js 16 frontend (TypeScript, React 19)
     app/
