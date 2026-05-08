@@ -70,3 +70,27 @@ Do not:
 - Do not use `import *` — use explicit imports
 - Do not use `latest` tag in FROM — pin to a specific version
 - Do not run containers as root — use a non-root USER
+
+## Post-Fix Knowledge Loop
+
+Every root-cause fix is incomplete until these steps are done. No exceptions.
+
+### 1. Update `governance.md`
+- New bug class uncovered → add it under the relevant domain section as a gotcha
+- New convention established → document it as normative policy with examples
+- Approach permanently ruled out → state it explicitly with the reason
+
+### 2. Save to MemStack
+```bash
+python "$MEMSTACK_DB" add-insight \
+  '{"project":"<project>","type":"<gotcha|pattern|feedback|architecture>","content":"<what>","source_file":"<file-or-empty>","tags":"<comma-separated>"}'
+```
+
+Type mapping: `gotcha` (bugs, traps), `pattern` (reusable solutions), `feedback` (user corrections), `architecture` (design decisions).
+
+### 3. Regenerate `CLAUDE.md`
+```bash
+crag compile --target claude
+```
+
+Commit `governance.md` + `CLAUDE.md` in the same commit as the fix, prefixed `docs(governance):` when the only change is documentation.
