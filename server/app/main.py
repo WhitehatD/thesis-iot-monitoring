@@ -42,6 +42,10 @@ async def lifespan(app: FastAPI):
         if cleaned:
             print(f"[OK] Cleaned {cleaned} stale schedule(s)")
 
+    # Security: warn if WiFi credential encryption key is not set
+    if not settings.wifi_config_encryption_key:
+        print("[WARN] wifi_config_encryption_key is not set — WiFi credentials stored unencrypted")
+
     yield
 
     # Disconnect MQTT
@@ -62,7 +66,12 @@ app = FastAPI(
 # ── CORS (allow dashboard) ──────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://89.167.11.147",
+        "http://89.167.11.147:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

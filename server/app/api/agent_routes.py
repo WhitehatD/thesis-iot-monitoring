@@ -12,7 +12,6 @@ Available tools:
   - ping_board: LED heartbeat sequence on the physical board
   - analyze_latest: Fetch and display the most recent AI analysis
   - get_board_status: Report board telemetry
-  - erase_wifi: Factory reset WiFi credentials (destructive)
 
 SSE event types:
   - thinking: AI reasoning text
@@ -41,6 +40,7 @@ from app.db.database import async_session
 from app.mqtt.client import mqtt_client
 from app.planning.engine import generate_plan
 from app.benchmark import timing as _timing
+from app.benchmark.ids import next_task_id
 
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
@@ -148,10 +148,19 @@ async def _load_history(session_id: int, limit: int = 20) -> list[dict]:
         messages = list(result.scalars().all())
 
     # Return in chronological order
-    return [
+    history = [
         {"role": m.role, "content": m.content}
         for m in reversed(messages)
     ]
+
+    # Prepend truncation note if the full history was capped
+    if len(messages) == limit:
+        history.insert(0, {
+            "role": "user",
+            "content": "[Note: conversation history truncated to last 20 messages]",
+        })
+
+    return history
 
 # ── Tool Definitions (Claude tool_use format) ────────────
 
@@ -521,7 +530,7 @@ async def agent_chat(request: Request):
             # task_id is generated here (not in _capture_pipeline) so the planning
             # latency (t_plan_start/t_plan_end) can be correlated with the same row.
             _bench_run_id = _timing.new_run_id()
-            _bench_task_id = int(time.time())
+            _bench_task_id = next_task_id()
 
             # ── Call Claude with tools ──
             if not settings.anthropic_api_key:
@@ -532,86 +541,124 @@ async def agent_chat(request: Request):
 
             client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
+            # ── Multi-turn agentic loop ───────────────────────────────────────
+            MAX_AGENT_TURNS = 8
+            messages_list = list(history)  # mutable copy; history already has user message appended
+            loop_count = 0
+            final_reply_parts: list[str] = []
             _t_plan_start = time.time()
-            response = await client.messages.create(
-                model=resolved_model,
-                max_tokens=1024,
-                system=AGENT_SYSTEM_PROMPT,
-                tools=AGENT_TOOLS,
-                messages=history,
-                temperature=0.1,
-            )
-            _t_plan_end = time.time()
 
-            # Persist planning timestamps; capture_type/model_key filled in by pipeline
-            await _timing.record(
-                _bench_task_id,
-                run_id=_bench_run_id,
-                t_plan_start=_t_plan_start,
-                t_plan_end=_t_plan_end,
-                model_key=model_key,
-            )
+            while loop_count < MAX_AGENT_TURNS:
+                loop_count += 1
 
-            # Process response blocks
-            reply_parts = []
-            for block in response.content:
-                if block.type == "text":
-                    reply_parts.append(block.text)
+                response = await client.messages.create(
+                    model=resolved_model,
+                    max_tokens=1024,
+                    system=AGENT_SYSTEM_PROMPT,
+                    tools=AGENT_TOOLS,
+                    messages=messages_list,
+                    temperature=0.1,
+                    timeout=30.0,
+                )
 
-                elif block.type == "tool_use":
-                    tool_name = block.name
-                    tool_input = block.input
+                if loop_count == 1:
+                    _t_plan_end = time.time()
+                    # Persist planning timestamps for the first (planning) turn
+                    await _timing.record(
+                        _bench_task_id,
+                        run_id=_bench_run_id,
+                        t_plan_start=_t_plan_start,
+                        t_plan_end=_t_plan_end,
+                        model_key=model_key,
+                    )
 
-                    if tool_name == "capture_now":
-                        pipeline_reply = ""
-                        async for ev in _capture_pipeline(
-                            tool_name, tool_input, model_key,
-                            bench_task_id=_bench_task_id, bench_run_id=_bench_run_id,
-                        ):
-                            yield ev
-                            if '"event": "reply"' in ev:
-                                ev_data = json.loads(ev.split("data: ", 1)[1].strip())
-                                pipeline_reply = ev_data.get("text", "")
-                        if pipeline_reply and session_id:
-                            await _persist_message(session_id, "assistant", pipeline_reply)
-                        continue
-                    elif tool_name == "capture_sequence":
-                        pipeline_reply = ""
-                        async for ev in _capture_sequence_pipeline(
-                            tool_input,
-                            bench_run_id=_bench_run_id,
-                        ):
-                            yield ev
-                            if '"event": "reply"' in ev:
-                                try:
-                                    ev_data = json.loads(ev.split("data: ", 1)[1].strip())
-                                    pipeline_reply = ev_data.get("text", "")
-                                except Exception:
-                                    pass
-                        if pipeline_reply and session_id:
-                            await _persist_message(session_id, "assistant", pipeline_reply)
-                        continue
-                    else:
-                        yield _sse_event("tool_call", {
-                            "id": tool_name,
-                            "label": _tool_label(tool_name, tool_input),
-                        })
+                # Collect tool results to feed back for next turn
+                tool_results: list[dict] = []
 
-                        result = await _execute_tool(tool_name, tool_input, session_id)
+                for block in response.content:
+                    if block.type == "text" and block.text.strip():
+                        final_reply_parts.append(block.text)
+                        yield _sse_event("reply", {"text": block.text})
 
-                        yield _sse_event("tool_result", {
-                            "id": tool_name,
-                            "success": result["success"],
-                            "summary": result["summary"],
-                        })
+                    elif block.type == "tool_use":
+                        tool_name = block.name
+                        tool_input = block.input if isinstance(block.input, dict) else {}
 
-                        reply_parts.append(result.get("detail", ""))
+                        if tool_name == "capture_now":
+                            pipeline_reply = ""
+                            async for ev in _capture_pipeline(
+                                tool_input, model_key,
+                                bench_task_id=_bench_task_id, bench_run_id=_bench_run_id,
+                            ):
+                                yield ev
+                                if '"event": "reply"' in ev:
+                                    try:
+                                        ev_data = json.loads(ev.split("data: ", 1)[1].strip())
+                                        pipeline_reply = ev_data.get("text", "")
+                                    except Exception as _e:
+                                        print(f"[WARN] SSE reply-parse error: {_e}")
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": pipeline_reply or "Capture pipeline completed.",
+                            })
 
-            full_reply = "\n\n".join(p for p in reply_parts if p)
-            if full_reply:
-                if session_id:
-                    await _persist_message(session_id, "assistant", full_reply)
-                yield _sse_event("reply", {"text": full_reply})
+                        elif tool_name == "capture_sequence":
+                            pipeline_reply = ""
+                            async for ev in _capture_sequence_pipeline(
+                                tool_input,
+                                bench_run_id=_bench_run_id,
+                                model_key=model_key,
+                            ):
+                                yield ev
+                                if '"event": "reply"' in ev:
+                                    try:
+                                        ev_data = json.loads(ev.split("data: ", 1)[1].strip())
+                                        pipeline_reply = ev_data.get("text", "")
+                                    except Exception as _e:
+                                        print(f"[WARN] SSE reply-parse error: {_e}")
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": pipeline_reply or "Sequence pipeline completed.",
+                            })
+
+                        else:
+                            yield _sse_event("tool_call", {
+                                "id": block.id,
+                                "label": _tool_label(tool_name, tool_input),
+                            })
+
+                            result = await _execute_tool(tool_name, tool_input, session_id, model_key=model_key)
+
+                            yield _sse_event("tool_result", {
+                                "id": block.id,
+                                "success": result["success"],
+                                "summary": result["summary"],
+                            })
+
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": json.dumps(result),
+                            })
+
+                # ── Loop control ──────────────────────────────────────────────
+                if response.stop_reason == "end_turn":
+                    break
+
+                if response.stop_reason == "tool_use" and tool_results:
+                    # Feed tool results back — Claude will reason about them next turn
+                    messages_list.append({"role": "assistant", "content": response.content})
+                    messages_list.append({"role": "user", "content": tool_results})
+                    # Continue loop
+                else:
+                    break  # Unexpected stop_reason — exit safely
+
+            # ── Persist final reply (only once, after loop completes) ─────────
+            full_reply = "\n\n".join(p for p in final_reply_parts if p)
+            if full_reply and session_id:
+                await _persist_message(session_id, "assistant", full_reply)
 
             yield _sse_event("done", {})
 
@@ -639,14 +686,15 @@ def _tool_label(name: str, inp: dict) -> str:
         "sleep_mode": "Sleeping board..." if inp.get("enabled") else "Waking board...",
         "delete_image": f"Deleting {inp.get('filename', 'image')}...",
         "ping_board": "Pinging board...",
+        "start_portal": "Starting WiFi portal...",
         "analyze_latest": "Fetching latest AI analysis...",
         "get_board_status": "Checking board status...",
+        "synthesize_schedule": "Synthesizing schedule...",
     }
     return labels.get(name, f"Executing {name}...")
 
 
 async def _capture_pipeline(
-    tool_name: str,
     tool_input: dict,
     model_key: str = "claude-sonnet",
     bench_task_id: int | None = None,
@@ -674,7 +722,7 @@ async def _capture_pipeline(
 
     # Use the pre-allocated task_id from event_stream when available so all
     # benchmark timestamps (planning + pipeline) share the same row.
-    task_id = bench_task_id if bench_task_id is not None else int(time.time())
+    task_id = bench_task_id if bench_task_id is not None else next_task_id()
     run_id = bench_run_id if bench_run_id is not None else _timing.new_run_id()
 
     # ── Benchmark: record pipeline entry ─────────────────────────────────────
@@ -688,22 +736,9 @@ async def _capture_pipeline(
     )
 
     expected = 1
-
-    if tool_name == "capture_sequence":
-        expected = max(2, min(tool_input.get("count", 3), 16))
-        interval = max(500, tool_input.get("interval_ms", 2000))
-        delays = [i * interval for i in range(expected)]
-        total_seq_ms = delays[-1] + 5000  # last capture + upload headroom
-        command = json.dumps({
-            "type": "capture_sequence",
-            "task_id": task_id,
-            "delays_ms": delays,
-        })
-        yield _sse_event("tool_call", {"id": "capture", "label": f"Sending {expected}-shot sequence ({interval}ms apart)..."})
-    else:
-        total_seq_ms = 0
-        command = json.dumps({"type": "capture_now", "task_id": task_id})
-        yield _sse_event("tool_call", {"id": "capture", "label": "Sending capture command to board..."})
+    total_seq_ms = 0
+    command = json.dumps({"type": "capture_now", "task_id": task_id})
+    yield _sse_event("tool_call", {"id": "capture", "label": "Sending capture command to board..."})
 
     mqtt_client.publish(settings.mqtt_topic_commands, command)
     # ── Benchmark: MQTT sent ──────────────────────────────────────────────────
@@ -713,9 +748,10 @@ async def _capture_pipeline(
 
     # ── Phase 1: wait for image file(s) to land on disk (20s) ────────────────
     start_time = datetime.utcnow()   # SQLite stores UTC via func.now(); local time would miss rows
-    today = datetime.now().strftime("%Y-%m-%d")  # filesystem path uses local date
-    upload_dir = Path(f"./data/uploads/{today}")
-    existing_files = set(upload_dir.glob("*.jpg")) if upload_dir.exists() else set()
+    # Snapshot existing files before the loop using current local date
+    _init_today = datetime.now().strftime("%Y-%m-%d")
+    _init_upload_dir = Path(f"./data/uploads/{_init_today}")
+    existing_files = set(_init_upload_dir.glob("*.jpg")) if _init_upload_dir.exists() else set()
 
     wait_label = f"Waiting for {'image' if expected == 1 else f'{expected} images'}..."
     yield _sse_event("tool_call", {"id": "upload", "label": wait_label})
@@ -728,6 +764,10 @@ async def _capture_pipeline(
 
         if elapsed % 5 == 0:
             yield _sse_event("tool_update", {"id": "upload", "label": f"{wait_label} ({elapsed}s)"})
+
+        # Recompute date/dir on each poll so midnight rollovers are handled
+        today = datetime.now().strftime("%Y-%m-%d")
+        upload_dir = Path(f"./data/uploads/{today}")
 
         if upload_dir.exists():
             current_files = set(upload_dir.glob("*.jpg"))
@@ -848,7 +888,7 @@ async def _capture_pipeline(
     yield _sse_event("reply", {"text": detail})
 
 
-async def _capture_sequence_pipeline(tool_input: dict, bench_run_id: str | None = None):
+async def _capture_sequence_pipeline(tool_input: dict, bench_run_id: str | None = None, model_key: str = "claude-sonnet"):
     """
     Proper agentic sequence pipeline:
       1. Create DB schedule (real task IDs for objective lookup)
@@ -900,6 +940,7 @@ async def _capture_sequence_pipeline(tool_input: dict, bench_run_id: str | None 
         first_task_id,
         run_id=_bench_run_id,
         capture_type="sequence",
+        model_key=model_key,
         t_request=time.time(),
     )
 
@@ -1015,7 +1056,7 @@ async def _capture_sequence_pipeline(tool_input: dict, bench_run_id: str | None 
     yield _sse_event("reply", {"text": "\n\n".join(parts)})
 
 
-async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
+async def _execute_tool(name: str, inp: dict, session_id: str, model_key: str = "claude-haiku") -> dict:
     """Execute a tool and return {success, summary, detail}."""
 
     if name == "create_schedule":
@@ -1039,7 +1080,7 @@ async def _execute_tool(name: str, inp: dict, session_id: str) -> dict:
     elif name == "get_board_status":
         return await _tool_board_status()
     elif name == "synthesize_schedule":
-        return await _tool_synthesize(inp)
+        return await _tool_synthesize(inp, model_key=model_key)
     elif name == "sleep_mode":
         return await _tool_sleep_mode(inp)
     elif name == "delete_schedule":
@@ -1187,7 +1228,7 @@ async def _tool_modify_schedule(inp: dict) -> dict:
     prompt = inp.get("prompt", "")
     schedule_id = inp.get("schedule_id")
 
-    # Find the target schedule
+    # ── Step 1: read target schedule ──────────────────────────────────────────
     async with async_session() as db:
         if schedule_id:
             try:
@@ -1198,7 +1239,6 @@ async def _tool_modify_schedule(inp: dict) -> dict:
             schedules = await list_schedules(db)
             active = [s for s in schedules if s.is_active]
             if not active:
-                # Fall back to most recently created
                 if schedules:
                     schedule = schedules[0]
                 else:
@@ -1214,7 +1254,7 @@ async def _tool_modify_schedule(inp: dict) -> dict:
         was_active = schedule.is_active
         old_name = schedule.name
 
-    # Re-generate schedule from new prompt
+    # ── Step 2: LLM re-planning (outside session — async-safe) ───────────────
     now = datetime.now()
     enriched_prompt = (
         f"Current time: {now.strftime('%H:%M')} on {now.strftime('%Y-%m-%d')}. "
@@ -1229,19 +1269,24 @@ async def _tool_modify_schedule(inp: dict) -> dict:
     if not plan.tasks:
         return {"success": False, "summary": "Planner returned empty schedule", "detail": ""}
 
-    # Update DB (replaces tasks atomically)
+    # ── Step 3: write update in a single new session ──────────────────────────
+    mqtt_payload = None
     async with async_session() as db:
-        await update_schedule(
-            db,
-            schedule_id=int(schedule_id),
-            name=f"Agent: {prompt[:50]}",
-            description=prompt,
-            tasks=[t.model_dump() for t in plan.tasks],
-        )
+        try:
+            await update_schedule(
+                db,
+                schedule_id=int(schedule_id),
+                name=f"Agent: {prompt[:50]}",
+                description=prompt,
+                tasks=[t.model_dump() for t in plan.tasks],
+            )
+        except Exception:
+            # Schedule was deleted between read and write
+            return {"success": False, "summary": f"Schedule #{schedule_id} was deleted concurrently", "detail": ""}
         if was_active:
             mqtt_payload = await activate_schedule(db, int(schedule_id))
 
-    if was_active:
+    if was_active and mqtt_payload:
         mqtt_client.publish(settings.mqtt_topic_commands, json.dumps(mqtt_payload))
 
     await notify_schedule_update()
@@ -1265,7 +1310,7 @@ async def _tool_modify_schedule(inp: dict) -> dict:
 
 
 async def _tool_capture_now() -> dict:
-    task_id = int(time.time())
+    task_id = next_task_id()
     command = json.dumps({"type": "capture_now", "task_id": task_id})
     mqtt_client.publish(settings.mqtt_topic_commands, command)
     return {
@@ -1411,7 +1456,7 @@ async def _tool_board_status() -> dict:
     }
 
 
-async def _tool_synthesize(inp: dict) -> dict:
+async def _tool_synthesize(inp: dict, model_key: str = "claude-haiku") -> dict:
     """Synthesize all recent analyses into evolving conclusions."""
     from sqlalchemy import select
     from app.analysis.models import AnalysisResult
@@ -1436,6 +1481,12 @@ async def _tool_synthesize(inp: dict) -> dict:
 
     # Build a synthesis using Claude
     if settings.anthropic_api_key:
+        CLAUDE_MODEL_MAP = {
+            "claude-haiku": settings.claude_haiku_model,
+            "claude-sonnet": settings.claude_sonnet_model,
+        }
+        resolved_synthesis_model = CLAUDE_MODEL_MAP.get(model_key) or settings.claude_haiku_model
+
         entries = []
         for a in reversed(analyses):  # chronological order
             entries.append(
@@ -1458,7 +1509,7 @@ async def _tool_synthesize(inp: dict) -> dict:
 
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         response = await client.messages.create(
-            model=settings.claude_haiku_model,
+            model=resolved_synthesis_model,
             max_tokens=1024,
             messages=[{"role": "user", "content": synthesis_prompt}],
             temperature=0.2,

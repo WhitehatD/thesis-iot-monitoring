@@ -107,9 +107,35 @@ async def _plan_with_claude(prompt: str, model: str) -> list[ScheduledTask]:
         system=PLANNING_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1,
+        timeout=30.0,
     )
 
-    return _parse_schedule(response.content[0].text)
+    raw_text = response.content[0].text
+    try:
+        return _parse_schedule(raw_text)
+    except ValueError:
+        # Retry once with a stricter JSON instruction
+        strict_prompt = (
+            prompt
+            + "\n\nReturn ONLY valid JSON with no prose. "
+            "Keys: tasks[] with id, time, action, objective, repeat."
+        )
+        response2 = await client.messages.create(
+            model=model,
+            max_tokens=2048,
+            system=PLANNING_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": strict_prompt}],
+            temperature=0.0,
+            timeout=30.0,
+        )
+        raw_text2 = response2.content[0].text
+        try:
+            return _parse_schedule(raw_text2)
+        except ValueError as exc2:
+            raise ValueError(
+                f"Schedule planning failed: LLM returned malformed JSON after retry. "
+                f"Raw: {raw_text2[:200]}"
+            ) from exc2
 
 
 async def _plan_with_vllm(prompt: str, model_key: str) -> list[ScheduledTask]:
@@ -157,19 +183,29 @@ async def _plan_with_gemini(prompt: str) -> list[ScheduledTask]:
 def _parse_schedule(raw_output: str) -> list[ScheduledTask]:
     """Parse LLM output into a list of ScheduledTask objects."""
     text = raw_output.strip()
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1]
-        text = text.rsplit("```", 1)[0]
+    # Strip markdown code fence if present
+    if "```" in text:
+        parts = text.split("```")
+        # Take the content of the first code block
+        if len(parts) >= 2:
+            text = parts[1].lstrip("json").strip()
 
-    data = json.loads(text)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"LLM returned non-JSON output: {exc}") from exc
+
     tasks = data.get("tasks", [])
-
-    return [
-        ScheduledTask(
-            time=t["time"],
-            action=t.get("action", "CAPTURE_IMAGE"),
-            id=t["id"],
-            objective=t.get("objective", ""),
-        )
-        for t in tasks
-    ]
+    result = []
+    for t in tasks:
+        try:
+            result.append(ScheduledTask(
+                id=int(t["id"]),
+                time=t["time"],
+                action=t.get("action", "CAPTURE_IMAGE"),
+                objective=t.get("objective", ""),
+                repeat=bool(t.get("repeat", False)),
+            ))
+        except KeyError as exc:
+            raise ValueError(f"Schedule task missing required field: {exc}") from exc
+    return result

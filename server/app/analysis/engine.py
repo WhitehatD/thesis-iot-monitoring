@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 import anthropic
+import httpx
 
 from app.config import settings
 
@@ -110,6 +111,7 @@ async def _analyze_with_claude(
             }
         ],
         temperature=0.1,
+        timeout=30.0,
     )
 
     return _parse_analysis(response.content[0].text)
@@ -132,6 +134,7 @@ async def _analyze_with_vllm(
     client = AsyncOpenAI(
         base_url=settings.vllm_base_url,
         api_key="not-needed",
+        timeout=httpx.Timeout(60.0),
     )
 
     response = await client.chat.completions.create(

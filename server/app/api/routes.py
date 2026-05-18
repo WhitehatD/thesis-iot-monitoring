@@ -27,10 +27,9 @@ from app.mqtt.client import mqtt_client
 from app.planning.engine import generate_plan
 from app.scheduler.models import ScheduleTask
 from app.benchmark import timing as _timing
+from app.benchmark.ids import next_task_id
 
 router = APIRouter()
-
-_capture_counter = int(time.time())
 
 
 @router.get("/time")
@@ -74,15 +73,13 @@ async def capture_now(request: CaptureRequest = CaptureRequest()):
     Sends a 'capture_now' command type — firmware executes instantly
     without going through the scheduler/RTC alarm flow.
     """
-    global _capture_counter
-    _capture_counter += 1
-
-    command = {"type": "capture_now", "task_id": _capture_counter}
+    task_id = next_task_id()
+    command = {"type": "capture_now", "task_id": task_id}
     command_json = json.dumps(command)
     mqtt_client.publish(settings.mqtt_topic_commands, command_json)
 
     return CaptureResponse(
-        task_id=_capture_counter,
+        task_id=task_id,
         status="sent",
         schedule_json=command_json,
     )
@@ -123,11 +120,9 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
     Receive a captured image from the STM32 board.
     The board sends raw RGB565 pixel data — we convert to JPEG server-side.
     """
-    global _capture_counter
     # Intercept board fallback task IDs (from unprompted/button captures) or 0
     if task_id == 0 or (10000 <= task_id <= 40000):
-        _capture_counter += 1
-        task_id = _capture_counter
+        task_id = next_task_id()
 
     import io
     import struct
@@ -182,8 +177,8 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
             try:
                 img = Image.open(io.BytesIO(content))
                 img.verify()  # Validate it's a real image
-            except Exception:
-                pass  # Save raw anyway — might be a valid format PIL doesn't verify well
+            except Exception as _e:
+                print(f"[WARN] JPEG verify skipped: {_e}")  # Save raw anyway — might be a valid format PIL doesn't verify well
 
             with open(filepath, "wb") as f:
                 f.write(content)
@@ -231,11 +226,26 @@ async def upload_image(task_id: int, file: UploadFile = File(...)):
                 # Push real-time update to dashboard
                 from app.scheduler.notify import notify_schedule_update
                 await notify_schedule_update()
-    except Exception:
-        pass  # Non-critical — don't fail the upload
+    except Exception as _e:
+        print(f"[WARN] completed_at update failed: {_e}")  # Non-critical — don't fail the upload
 
     # ── Agentic Layer: trigger async visual analysis ──
-    asyncio.create_task(_run_analysis(task_id, filepath, date_dir, filename))
+    # Agent-initiated captures pre-register a CaptureLatency row before upload arrives.
+    # If such a row exists, the agent pipeline handles analysis — skip background task.
+    _skip_background = False
+    try:
+        from app.analysis.models import CaptureLatency as _CL
+        async with async_session() as _sentinel_db:
+            _existing_latency = (await _sentinel_db.execute(
+                select(_CL).where(_CL.task_id == task_id)
+            )).scalar_one_or_none()
+        if _existing_latency is not None:
+            _skip_background = True
+    except Exception as _sentinel_err:
+        print(f"[WARN] CaptureLatency sentinel check failed: {_sentinel_err}")
+
+    if not _skip_background:
+        asyncio.create_task(_run_analysis(task_id, filepath, date_dir, filename))
 
     return UploadResponse(
         task_id=task_id,
@@ -258,8 +268,8 @@ async def _run_analysis(task_id: int, image_path: str, date_dir: str, filename: 
             if existing.scalar_one_or_none():
                 print(f"[AI] Skipping {filename} — inline pipeline analysis already done")
                 return
-    except Exception:
-        pass  # guard failure must not block analysis
+    except Exception as _e:
+        print(f"[WARN] Dedup guard check failed: {_e}")  # guard failure must not block analysis
 
     try:
         # Look up the monitoring objective from the schedule task
@@ -421,7 +431,14 @@ async def delete_image(date: str, filename: str, db: AsyncSession = Depends(get_
     """
     Delete an uploaded image file from the server.
     """
-    filepath = Path(settings.upload_dir) / date / filename
+    # Prevent path traversal
+    if ".." in date or ".." in filename or "/" in filename or "\\" in filename or "\x00" in filename:
+        raise HTTPException(status_code=400, detail="Invalid path characters in date or filename")
+    filepath = (Path(settings.upload_dir) / date / filename).resolve()
+    upload_root = Path(settings.upload_dir).resolve()
+    if not str(filepath).startswith(str(upload_root)):
+        raise HTTPException(status_code=400, detail="Path traversal denied")
+
     if not filepath.exists() or not filepath.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
 
