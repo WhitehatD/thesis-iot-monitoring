@@ -117,6 +117,16 @@ scratchpad_*.json
 # crag-generated agent/IDE configs (not tracked — only .github/workflows/gates.yml kept)
 # ============================================
 .agent/
+
+# ============================================
+# Private agent/AI-tool rules + internal reports (kept local, not pushed to public remote)
+# Note: source of truth lives in .claude/governance.md (tracked); these are generated views.
+# ============================================
+/AGENTS.md
+/CLAUDE.md
+/CONVENTIONS.md
+/GEMINI.md
+/wifi_mqtt_fix_report.md
 .agents/
 .amazonq/
 .circleci/
