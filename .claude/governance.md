@@ -37,6 +37,7 @@
 ## Deployment
 - Target: docker-compose (docker-compose.yml + docker-compose.prod.yml overlay)
 - CI: github-actions (`ci.yml`) — push to `main` triggers build → push to GHCR → deploy to VPS
+- **No separate `gates.yml` workflow.** Quality gates run inside `ci.yml` (Backend Tests / Frontend Lint & Build / Build & Upload Firmware). Do NOT re-run `crag compile --target github` blindly — it would resurrect the redundant `gates.yml`. If you must recompile, delete `.github/workflows/gates.yml` afterwards.
 - Registry: ghcr.io
 - Services: mosquitto (MQTT broker), server (FastAPI), dashboard (Next.js), watchtower (auto-pull backup)
 - VPS: 89.167.11.147 (Hetzner Helsinki)
