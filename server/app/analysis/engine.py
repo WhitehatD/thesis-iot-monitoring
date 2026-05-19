@@ -177,9 +177,7 @@ async def _analyze_with_gemini(image_path: str, objective: str) -> dict:
             types.Content(
                 parts=[
                     types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                    types.Part.from_text(
-                        f"{ANALYSIS_SYSTEM_PROMPT}\n\nMonitoring objective: {objective}"
-                    ),
+                    types.Part(text=f"{ANALYSIS_SYSTEM_PROMPT}\n\nMonitoring objective: {objective}"),
                 ]
             )
         ],

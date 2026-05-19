@@ -16,7 +16,7 @@ alembic>=1.14.0
 # AI Backends
 anthropic>=0.52.0
 openai>=1.60.0
-google-genai>=1.5.0
+google-genai>=1.66.0,<2.0  # pinned: Part.from_text(positional) removed in 1.5x; use Part(text=...)
 
 # HTTP & Image
 httpx>=0.28.0
