@@ -254,7 +254,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: ANTHROPIC_API_KEY,FIRMWARE_UPLOAD_TOKEN,GHCR_TOKEN
+          envs: ANTHROPIC_API_KEY,FIRMWARE_UPLOAD_TOKEN,GEMINI_API_KEY,GHCR_TOKEN
           script: |
             # Find the deployment directory containing our docker-compose.prod.yml
             FILE_PATH=$(find /root /home /opt /var/www -maxdepth 4 -type f -name "docker-compose.prod.yml" 2>/dev/null | head -n 1)
@@ -274,7 +274,11 @@ jobs:
 
             # Inject secrets into persistent VPS env file
             ENV_FILE="$(pwd)/.env.prod"
-            printf '%s\n' "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" "FIRMWARE_UPLOAD_TOKEN=${FIRMWARE_UPLOAD_TOKEN}" > "$ENV_FILE"
+            printf '%s\n' \
+              "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" \
+              "FIRMWARE_UPLOAD_TOKEN=${FIRMWARE_UPLOAD_TOKEN}" \
+              "GEMINI_API_KEY=${GEMINI_API_KEY}" \
+              > "$ENV_FILE"
             chmod 600 "$ENV_FILE"
 
             set -a
@@ -291,4 +295,5 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           FIRMWARE_UPLOAD_TOKEN: ${{ secrets.FIRMWARE_UPLOAD_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
