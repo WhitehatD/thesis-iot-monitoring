@@ -9,6 +9,7 @@ Provides three benchmark surfaces:
 No SSE, no MQTT, no board interaction. Safe to call from offline benchmark runners.
 """
 
+import io
 import os
 import tempfile
 import time
@@ -256,13 +257,22 @@ async def benchmark_analyze(
     No DB write — results are returned directly to the caller for offline
     scoring and aggregation by the benchmark runner.
     """
-    suffix = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
+    from PIL import Image
+
     t0 = time.time()
     tmp_path: str | None = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        # Normalize every benchmark image to baseline JPEG/RGB so all backends
+        # see the same input. Anthropic Vision rejects palette-mode (mode='P')
+        # and CMYK; Gemini is more lenient. Normalizing at the server boundary
+        # removes dataset-format coupling from the runner and from comparisons.
+        raw = await file.read()
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             tmp_path = tmp.name
-            tmp.write(await file.read())
+            with Image.open(io.BytesIO(raw)) as im:
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                im.save(tmp_path, format="JPEG", quality=92)
 
         result = await analyze_image(tmp_path, objective, model_key)
         return {
