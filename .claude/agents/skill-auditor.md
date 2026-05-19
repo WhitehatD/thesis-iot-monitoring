@@ -14,10 +14,10 @@ Audit the crag infrastructure in this project:
 4. Check: do the installed skills match the current crag source?
    Run `crag upgrade --check` — it reports staleness without writing.
    If the CLI is not on PATH, locate the crag repo (look for `bin/crag.js`) and diff against `src/skills/`.
-5. Verify hooks reference correct project name ("infra" not any other project key)
-6. Verify MemStack rules use project name "infra"
+5. Verify hooks reference valid scripts that still exist on disk (no dead references)
+6. Verify Brain MCP rules (`.claude/rules/brain.md`) use project name "thesis" — not "infra" or any other key
 
-Report: UNIVERSAL (good), HARDCODED (bad), WRONG_PROJECT (needs fix), OUT_OF_SYNC (needs update).
+Report: UNIVERSAL (good), HARDCODED (bad), WRONG_PROJECT (needs fix), OUT_OF_SYNC (needs update), DEAD_HOOK (hook script missing or calling dead binaries).
 
 ## Boundaries
 - Operate only within this repository

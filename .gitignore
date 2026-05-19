@@ -87,11 +87,22 @@ mosquitto/data/
 mosquitto/log/
 
 # ============================================
+# Datasets (large, downloaded separately)
+# ============================================
+datasets/
+
+# ============================================
 # Benchmarks (raw data)
 # ============================================
 benchmarks/results/
 benchmarks/images/*.jpg
 benchmarks/images/*.png
+# Benchmark runner outputs (scripts/)
+results/
+scripts/benchmark_images/*.jpg
+scripts/benchmark_images/*.jpeg
+scripts/benchmark_images/*.mp4
+scripts/benchmark_images/*.mov
 
 # ============================================
 # Claude Code runtime (session state, caches — not user content)

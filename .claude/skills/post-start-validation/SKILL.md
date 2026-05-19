@@ -205,7 +205,7 @@ If changes are bug fixes, refactors, tests, CSS — skip.
 
 ## 7. Knowledge Capture
 
-If MemStack rules exist (`.claude/rules/diary.md`), follow them — add-insight, add-session, set-context.
+If Brain MCP rules exist (`.claude/rules/brain.md`), follow them — use `save_insight` MCP tool with `project="thesis"` to capture key decisions, gotchas, and patterns.
 
 If not, at minimum report:
 - What was done

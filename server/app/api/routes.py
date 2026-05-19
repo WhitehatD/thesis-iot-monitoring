@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, UploadFile, HTTPException
+from fastapi import APIRouter, Depends, File, Request, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,11 +100,18 @@ async def ping_board():
     }
 
 @router.post("/erase-wifi")
-async def erase_wifi():
+async def erase_wifi(request: Request):
     """
     Send an immediate erase_wifi command to the STM32 board.
     Forces the board to erase flash credentials and reboot into the captive portal.
+
+    Requires X-Upload-Token header (same token used by firmware upload) when
+    settings.firmware_upload_token is configured.
     """
+    token = request.headers.get("X-Upload-Token", "")
+    if settings.firmware_upload_token and token != settings.firmware_upload_token:
+        raise HTTPException(status_code=403, detail="Invalid or missing X-Upload-Token")
+
     command = {"type": "erase_wifi"}
     command_json = json.dumps(command)
     mqtt_client.publish(settings.mqtt_topic_commands, command_json)

@@ -88,7 +88,7 @@ If the file exists, check:
 - Report: `"Warm start — continuing from <N> minutes ago: <task_summary>"`
 - Previous session's open questions and next steps are immediately relevant
 - If discovery cache is also valid (Section 0.3), most discovery is skipped
-- Skip full MemStack loading if session was recent (< 1 hour) — just load new insights
+- Skip full Brain MCP load if session was recent (< 1 hour) — just load new insights
 
 **Cold start** (any check fails):
 - Treat as a fresh session. Full discovery.
@@ -143,7 +143,7 @@ git branch --show-current
 
 - **Same commit + same branch + < 4 hours → FAST PATH**
   Skip Sections 0.5, 1, 2, 3, 5 entirely. Use cached runtimes, architecture, key files.
-  Still run: Section 0.6 (context loading — MemStack may have new data), Section 4 (governance — may have changed).
+  Still run: Section 0.6 (context loading — Brain MCP may have new insights), Section 4 (governance — may have changed).
   Report: `"Fast path — cached discovery (N min old, commit XXXXXX). Skipping full scan."`
 
 - **Different commit + < 4 hours → INCREMENTAL**
@@ -210,12 +210,12 @@ git diff --stat HEAD~5 -- . ':!node_modules' ':!.next' ':!build' ':!target' ':!d
 
 ### Step 1: Load cross-session memory (if available)
 
-Check for MemStack:
+Check for Brain MCP rules:
 ```
-ls .claude/rules/echo.md 2>/dev/null && echo "MemStack rules: loaded" || echo "MemStack: not configured"
+ls .claude/rules/brain.md 2>/dev/null && echo "Brain MCP: configured" || echo "Brain: not configured"
 ```
 
-If MemStack rules exist, follow them — they trigger context loading from the SQLite database (get-context, get-sessions, get-insights, stale-insights verification).
+If Brain rules exist, follow them — they define the project scope (`project: "thesis"`) for Brain MCP tools. Use `recall(query="...", project="thesis")` and `recall_principle(topic="...", project="thesis")` to load cross-session context.
 
 ### Step 2: Check CI health
 
