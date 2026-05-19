@@ -10,9 +10,10 @@ No SSE, no MQTT, no board interaction. Safe to call from offline benchmark runne
 """
 
 import os
+import tempfile
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -211,9 +212,7 @@ async def _plan_with_gemini(prompt: str) -> dict:
         contents=[
             types.Content(
                 role="user",
-                parts=[types.Part.from_text(
-                    f"{AGENT_SYSTEM_PROMPT}\n\nUser request: {prompt}"
-                )],
+                parts=[types.Part(text=f"{AGENT_SYSTEM_PROMPT}\n\nUser request: {prompt}")],
             )
         ],
         config=types.GenerateContentConfig(tools=gemini_tools, temperature=0.1),
@@ -244,57 +243,49 @@ async def _plan_with_gemini(prompt: str) -> dict:
 # ── Analysis benchmark ───────────────────────────────────────────────────────
 
 @router.post("/analyze")
-async def benchmark_analyze(payload: dict):
+async def benchmark_analyze(
+    file: UploadFile = File(...),
+    model_key: str = Form("claude-sonnet"),
+    objective: str = Form("General visual inspection"),
+):
     """Run a single image analysis pass and return the result.
+
+    Accepts a multipart file upload so the benchmark runner can send images
+    from any machine without sharing a filesystem with the server.
 
     No DB write — results are returned directly to the caller for offline
     scoring and aggregation by the benchmark runner.
-
-    Request body:
-      {
-        "image_path": "/absolute/or/relative/path/to/image.jpg",
-        "model_key": "claude-haiku" | "claude-sonnet" | "gemini-3" | "qwen3-vl" | ...,
-        "objective": "General visual inspection"  (optional)
-      }
-
-    Response:
-      {
-        "model_key": str,
-        "objective": str,
-        "image_path": str,
-        "latency_ms": float,
-        "result": {analysis dict from engine}
-      }
     """
-    image_path = payload.get("image_path", "")
-    if not image_path:
-        raise HTTPException(status_code=422, detail="image_path is required")
-    if not os.path.exists(image_path):
-        raise HTTPException(status_code=404, detail=f"Image not found: {image_path}")
-
-    objective = payload.get("objective", "General visual inspection")
-    model_key = payload.get("model_key", "claude-sonnet")
-
+    suffix = os.path.splitext(file.filename or "image.jpg")[1] or ".jpg"
     t0 = time.time()
+    tmp_path: str | None = None
     try:
-        result = await analyze_image(image_path, objective, model_key)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(await file.read())
+
+        result = await analyze_image(tmp_path, objective, model_key)
+        return {
+            "model_key": model_key,
+            "objective": objective,
+            "image_name": file.filename,
+            "latency_ms": (time.time() - t0) * 1000,
+            "result": result,
+            "success": True,
+            "error": None,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         return {
             "model_key": model_key,
             "objective": objective,
-            "image_path": image_path,
+            "image_name": file.filename,
             "latency_ms": (time.time() - t0) * 1000,
             "result": None,
             "success": False,
             "error": f"{type(e).__name__}: {e}",
         }
-
-    return {
-        "model_key": model_key,
-        "objective": objective,
-        "image_path": image_path,
-        "latency_ms": (time.time() - t0) * 1000,
-        "result": result,
-        "success": True,
-        "error": None,
-    }
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)

@@ -44,6 +44,7 @@
 - **All secrets are stored in GitHub Secrets.** `ci.yml` writes them to `.env.prod` on VPS on every deploy — never edit `.env.prod` manually (it is overwritten each deploy).
 - Secrets required in GitHub Secrets: `ANTHROPIC_API_KEY`, `FIRMWARE_UPLOAD_TOKEN`, `GEMINI_API_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PORT`
 - Adding a new env var requires: (1) add to `docker-compose.prod.yml` environment block as `${VAR:-}`, (2) add to `envs:`, `printf`, and `env:` blocks in `ci.yml` deploy-vps job, (3) add value as GitHub Secret
+- **After every `git push`, ALWAYS watch the CI run.** Either via subagent or `gh run watch <id> --exit-status` with `run_in_background: true`. Never push and walk away — the push outcome IS the deploy outcome.
 
 ## Brain as Ground Truth
 - Brain MCP is the authoritative source for all architectural decisions, gotchas, and conventions across sessions.

@@ -77,13 +77,11 @@ def test_benchmark_analyze_endpoint_reachable(client):
 
 def test_benchmark_analyze_missing_file(client):
     """POST /api/benchmark/analyze with nonexistent image returns 404."""
+    # Endpoint now requires multipart file upload; no file -> 422
     resp = client.post(
         "/api/benchmark/analyze",
-        json={
-            "image_path": "/nonexistent/image_that_does_not_exist.jpg",
-            "model_key": "claude-haiku",
-        },
+        data={"model_key": "claude-haiku"},
     )
-    assert resp.status_code == 404, (
-        f"Expected 404 for missing image, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 422, (
+        f"Expected 422 when file is missing, got {resp.status_code}: {resp.text}"
     )

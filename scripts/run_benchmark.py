@@ -101,13 +101,11 @@ async def call_analyze(
     objective: str,
 ) -> dict:
     try:
+        image_bytes = image_path.read_bytes()
         r = await client.post(
             f"{server}/api/benchmark/analyze",
-            json={
-                "image_path": str(image_path.resolve()),
-                "model_key": model_key,
-                "objective": objective,
-            },
+            files={"file": (image_path.name, image_bytes, "image/jpeg")},
+            data={"model_key": model_key, "objective": objective},
             timeout=120.0,
         )
         r.raise_for_status()
@@ -295,10 +293,10 @@ async def main() -> None:
                         ok = result.get("success", False)
                         lat = result.get("latency_ms", 0)
                         tool = result.get("tool_name") or "—"
-                        status = f"{lat:.0f}ms → {tool}" if ok else f"FAIL: {str(result.get('error', ''))[:50]}"
+                        status = f"{lat:.0f}ms -> {tool}" if ok else f"FAIL: {str(result.get('error', ''))[:50]}"
                         print(f"  [{done:3}/{total}] plan/{model_key:<22} prompt[{i}] {status}")
 
-    print(f"\nDone. {done}/{total} calls completed → {out_file}")
+    print(f"\nDone. {done}/{total} calls completed -> {out_file}")
     print_summary(all_results)
 
 
