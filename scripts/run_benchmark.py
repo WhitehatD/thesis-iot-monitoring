@@ -51,6 +51,7 @@ ANALYSIS_MODELS = [
     "claude-sonnet",
     "gemini-3",
     "qwen3-vl",
+    "qwen2.5-vl",
 ]
 
 # model_key values accepted by /api/benchmark/plan (benchmark_routes.py routing)

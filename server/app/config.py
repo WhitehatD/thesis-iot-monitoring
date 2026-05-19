@@ -31,8 +31,12 @@ class Settings(BaseSettings):
     claude_haiku_model: str = "claude-haiku-4-5-20251001"
 
     # Alternate vision backends (thesis multi-backend benchmark)
-    vllm_base_url: str = "http://localhost:8001/v1"
+    # Each open-weight model runs on its own llama-server instance — the
+    # *_base_url settings let the engine pick the right backend by model_key.
+    vllm_base_url: str = "http://localhost:8001/v1"          # qwen3-vl (30B)
     vllm_model: str = "Qwen/Qwen3-VL-30B-A3B"
+    vllm_qwen25_base_url: str = "http://localhost:8002/v1"   # qwen2.5-vl (3B)
+    vllm_qwen25_model: str = "Qwen/Qwen2.5-VL-3B-Instruct"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3-flash"
 

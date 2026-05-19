@@ -120,19 +120,27 @@ async def _analyze_with_claude(
 async def _analyze_with_vllm(
     image_path: str, objective: str, model_key: str
 ) -> dict:
-    """Analyze image using local vLLM (OpenAI-compatible vision API)."""
+    """Analyze image using local OpenAI-compatible vision backend.
+
+    Routes by model_key to the correct backend URL/model. Each open-weight
+    model is served by its own llama-server / vLLM instance so we can compare
+    them apples-to-apples without one bottlenecking the other.
+    """
     from openai import AsyncOpenAI
 
-    model_name = (
-        settings.vllm_model
-        if model_key == "qwen3-vl"
-        else "Qwen/Qwen2.5-VL-3B-Instruct"
-    )
+    if model_key == "qwen3-vl":
+        base_url = settings.vllm_base_url
+        model_name = settings.vllm_model
+    elif model_key == "qwen2.5-vl":
+        base_url = settings.vllm_qwen25_base_url
+        model_name = settings.vllm_qwen25_model
+    else:
+        raise ValueError(f"Unknown vllm model_key: {model_key}")
 
     image_b64 = _load_image_b64(image_path)
 
     client = AsyncOpenAI(
-        base_url=settings.vllm_base_url,
+        base_url=base_url,
         api_key="not-needed",
         timeout=httpx.Timeout(60.0),
     )
